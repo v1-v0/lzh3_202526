@@ -2,31 +2,31 @@
 BACTERIA SCREENING ANALYSIS SUMMARY REPORT
 ======================================================================
 
-Total Bacteria Detected: 11
+Total Bacteria Detected: 15
 
 CLASSIFICATION:
 ----------------------------------------------------------------------
-  Low Fluorescence: 6 (54.5%)
-  High Fluorescence: 5 (45.5%)
+  Low Fluorescence: 8 (53.3%)
+  High Fluorescence: 7 (46.7%)
 
 MORPHOLOGY STATISTICS:
 ----------------------------------------------------------------------
-  Mean Area: 968.45 ± 410.17 pixels²
-  Mean Aspect Ratio: 1.53 ± 0.24
-  Mean Circularity: 0.74 ± 0.12
+  Mean Area: 761.93 ± 401.20 pixels²
+  Mean Aspect Ratio: 1.47 ± 0.28
+  Mean Circularity: 0.71 ± 0.20
 
 FLUORESCENCE STATISTICS:
 ----------------------------------------------------------------------
-  Mean Intensity: 150.59 ± 17.85
-  Median Intensity: 145.71
+  Mean Intensity: 141.84 ± 28.08
+  Median Intensity: 131.96
   Max Intensity: 255.00
 
 TOP 5 BRIGHTEST BACTERIA:
 ----------------------------------------------------------------------
-  #9: Intensity = 184.40, Area = 701.0 px²
-  #4: Intensity = 168.33, Area = 1086.0 px²
-  #6: Intensity = 168.01, Area = 1387.0 px²
-  #3: Intensity = 162.79, Area = 854.0 px²
-  #2: Intensity = 151.99, Area = 461.0 px²
+  #6: Intensity = 198.43, Area = 430.0 px²
+  #9: Intensity = 176.83, Area = 458.0 px²
+  #11: Intensity = 174.49, Area = 974.0 px²
+  #14: Intensity = 164.30, Area = 856.0 px²
+  #8: Intensity = 155.22, Area = 1018.0 px²
 
 ======================================================================

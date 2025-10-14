@@ -11,22 +11,22 @@ CLASSIFICATION:
 
 MORPHOLOGY STATISTICS:
 ----------------------------------------------------------------------
-  Mean Area: 968.45 ± 410.17 pixels²
-  Mean Aspect Ratio: 1.53 ± 0.24
-  Mean Circularity: 0.74 ± 0.12
+  Mean Area: 562.27 ± 324.51 pixels²
+  Mean Aspect Ratio: 1.45 ± 0.29
+  Mean Circularity: 0.77 ± 0.22
 
 FLUORESCENCE STATISTICS:
 ----------------------------------------------------------------------
-  Mean Intensity: 150.59 ± 17.85
-  Median Intensity: 145.71
+  Mean Intensity: 190.52 ± 38.24
+  Median Intensity: 212.07
   Max Intensity: 255.00
 
 TOP 5 BRIGHTEST BACTERIA:
 ----------------------------------------------------------------------
-  #9: Intensity = 184.40, Area = 701.0 px²
-  #4: Intensity = 168.33, Area = 1086.0 px²
-  #6: Intensity = 168.01, Area = 1387.0 px²
-  #3: Intensity = 162.79, Area = 854.0 px²
-  #2: Intensity = 151.99, Area = 461.0 px²
+  #1: Intensity = 229.52, Area = 920.0 px²
+  #10: Intensity = 226.98, Area = 587.0 px²
+  #11: Intensity = 222.60, Area = 523.0 px²
+  #2: Intensity = 216.32, Area = 1054.0 px²
+  #7: Intensity = 215.66, Area = 394.0 px²
 
 ======================================================================
