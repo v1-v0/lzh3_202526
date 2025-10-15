@@ -5,6 +5,8 @@ import numpy as np
 img = cv2.imread('./source/1/1 N NO 1_ch00.tif', cv2.IMREAD_GRAYSCALE)
 
 # Preprocess: Blur to reduce noise
+if img is None:
+	raise FileNotFoundError("Image not found. Please check the file path.")
 blurred = cv2.GaussianBlur(img, (5, 5), 0)
 
 # Thresholding (Otsu's for automatic threshold)
