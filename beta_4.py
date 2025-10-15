@@ -3,10 +3,6 @@ from cellpose import io, plot
 import os
 import numpy as np
 
-# Clear any conflicting environment variables
-if 'CELLPOSE_LOCAL_MODELS_PATH' in os.environ:
-    del os.environ['CELLPOSE_LOCAL_MODELS_PATH']
-
 # Set up logging for debugging
 io.logger_setup()
 
@@ -15,19 +11,9 @@ image_path = './source/1/1 N NO 1_ch00.tif'
 if not os.path.exists(image_path):
     raise FileNotFoundError(f"Image not found: {image_path}")
 
-# Check model directory and ensure 'bacteria' model exists
-model_dir = os.path.expanduser('~/.cellpose/models')
-print(f"Model directory contents: {os.listdir(model_dir)}")
-model_path = os.path.join(model_dir, 'bacteria')
-if not os.path.exists(model_path):
-    print(f"Model 'bacteria' not found in {model_dir}. Attempting to download...")
-
 # Load model (pre-trained for bacteria)
-try:
-    model = CellposeModel(pretrained_model=model_path, gpu=False)
-    print(f"Loaded model: {model.pretrained_model}")
-except Exception as e:
-    raise RuntimeError(f"Failed to load model: {e}")
+model = CellposeModel(model_type='bacteria', gpu=False)
+print(f"Loaded model: bacteria")
 
 # Load image
 img = io.imread(image_path)
@@ -36,24 +22,32 @@ if img is None:
 
 # Convert RGB to grayscale if necessary
 if len(img.shape) == 3 and img.shape[2] == 3:
-    img = np.mean(img.astype(np.float32), axis=2).astype(np.uint8)  # Cast to float32 for np.mean
+    img = (0.299 * img[:,:,0] + 0.587 * img[:,:,1] + 0.114 * img[:,:,2]).astype(np.uint8)
 print(f"Image shape: {img.shape}, dtype: {img.dtype}")
 
-# Segment with flexible return value handling
+# Segment
 try:
-    result = model.eval(img, diameter=None)  # No channels parameter
-    if len(result) == 4:
-        masks, flows, styles, diams = result
-        print(f"Diameters: {diams}")
-    elif len(result) == 3:
-        masks, flows, styles = result
-        diams = None
-        print("Note: model.eval returned 3 values; diams set to None")
-    else:
-        raise ValueError(f"Unexpected number of return values from model.eval: {len(result)}")
-    print(f"Segmentation completed. Detected {len(np.unique(masks))-1} cells.")
+
+    # To get diameter more explicitly:
+    masks, flows, styles = model.eval(img, diameter=None, channels=[0, 0])
+
+    # flows is a list: [flow_in_XY, cellprob, estimated_diameter]
+    diam = flows[2] if len(flows) > 2 else None
+
+    diams = model.eval(
+        img, 
+        diameter=None,  # Auto-estimate, or specify e.g., 30 for bacteria
+        channels=[0, 0]  # Grayscale
+    )
+    print(f"Estimated diameter: {diams}")
+    print(f"Segmentation completed. Detected {masks.max()} cells.")
 except Exception as e:
     raise RuntimeError(f"Segmentation failed: {e}")
 
-# Generate outlines
+# Generate and save outlines
 outlined = plot.outline_view(img, masks)
+os.makedirs('./output', exist_ok=True)
+io.imsave('./output/outlined.png', outlined)
+
+# Optionally save masks
+io.imsave('./output/masks.tif', masks)
