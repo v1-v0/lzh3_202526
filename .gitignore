@@ -4,3 +4,4 @@
 *.tiff
 *.bmp
 .DS_Store
+venv/

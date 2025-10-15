@@ -1035,7 +1035,7 @@ def batch_analyze_specific_images(base_folder, image_numbers, output_folder='./o
 
 if __name__ == '__main__':
     # Analyze all 5 image pairs (1 N NO 1 through 1 N NO 5)
-    base_folder = './PD image/1'
+    base_folder = './source/1'
     image_numbers = [1, 2, 3, 4, 5]  # Process images 1 through 5
     output_folder = './outputs'
     
