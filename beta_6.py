@@ -4,6 +4,7 @@ import os
 import numpy as np
 import torch
 import platform
+import matplotlib.pyplot as plt
 
 # Set up logging for debugging
 io.logger_setup()
@@ -121,15 +122,92 @@ try:
 except Exception as e:
     raise RuntimeError(f"Segmentation failed: {e}")
 
-# Simple red outlines on original image
+# Create output directory
+os.makedirs('./output/beta6', exist_ok=True)
+
+# Save masks
+io.imsave('./output/beta6/masks.tif', masks)
+
+# Method 1: Simple outline overlay (recommended)
 from skimage.segmentation import find_boundaries
 
+# Find cell boundaries
 boundaries = find_boundaries(masks, mode='outer')
-img_rgb = np.stack([img, img, img], axis=-1) if len(img.shape) == 2 else img.copy()
-img_rgb[boundaries] = [255, 0, 0]  # Red outlines
 
-os.makedirs('./output/beta5', exist_ok=True)
-io.imsave('./output/beta5/outlined.png', img_rgb)
-io.imsave('./output/beta5/masks.tif', masks)
+# Create RGB image with outlines
+if len(img.shape) == 2:
+    img_rgb = np.stack([img, img, img], axis=-1)
+else:
+    img_rgb = img.copy()
 
-print(f"✓ Detected {num_cells} cells - outputs saved to ./output/beta5/")
+# Overlay red outlines
+img_with_outlines = img_rgb.copy()
+img_with_outlines[boundaries, 0] = 255  # Red channel
+img_with_outlines[boundaries, 1] = 0    # Green channel
+img_with_outlines[boundaries, 2] = 0    # Blue channel
+
+io.imsave('./output/beta6/outlined_red.png', img_with_outlines)
+
+# Method 2: Using Cellpose's built-in outline view
+outlined = plot.outline_view(img, masks)
+io.imsave('./output/beta6/outlined_cellpose.png', outlined)
+
+# Method 3: Matplotlib visualization with numbered cells
+fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+
+# Original image
+axes[0].imshow(img, cmap='gray')
+axes[0].set_title('Original Image')
+axes[0].axis('off')
+
+# Masks with colors
+axes[1].imshow(masks, cmap='viridis')
+axes[1].set_title(f'Cell Masks ({num_cells} cells)')
+axes[1].axis('off')
+
+# Overlay with outlines
+axes[2].imshow(img, cmap='gray')
+axes[2].imshow(masks, alpha=0.3, cmap='jet')  # Semi-transparent overlay
+axes[2].contour(masks, levels=np.unique(masks)[1:], colors='red', linewidths=1)
+axes[2].set_title('Overlay with Outlines')
+axes[2].axis('off')
+
+plt.tight_layout()
+plt.savefig('./output/beta5/visualization.png', dpi=300, bbox_inches='tight')
+plt.close()
+
+# Method 4: Individual cell labeling with numbers
+fig, ax = plt.subplots(1, 1, figsize=(12, 12))
+ax.imshow(img, cmap='gray')
+
+# Draw outlines and label each cell
+from skimage.measure import regionprops
+
+for region in regionprops(masks):
+    # Get centroid
+    y, x = region.centroid
+    
+    # Draw outline
+    minr, minc, maxr, maxc = region.bbox
+    rect = plt.Rectangle((minc, minr), maxc-minc, maxr-minr, # type: ignore
+                         fill=False, edgecolor='red', linewidth=2)
+    ax.add_patch(rect)
+    
+    # Add cell number
+    ax.text(x, y, str(region.label), 
+           color='yellow', fontsize=8, fontweight='bold',
+           ha='center', va='center',
+           bbox=dict(boxstyle='round', facecolor='black', alpha=0.5))
+
+ax.set_title(f'Detected Cells (n={num_cells})', fontsize=14)
+ax.axis('off')
+plt.tight_layout()
+plt.savefig('./output/beta5/labeled_cells.png', dpi=300, bbox_inches='tight')
+plt.close()
+
+print(f"✓ Outputs saved to ./output/beta6/")
+print(f"  - outlined_red.png (red outlines)")
+print(f"  - outlined_cellpose.png (Cellpose default)")
+print(f"  - visualization.png (3-panel comparison)")
+print(f"  - labeled_cells.png (numbered cells)")
+print(f"  - masks.tif (segmentation masks)")
