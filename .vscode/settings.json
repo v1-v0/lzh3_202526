@@ -1,5 +1,4 @@
 {
-  "python-envs.defaultEnvManager": "ms-python.python:conda",
   "python-envs.defaultPackageManager": "ms-python.python:conda",
   "python-envs.pythonProjects": [],
   "python.analysis.packageIndexDepths": [
@@ -9,7 +8,7 @@
       "includeAllSymbols": true
     },
     {
-      "name": "scikit-image", 
+      "name": "scikit-image",
       "depth": 3,
       "includeAllSymbols": true
     },
