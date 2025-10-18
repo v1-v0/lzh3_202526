@@ -33,10 +33,10 @@ warnings.filterwarnings('ignore')
 CONFIG = {
     "source_folder": ["source//1"],
     "output_folder": ["outputs//v3"],
-    "gray_threshold": 30,              # Threshold for grayscale (dark objects)
-    "fluor_threshold": 30,            # Threshold for fluorescence (bright objects)
-    "min_area": 40,                   # Minimum area for grayscale bacteria
-    "min_fluor_area": 20,             # Minimum area for fluorescent regions
+    "gray_threshold": 52,              # Threshold for grayscale (dark objects)
+    "fluor_threshold": 5,            # Threshold for fluorescence (bright objects)
+    "min_area": 400,                   # Minimum area for grayscale bacteria
+    "min_fluor_area": 400,             # Minimum area for fluorescent regions
     "overlap_threshold": 0.80,         # 80% overlap required for match
     "contour_thickness": 1,
     "min_contour_perimeter": 10,
@@ -50,7 +50,7 @@ CONFIG = {
     "arrow_length": 40,
     "arrow_thickness": 1,
     "arrow_tip_length": 0.3,
-    "font_scale": 0.5,
+    "font_scale": 2,
     "font_thickness": 2,
     "label_offset_candidates": [
         (40, -40), (40, 40), (-40, -40), (-40, 40),
