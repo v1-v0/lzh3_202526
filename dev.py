@@ -22,7 +22,10 @@ import matplotlib.pyplot as plt
 import cv2
 import csv
 from pathlib import Path
+<<<<<<< HEAD
 from typing import Union
+=======
+>>>>>>> b1f7fcbfc7295981e6969b3cff3aa6cdebab9d3d
 from skimage import io, filters, morphology, measure
 from skimage.segmentation import watershed
 from scipy import ndimage as ndi
@@ -35,10 +38,17 @@ warnings.filterwarnings('ignore')
 CONFIG = {
     "source_folder": ["source"],  # Changed to parent folder
     "output_folder": ["outputs//v3"],
+<<<<<<< HEAD
     "gray_threshold": 60,              # Threshold for grayscale (dark objects)
     "fluor_threshold": 5,            # Threshold for fluorescence (bright objects)
     "min_area": 400,                   # Minimum area for grayscale bacteria
     "min_fluor_area": 400,             # Minimum area for fluorescent regions
+=======
+    "gray_threshold": 30,              # Threshold for grayscale (dark objects)
+    "fluor_threshold": 30,            # Threshold for fluorescence (bright objects)
+    "min_area": 40,                   # Minimum area for grayscale bacteria
+    "min_fluor_area": 20,             # Minimum area for fluorescent regions
+>>>>>>> b1f7fcbfc7295981e6969b3cff3aa6cdebab9d3d
     "overlap_threshold": 0.80,         # 80% overlap required for match
     "contour_thickness": 1,
     "min_contour_perimeter": 10,
@@ -545,7 +555,11 @@ def apply_fluorescence_overlay(overlay, fluorescence, mask_to_use):
 
 def visualize_dual_channel(original, fluorescence, gray_labeled, fluor_labeled, 
                           gray_props, fluor_props, matches, gray_contours, fluor_contours,
+<<<<<<< HEAD
                           image_path, image_index, bacterium_counter, output_path: Union[str, Path, os.PathLike] | None = None):
+=======
+                          image_path, image_index, bacterium_counter, output_path="outlined_bacteria.png"):
+>>>>>>> b1f7fcbfc7295981e6969b3cff3aa6cdebab9d3d
     """
     Create visualization with dual-channel matching.
     Uses LARGER contour between gray and fluorescence for matched bacteria.
@@ -1030,8 +1044,12 @@ def main():
                     data_this, non_matching_this, bacterium_counter = visualize_dual_channel(
                         gray_img, fluor_img, gray_labeled, fluor_labeled,
                         gray_props, fluor_props, matches, gray_contours, fluor_contours,
+<<<<<<< HEAD
                         image_path, idx, bacterium_counter, 
                         output_path=output_filename
+=======
+                        image_path, idx, bacterium_counter, output_path=output_filename
+>>>>>>> b1f7fcbfc7295981e6969b3cff3aa6cdebab9d3d
                     )
                     
                     all_data.extend(data_this)
