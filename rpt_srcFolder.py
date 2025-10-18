@@ -33,9 +33,12 @@ from openpyxl.styles import Font, Alignment
 warnings.filterwarnings('ignore')
 
 class BacteriaReviewTool:
-    def __init__(self, source_folder="source//9"):
+    from typing import Optional, Union
+
+    def __init__(self, source_folder: Optional[Union[str, Path]] = None):
         """Initialize the review tool"""
-        self.source_folder = source_folder
+        # default to current working directory if none provided
+        self.source_folder = Path(source_folder).resolve() if source_folder else Path.cwd()
         
         # Fixed configuration
         self.config = {
@@ -264,7 +267,7 @@ class BacteriaReviewTool:
         vis = np.dstack([image, image, image]).astype(np.uint8)
         
         colocalized_gray_ids = set()
-        colocalized_fluor_ids = set()
+        colocalized_fluor_ids = set();
         if colocalized:
             colocalized_gray_ids = {c['gray_id'] for c in colocalized}
             colocalized_fluor_ids = {c['fluor_id'] for c in colocalized}
@@ -498,7 +501,10 @@ class BacteriaReviewTool:
         print("\nExporting results to Excel...")
         
         # Create Excel writer
-        output_file = f"bacteria_detection_results_{self.source_folder.replace('/', '_').replace('//', '_')}.xlsx"
+        output_file = f"bacteria_detection_results_{str(self.source_folder).replace('/', '_').replace('//', '_')}.xlsx"
+        # ensure we operate on a string; self.source_folder may be a pathlib.Path
+        folder_str = self.source_folder.as_posix() if hasattr(self.source_folder, "as_posix") else str(self.source_folder)
+        output_file = f"bacteria_detection_results_{folder_str.replace('/', '_')}.xlsx"
         writer = pd.ExcelWriter(output_file, engine='openpyxl')
         
         # Sheet 1: Summary
