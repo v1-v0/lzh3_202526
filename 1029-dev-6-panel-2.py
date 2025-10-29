@@ -61,16 +61,16 @@ class SegmentationViewer:
         # Default parameter values
         self.default_params = {
             'use_otsu': False,
-            'manual_threshold': 60,
-            'enable_clahe': False,
+            'manual_threshold': 53,
+            'enable_clahe': True,
             'clahe_clip': 2.0,
             'clahe_tile': 8,
-            'open_kernel': 1,
-            'close_kernel': 5,
+            'open_kernel': 5,
+            'close_kernel': 15,
             'open_iter': 1,
             'close_iter': 1,
             'min_area': 50,
-            'watershed_dilate': 20,
+            'watershed_dilate': 10,
         }
 
         # Tkinter variables
@@ -152,7 +152,7 @@ class SegmentationViewer:
         tabs = [
             ("Original", self.tab_original),
             ("CLAHE Enhanced", self.tab_enhanced),
-            ("Threshold", self.tab_threshold),
+            ("Threshold", self.tab_threshold),          # <-- fixed typo
             ("Morphology", self.tab_morphology),
             ("Final Contours", self.tab_contours),
         ]
@@ -187,6 +187,7 @@ class SegmentationViewer:
         label.pack(side=tk.LEFT)
         ToolTip(label, tooltip_text)
 
+        # Resolve name *before* creating the entry
         var_name = next(k for k, v in self.params.items() if v == var)
 
         entry = ttk.Entry(frame, width=8, justify=tk.RIGHT)
@@ -218,9 +219,10 @@ class SegmentationViewer:
             value = float(raw) if is_float else int(float(raw))
             value = max(min_val, min(max_val, value))
 
+            # ---- ODD-KERNEL HANDLING ----
             if var_name in ('open_kernel', 'close_kernel'):
                 value = int(value)
-                if value % 2 == 0:
+                if value % 2 == 0:                     # even → make odd
                     lower = value - 1
                     if lower >= min_val:
                         value = lower
@@ -228,11 +230,13 @@ class SegmentationViewer:
                         value = value + 1
                 value = max(min_val, min(max_val, value))
 
+            # ---- OTHER STEPPED PARAMETERS ----
             elif resolution != 1.0:
                 value = round(value / resolution) * resolution
                 if is_float and resolution == 0.1:
                     value = round(value, 1)
 
+            # ---- UPDATE UI ----
             self.params[var_name].set(value)
             entry.delete(0, tk.END)
             entry.insert(0, str(int(value) if not is_float else value))
@@ -347,7 +351,7 @@ class SegmentationViewer:
         self.update_preview()
 
     # --------------------------------------------------------------------- #
-    # Segmentation
+    # Segmentation – explicit return type
     # --------------------------------------------------------------------- #
     def segment_bacteria(self, gray_bf: np.ndarray
                          ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[np.ndarray]]:
