@@ -30,18 +30,18 @@ MANUAL_THRESHOLD   = 50           # Only used if above is False
 
 # ------------------- Contrast Enhancement -------------------
 ENABLE_CLAHE       = True
-CLAHE_CLIP_LIMIT   = 2.0
-CLAHE_TILE_SIZE    = (8, 8)
+CLAHE_CLIP_LIMIT   = 2.0 # 1.0-10.0 typical 2.0 to 4.0
+CLAHE_TILE_SIZE    = (8, 8) # 4,4 to 32,32
 
 # ------------------- Morphology Cleanup -------------------
-OPEN_KERNEL_SIZE   = 3
-CLOSE_KERNEL_SIZE  = 5
-OPEN_ITERATIONS    = 2
-CLOSE_ITERATIONS   = 2
+OPEN_KERNEL_SIZE   = 3 # 1-15 odd number only
+CLOSE_KERNEL_SIZE  = 5 # 1-15 odd number only
+OPEN_ITERATIONS    = 2 # 1-5
+CLOSE_ITERATIONS   = 2 # 1-5
 
 # ------------------- Watershed Separation -------------------
-MIN_AREA           = 50
-WATERSHED_DILATE   = 5
+MIN_AREA           = 50 # 20-200 for bacteria
+WATERSHED_DILATE   = 5 # % of max distance transform value (1-20)
 
 # --------------------------------------------------------------
 # 2. HELPERS
