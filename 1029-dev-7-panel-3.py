@@ -67,11 +67,11 @@ class SegmentationViewer:
             'use_otsu': False,
             'manual_threshold': 50,
             'enable_clahe': True,
-            'clahe_clip': 7.0,
+            'clahe_clip': 5.0,
             'clahe_tile': 16,
             'open_kernel': 3,
-            'close_kernel': 3,
-            'open_iter': 2,
+            'close_kernel': 5,
+            'open_iter': 3,
             'close_iter': 2,
             'min_area': 50,
             'watershed_dilate': 15,
@@ -206,7 +206,7 @@ class SegmentationViewer:
         self.canvas_original.bind("<Button-3>", self.clear_probe)
 
         # Status bar
-        self.status_var = tk.StringVar(value="Load an image. Click Original tab to measure.")
+        self.status_var = tk.StringVar(value="Load an image. Click to measure, Ctrl+Click to auto-tune.")
         status_bar = ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W, padding=(5, 2))
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
@@ -255,9 +255,13 @@ class SegmentationViewer:
         # Update measurement panel
         self.update_measurement_panel(img_x, img_y, pixel_value)
 
-        # Auto-tune
-        self.auto_tune_from_point(img_x, img_y, pixel_value)
-        self.update_preview()
+        # Auto-tune ONLY if Ctrl key is held
+        if event.state & 0x4:  # Ctrl key modifier
+            self.auto_tune_from_point(img_x, img_y, pixel_value)
+            self.update_preview()
+        else:
+            # Just update the preview without changing parameters
+            self.update_preview()
 
     def clear_probe(self, event=None):
         for cid in self.probe_canvas_ids:
@@ -307,12 +311,14 @@ class SegmentationViewer:
     # --------------------------------------------------------------------- #
     def auto_tune_from_point(self, x: int, y: int, pixel_value: int):
         if not self.current_contours:
+            self.status_var.set("No contours found - cannot auto-tune")
             return
 
         for contour in self.current_contours:
             if cv2.pointPolygonTest(contour, (x, y), False) >= 0:
                 area = cv2.contourArea(contour)
                 if area < 10:
+                    self.status_var.set("Contour too small - cannot auto-tune")
                     continue
 
                 self.params['use_otsu'].set(False)
@@ -326,8 +332,10 @@ class SegmentationViewer:
                         self.entries[key].insert(0, str(self.params[key].get()))
                         self.update_progressbar(key)
 
-                self.status_var.set(f"Auto-tuned: Th={pixel_value-18}, Area={int(area*0.75)}")
-                break
+                self.status_var.set(f"✓ Auto-tuned: Threshold={pixel_value-18}, Min Area={int(area*0.75)}")
+                return
+        
+        self.status_var.set("Click inside a contour to auto-tune")
 
     # --------------------------------------------------------------------- #
     # Entry + Progressbar

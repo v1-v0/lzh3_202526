@@ -26,22 +26,22 @@ OUT_DIR.mkdir(exist_ok=True)
 
 # ------------------- Brightfield Thresholding -------------------
 USE_OTSU_THRESHOLD = False          # Set False → use MANUAL_THRESHOLD
-MANUAL_THRESHOLD   = 40           # Only used if above is False, Lower (20-40) = only darkest objects; Higher (60-100) = more sensitive but noisy
+MANUAL_THRESHOLD   = 50           # Only used if above is False, Lower (20-40) = only darkest objects; Higher (60-100) = more sensitive but noisy
 
 # ------------------- Contrast Enhancement -------------------
 ENABLE_CLAHE       = True
-CLAHE_CLIP_LIMIT   = 2.0 # 1.0-10.0 typical 2.0 to 4.0
-CLAHE_TILE_SIZE    = (8, 8) # 4,4 to 32,32
+CLAHE_CLIP_LIMIT   = 5.0 # 1.0-10.0 typical 2.0 to 4.0
+CLAHE_TILE_SIZE    = (16, 16) # 4,4 to 32,32
 
 # ------------------- Morphology Cleanup -------------------
 OPEN_KERNEL_SIZE   = 3 # 1-15 odd number only
 CLOSE_KERNEL_SIZE  = 5 # 1-15 odd number only
-OPEN_ITERATIONS    = 2 # 1-5
+OPEN_ITERATIONS    = 3 # 1-5
 CLOSE_ITERATIONS   = 2 # 1-5
 
 # ------------------- Watershed Separation -------------------
 MIN_AREA           = 50 # 20-200 for bacteria
-WATERSHED_DILATE   = 5 # % of max distance transform value (1-20)
+WATERSHED_DILATE   = 15 # % of max distance transform value (1-20)
 
 # --------------------------------------------------------------
 # 2. HELPERS
