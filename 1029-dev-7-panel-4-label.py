@@ -4,8 +4,8 @@
 """
 Interactive Bacteria Segmentation Parameter Tuner
 - Real-time preview
-- Config panel (keeps values)
-- Measurement panel (refreshes on click)
+- Collapsible Config and Measurement panels
+- Navigation panel with Load, Reset, Exit, Previous/Next buttons
 - Click Original tab → probe + measurement
 - Ctrl+Click → auto-tune
 - File name in title
@@ -58,6 +58,64 @@ class ToolTip:
             self.tip_window = None
 
 
+# --------------------------------------------------------------------- #
+# Collapsible Frame class
+# --------------------------------------------------------------------- #
+class CollapsibleFrame(ttk.Frame):
+    def __init__(self, parent, title="", **kwargs):
+        super().__init__(parent, **kwargs)
+        
+        self.is_collapsed = False
+        
+        # Header frame with toggle button
+        self.header = ttk.Frame(self, relief=tk.RAISED, borderwidth=1)
+        self.header.pack(fill=tk.X, padx=2, pady=2)
+        
+        # Toggle button (▼ when expanded, ▶ when collapsed)
+        self.toggle_btn = ttk.Button(
+            self.header, 
+            text="▼", 
+            width=3,
+            command=self.toggle
+        )
+        self.toggle_btn.pack(side=tk.LEFT, padx=2)
+        
+        # Title label
+        self.title_label = ttk.Label(
+            self.header, 
+            text=title, 
+            font=("Segoe UI", 10, "bold")
+        )
+        self.title_label.pack(side=tk.LEFT, padx=5)
+        
+        # Content frame
+        self.content = ttk.Frame(self, padding=10)
+        self.content.pack(fill=tk.BOTH, expand=True)
+        
+    def toggle(self):
+        """Toggle between collapsed and expanded states."""
+        if self.is_collapsed:
+            self.expand()
+        else:
+            self.collapse()
+    
+    def collapse(self):
+        """Collapse the frame to show only the header."""
+        self.content.pack_forget()
+        self.toggle_btn.config(text="▶")
+        self.is_collapsed = True
+    
+    def expand(self):
+        """Expand the frame to show the content."""
+        self.content.pack(fill=tk.BOTH, expand=True)
+        self.toggle_btn.config(text="▼")
+        self.is_collapsed = False
+    
+    def get_content_frame(self):
+        """Return the content frame for adding widgets."""
+        return self.content
+
+
 class SegmentationViewer:
     def __init__(self, root):
         self.root = root
@@ -79,7 +137,7 @@ class SegmentationViewer:
         self.image_files: List[Path] = []
         self.current_index: int = -1
 
-        # Default parameter values
+        # Default parameter values - UPDATED LABEL DEFAULTS
         self.default_params = {
             'use_otsu': False,
             'manual_threshold': 50,
@@ -96,8 +154,8 @@ class SegmentationViewer:
             'fluor_gamma': 0.5,
             'show_labels': True,
             'label_font_size': 20,
-            'arrow_length': 40,
-            'label_offset': 10,
+            'arrow_length': 60,
+            'label_offset': 15,
         }
 
         # Tkinter variables
@@ -316,51 +374,76 @@ class SegmentationViewer:
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
-        # Left panel: controls + measurement
+        # Left panel: navigation + measurement + config panels
         left_panel = ttk.Frame(main_frame, width=420)
         left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 15))
         left_panel.pack_propagate(False)
 
-        # === CONFIG PANEL ===
-        config_frame = ttk.LabelFrame(left_panel, text=" Configuration Parameters ", padding=10)
-        config_frame.pack(fill=tk.X, pady=(0, 10))
+        # === NAVIGATION PANEL (TOP) ===
+        nav_panel = ttk.LabelFrame(left_panel, text=" Navigation ", padding=10)
+        nav_panel.pack(fill=tk.X, pady=(0, 10))
 
-        # Buttons row 1: Load, Reset, Exit
-        btn_frame = ttk.Frame(config_frame)
-        btn_frame.pack(fill=tk.X, pady=(0, 8))
+        # Row 1: Load, Reset, Exit
+        btn_row1 = ttk.Frame(nav_panel)
+        btn_row1.pack(fill=tk.X, pady=(0, 8))
 
-        load_btn = ttk.Button(btn_frame, text="Load Image", command=self.load_image)
+        load_btn = ttk.Button(btn_row1, text="Load Image", command=self.load_image)
         load_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
         ToolTip(load_btn, "Select a brightfield TIFF image (_ch00.tif).")
 
-        reset_btn = ttk.Button(btn_frame, text="Reset", command=self.reset_to_defaults)
+        reset_btn = ttk.Button(btn_row1, text="Reset", command=self.reset_to_defaults)
         reset_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 2))
         ToolTip(reset_btn, "Restore all parameters to default values.")
 
-        exit_btn = ttk.Button(btn_frame, text="Exit", command=self.exit_application)
+        exit_btn = ttk.Button(btn_row1, text="Exit", command=self.exit_application)
         exit_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
         ToolTip(exit_btn, "Close the application.")
 
-        # Navigation buttons row 2: Previous, Counter, Next
-        nav_frame = ttk.Frame(config_frame)
-        nav_frame.pack(fill=tk.X, pady=(0, 8))
+        # Row 2: Previous, Counter, Next
+        btn_row2 = ttk.Frame(nav_panel)
+        btn_row2.pack(fill=tk.X, pady=(0, 0))
 
-        self.prev_btn = ttk.Button(nav_frame, text="◀ Previous", command=self.load_previous_image, state=tk.DISABLED)
+        self.prev_btn = ttk.Button(btn_row2, text="◀ Previous", command=self.load_previous_image, state=tk.DISABLED)
         self.prev_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
         ToolTip(self.prev_btn, "Load previous image in source folder")
 
-        self.nav_label = ttk.Label(nav_frame, text="0 / 0", anchor=tk.CENTER, 
+        self.nav_label = ttk.Label(btn_row2, text="0 / 0", anchor=tk.CENTER, 
                                    font=("Segoe UI", 10, "bold"), width=10)
         self.nav_label.pack(side=tk.LEFT, padx=2)
         ToolTip(self.nav_label, "Current image / Total images")
 
-        self.next_btn = ttk.Button(nav_frame, text="Next ▶", command=self.load_next_image, state=tk.DISABLED)
+        self.next_btn = ttk.Button(btn_row2, text="Next ▶", command=self.load_next_image, state=tk.DISABLED)
         self.next_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
         ToolTip(self.next_btn, "Load next image in source folder")
 
+        # === COLLAPSIBLE MEASUREMENT PANEL (ABOVE CONFIG) ===
+        self.measure_panel = CollapsibleFrame(left_panel, title="Measurement on Click")
+        self.measure_panel.pack(fill=tk.X, pady=(0, 10))
+        
+        measure_content = self.measure_panel.get_content_frame()
+
+        labels = [
+            ("pixel_coord", "Pixel: -, -"),
+            ("pixel_value", "Value: -"),
+            ("inside_contour", "Inside Contour: -"),
+            ("contour_area", "Contour Area: - px²"),
+        ]
+        for key, text in labels:
+            row = ttk.Frame(measure_content)
+            row.pack(fill=tk.X, pady=2)
+            label = ttk.Label(row, text=text, font=("Consolas", 10), foreground="#2c3e50")
+            label.pack(anchor=tk.W)
+            self.measure_labels[key] = label
+
+        # === COLLAPSIBLE CONFIG PANEL (BELOW MEASUREMENT) ===
+        self.config_panel = CollapsibleFrame(left_panel, title="Configuration Parameters")
+        self.config_panel.pack(fill=tk.BOTH, expand=True, pady=(0, 0))
+        
+        config_content = self.config_panel.get_content_frame()
+
         # Scrollable config
-        cfg_canvas = tk.Canvas(config_frame, height=440)
-        cfg_scrollbar = ttk.Scrollbar(config_frame, orient="vertical", command=cfg_canvas.yview)
+        cfg_canvas = tk.Canvas(config_content, height=440)
+        cfg_scrollbar = ttk.Scrollbar(config_content, orient="vertical", command=cfg_canvas.yview)
         scrollable_cfg = ttk.Frame(cfg_canvas)
 
         scrollable_cfg.bind(
@@ -380,23 +463,6 @@ class SegmentationViewer:
         self.create_watershed_controls(scrollable_cfg)
         self.create_fluorescence_controls(scrollable_cfg)
         self.create_label_controls(scrollable_cfg)
-
-        # === MEASUREMENT PANEL ===
-        measure_frame = ttk.LabelFrame(left_panel, text=" Measurement on Click ", padding=12)
-        measure_frame.pack(fill=tk.X, pady=(10, 0))
-
-        labels = [
-            ("pixel_coord", "Pixel: -, -"),
-            ("pixel_value", "Value: -"),
-            ("inside_contour", "Inside Contour: -"),
-            ("contour_area", "Contour Area: - px²"),
-        ]
-        for key, text in labels:
-            row = ttk.Frame(measure_frame)
-            row.pack(fill=tk.X, pady=2)
-            label = ttk.Label(row, text=text, font=("Consolas", 10), foreground="#2c3e50")
-            label.pack(anchor=tk.W)
-            self.measure_labels[key] = label
 
         # Right panel: image tabs
         image_frame = ttk.Frame(main_frame)
@@ -486,7 +552,10 @@ class SegmentationViewer:
             self.canvas_original.create_line(cx, cy - 12, cx, cy + 12, fill="red", width=3)
         ]
 
-        # Update measurement panel
+        # Update measurement panel (auto-expand if collapsed)
+        if self.measure_panel.is_collapsed:
+            self.measure_panel.expand()
+        
         self.update_measurement_panel(img_x, img_y, pixel_value)
 
         # Auto-tune ONLY if Ctrl key is held
