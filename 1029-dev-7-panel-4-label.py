@@ -496,7 +496,7 @@ class SegmentationViewer:
     def load_image(self):
         filepath = filedialog.askopenfilename(
             title="Select Brightfield Image",
-            filetypes=[("TIFF files", "*.tif *.tiff"), ("All files", "*.*")]
+            filetypes=[("Brightfiled files", "*_ch00.tif"), ("TIFF files", "*.tif *.tiff"), ("All files", "*.*")]
         )
         if not filepath:
             return
