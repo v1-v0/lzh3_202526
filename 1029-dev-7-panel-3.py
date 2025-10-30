@@ -1018,7 +1018,8 @@ class SegmentationViewer:
                            self.canvas_contours]:
                 canvas.delete("all")
                 if hasattr(canvas, 'image'):
-                    del canvas.image
+                    if hasattr(canvas, 'image'):
+                        delattr(canvas, 'image')
             
             # Clear image arrays
             if self.original_image is not None:
