@@ -1,0 +1,15 @@
+{
+  "gaussian_kernel": 5,
+  "clahe_clip": 2.0,
+  "clahe_grid": 8,
+  "threshold_block": 21,
+  "threshold_c": 5,
+  "morph_kernel": 3,
+  "morph_iterations": 2,
+  "min_area": 50,
+  "max_area": 5000,
+  "min_fluor_per_area": 0.0,
+  "show_labels": true,
+  "arrow_length": 60,
+  "label_offset": 15
+}
