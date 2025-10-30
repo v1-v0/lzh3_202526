@@ -14,6 +14,8 @@ Interactive Bacteria Segmentation Parameter Tuner
 - Brightfield (_ch00.tif) and Fluorescence (_ch01.tif) pair support
 - Fluorescence displayed in red color with enhanced visibility
 - Auto-loads first image on startup
+- Configurable arrows and labels on Final Contours view with smart positioning
+- SMART POSITIONING: Finds most empty direction, avoids borders and other objects
 """
 
 import cv2
@@ -22,7 +24,7 @@ from pathlib import Path
 from scipy import ndimage
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 from typing import cast, List, Tuple, Dict, Optional
 
 
@@ -92,6 +94,10 @@ class SegmentationViewer:
             'watershed_dilate': 15,
             'fluor_brightness': 2.0,
             'fluor_gamma': 0.5,
+            'show_labels': True,
+            'label_font_size': 20,
+            'arrow_length': 40,
+            'label_offset': 10,
         }
 
         # Tkinter variables
@@ -109,6 +115,10 @@ class SegmentationViewer:
             'watershed_dilate': tk.IntVar(value=self.default_params['watershed_dilate']),
             'fluor_brightness': tk.DoubleVar(value=self.default_params['fluor_brightness']),
             'fluor_gamma': tk.DoubleVar(value=self.default_params['fluor_gamma']),
+            'show_labels': tk.BooleanVar(value=self.default_params['show_labels']),
+            'label_font_size': tk.IntVar(value=self.default_params['label_font_size']),
+            'arrow_length': tk.IntVar(value=self.default_params['arrow_length']),
+            'label_offset': tk.IntVar(value=self.default_params['label_offset']),
         }
 
         self.entries: Dict[str, tk.Entry] = {}
@@ -368,7 +378,8 @@ class SegmentationViewer:
         self.create_clahe_controls(scrollable_cfg)
         self.create_morphology_controls(scrollable_cfg)
         self.create_watershed_controls(scrollable_cfg)
-        self.create_fluorescence_controls(scrollable_cfg)  # NEW: fluorescence controls
+        self.create_fluorescence_controls(scrollable_cfg)
+        self.create_label_controls(scrollable_cfg)
 
         # === MEASUREMENT PANEL ===
         measure_frame = ttk.LabelFrame(left_panel, text=" Measurement on Click ", padding=12)
@@ -646,6 +657,9 @@ class SegmentationViewer:
             'watershed_dilate': (1, 20),
             'fluor_brightness': (0.5, 5.0),
             'fluor_gamma': (0.2, 2.0),
+            'label_font_size': (10, 60),
+            'arrow_length': (20, 100),
+            'label_offset': (5, 50),
         }
         min_val, max_val = ranges[var_name]
         percent = (value - min_val) / (max_val - min_val) * 100
@@ -695,13 +709,29 @@ class SegmentationViewer:
                                      self.params['watershed_dilate'], 1, 20, resolution=1, is_float=False)
 
     def create_fluorescence_controls(self, parent):
-        """NEW: Fluorescence visualization controls"""
+        """Fluorescence visualization controls"""
         f = ttk.LabelFrame(parent, text="Fluorescence Display", padding=10)
         f.pack(fill=tk.X, pady=4)
         self.add_entry_with_progress(f, "Brightness:", "0.5–5.0. Higher = brighter.",
                                      self.params['fluor_brightness'], 0.5, 5.0, resolution=0.1, is_float=True)
         self.add_entry_with_progress(f, "Gamma:", "0.2–2.0. Lower = enhance dim signals.",
                                      self.params['fluor_gamma'], 0.2, 2.0, resolution=0.1, is_float=True)
+
+    def create_label_controls(self, parent):
+        """Label and arrow controls"""
+        f = ttk.LabelFrame(parent, text="Labels & Arrows", padding=10)
+        f.pack(fill=tk.X, pady=4)
+        
+        cb = ttk.Checkbutton(f, text="Show Labels", variable=self.params['show_labels'], command=self.update_preview)
+        cb.pack(anchor=tk.W)
+        ToolTip(cb, "Show/hide bacteria labels on Final Contours view.")
+        
+        self.add_entry_with_progress(f, "Font Size:", "10–60. Label text size.",
+                                     self.params['label_font_size'], 10, 60, resolution=1, is_float=False)
+        self.add_entry_with_progress(f, "Arrow Length:", "20–100 px. Arrow line length.",
+                                     self.params['arrow_length'], 20, 100, resolution=1, is_float=False)
+        self.add_entry_with_progress(f, "Label Offset:", "5–50 px. Label distance from arrow.",
+                                     self.params['label_offset'], 5, 50, resolution=1, is_float=False)
 
     # --------------------------------------------------------------------- #
     # Reset
@@ -860,6 +890,283 @@ class SegmentationViewer:
         return enhanced, thresh, cleaned, bacteria
 
     # --------------------------------------------------------------------- #
+    # NEW: Smart label positioning with obstacle avoidance
+    # --------------------------------------------------------------------- #
+    def create_occupancy_map(self, img_shape, contours, margin=20):
+        """
+        Create a binary occupancy map showing where objects and borders are.
+        
+        Args:
+            img_shape: (height, width) of the image
+            contours: list of contours representing bacteria
+            margin: safety margin around objects and borders
+        
+        Returns:
+            occupancy_map: binary map (255 = occupied, 0 = free)
+        """
+        h, w = img_shape
+        occupancy = np.zeros((h, w), dtype=np.uint8)
+        
+        # Mark all contours as occupied (with margin)
+        for contour in contours:
+            # Draw filled contour
+            cv2.drawContours(occupancy, [contour], -1, 255, -1)
+            # Dilate to add margin around bacteria
+            if margin > 0:
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (margin*2, margin*2))
+                occupancy = cv2.dilate(occupancy, kernel, iterations=1)
+        
+        # Mark borders as occupied
+        border_margin = margin
+        occupancy[:border_margin, :] = 255  # Top border
+        occupancy[-border_margin:, :] = 255  # Bottom border
+        occupancy[:, :border_margin] = 255  # Left border
+        occupancy[:, -border_margin:] = 255  # Right border
+        
+        return occupancy
+    
+    def calculate_direction_score(self, centroid, angle, arrow_len, label_size, 
+                                  occupancy_map, offset):
+        """
+        Calculate a score for placing a label in a given direction.
+        Lower score = better placement.
+        
+        Args:
+            centroid: (x, y) center of bacteria
+            angle: angle in degrees to test
+            arrow_len: length of the arrow
+            label_size: (width, height) of the label
+            occupancy_map: binary map showing occupied areas
+            offset: additional offset from arrow tip
+        
+        Returns:
+            score: float (lower is better, inf if invalid)
+        """
+        cx, cy = centroid
+        h, w = occupancy_map.shape
+        label_w, label_h = label_size
+        
+        # Calculate arrow end point
+        rad = np.deg2rad(angle)
+        arrow_x = int(cx + arrow_len * np.cos(rad))
+        arrow_y = int(cy - arrow_len * np.sin(rad))
+        
+        # Calculate label position (centered on arrow tip with offset)
+        label_x = int(arrow_x + offset * np.cos(rad) - label_w / 2)
+        label_y = int(arrow_y - offset * np.sin(rad) - label_h / 2)
+        
+        # Check if label is out of bounds
+        if (label_x < 0 or label_x + label_w >= w or
+            label_y < 0 or label_y + label_h >= h):
+            return float('inf')  # Invalid position
+        
+        # Calculate score based on occupancy in the label area
+        label_region = occupancy_map[label_y:label_y+label_h, label_x:label_x+label_w]
+        
+        # Count occupied pixels in label area
+        occupied_pixels = np.sum(label_region > 0)
+        total_pixels = label_region.size
+        
+        # Also check arrow path for obstacles
+        arrow_score = 0
+        num_samples = 10
+        for i in range(num_samples):
+            t = i / num_samples
+            sample_x = int(cx + t * arrow_len * np.cos(rad))
+            sample_y = int(cy - t * arrow_len * np.sin(rad))
+            
+            if 0 <= sample_x < w and 0 <= sample_y < h:
+                if occupancy_map[sample_y, sample_x] > 0:
+                    arrow_score += 10  # Penalty for arrow crossing objects
+        
+        # Combined score: prefer directions with less occupancy
+        # and penalize arrow crossing objects
+        score = (occupied_pixels / total_pixels) * 100 + arrow_score
+        
+        return score
+    
+    def find_best_label_position(self, centroid, img_shape, arrow_len, label_size, 
+                                 offset, occupancy_map):
+        """
+        Find the best position for a label by testing multiple directions.
+        
+        Returns:
+            (arrow_end_x, arrow_end_y, label_x, label_y, angle_deg) or None
+        """
+        cx, cy = centroid
+        h, w = img_shape
+        label_w, label_h = label_size
+        
+        # Test 16 directions for better coverage
+        angles = [i * 22.5 for i in range(16)]
+        
+        best_score = float('inf')
+        best_position = None
+        
+        for angle in angles:
+            score = self.calculate_direction_score(
+                centroid, angle, arrow_len, label_size, 
+                occupancy_map, offset
+            )
+            
+            if score < best_score:
+                best_score = score
+                
+                # Calculate position for this angle
+                rad = np.deg2rad(angle)
+                arrow_x = int(cx + arrow_len * np.cos(rad))
+                arrow_y = int(cy - arrow_len * np.sin(rad))
+                label_x = int(arrow_x + offset * np.cos(rad) - label_w / 2)
+                label_y = int(arrow_y - offset * np.sin(rad) - label_h / 2)
+                
+                # Clamp to valid range (should already be valid from score calculation)
+                label_x = max(0, min(label_x, w - label_w))
+                label_y = max(0, min(label_y, h - label_h))
+                
+                best_position = (arrow_x, arrow_y, label_x, label_y, angle)
+        
+        return best_position
+
+    # --------------------------------------------------------------------- #
+    # Get font with current size
+    # --------------------------------------------------------------------- #
+    def get_label_font(self):
+        """Get a font with the current font size setting."""
+        font_size = self.params['label_font_size'].get()
+        
+        # Try to load a nice font, fall back to default if not available
+        try:
+            return ImageFont.truetype("arial.ttf", font_size)
+        except:
+            try:
+                return ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size)
+            except:
+                # Try common font paths on different platforms
+                try:
+                    font_paths = [
+                        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # Linux
+                        "/System/Library/Fonts/Supplemental/Arial.ttf",     # macOS alternative
+                        "C:\\Windows\\Fonts\\arial.ttf",                    # Windows
+                    ]
+                    for path in font_paths:
+                        try:
+                            return ImageFont.truetype(path, font_size)
+                        except:
+                            continue
+                except:
+                    pass
+                
+                # Last resort: use default font
+                return ImageFont.load_default()
+
+    # --------------------------------------------------------------------- #
+    # Draw labels with arrows using smart positioning
+    # --------------------------------------------------------------------- #
+    def draw_labels_on_contours(self, img_bgr, contours):
+        """
+        Draw labels with arrows on detected bacteria using intelligent positioning.
+        
+        Args:
+            img_bgr: BGR image from OpenCV
+            contours: list of contours
+        
+        Returns:
+            img_bgr with labels drawn
+        """
+        if not self.params['show_labels'].get() or not contours:
+            return img_bgr
+        
+        # Convert BGR to RGB for PIL
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(img_rgb)
+        draw = ImageDraw.Draw(pil_img)
+        
+        # Get parameters
+        arrow_len = self.params['arrow_length'].get()
+        label_offset = self.params['label_offset'].get()
+        
+        # Get font with current size
+        font = self.get_label_font()
+        
+        h, w = img_bgr.shape[:2]
+        
+        # Create occupancy map for smart positioning
+        occupancy_map = self.create_occupancy_map((h, w), contours, margin=20)
+        
+        # Draw labels for each contour
+        for idx, contour in enumerate(contours, 1):
+            # Calculate centroid
+            M = cv2.moments(contour)
+            if M["m00"] == 0:
+                continue
+            
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+            
+            # Get label text and size
+            label_text = str(idx)
+            bbox = draw.textbbox((0, 0), label_text, font=font)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+            
+            # Find best label position using smart algorithm
+            result = self.find_best_label_position(
+                (cx, cy), 
+                (h, w), 
+                arrow_len, 
+                (text_w, text_h), 
+                label_offset,
+                occupancy_map
+            )
+            
+            if result is None:
+                continue
+            
+            arrow_x, arrow_y, label_x, label_y, angle = result
+            
+            # Draw arrow line
+            draw.line([(cx, cy), (arrow_x, arrow_y)], fill=(255, 255, 0), width=2)
+            
+            # Draw arrow head
+            head_len = 8
+            head_angle = 25
+            angle_rad = np.deg2rad(angle)
+            
+            # Left arrow head line
+            left_angle = angle_rad + np.deg2rad(180 - head_angle)
+            left_x = int(arrow_x + head_len * np.cos(left_angle))
+            left_y = int(arrow_y - head_len * np.sin(left_angle))
+            draw.line([(arrow_x, arrow_y), (left_x, left_y)], fill=(255, 255, 0), width=2)
+            
+            # Right arrow head line
+            right_angle = angle_rad + np.deg2rad(180 + head_angle)
+            right_x = int(arrow_x + head_len * np.cos(right_angle))
+            right_y = int(arrow_y - head_len * np.sin(right_angle))
+            draw.line([(arrow_x, arrow_y), (right_x, right_y)], fill=(255, 255, 0), width=2)
+            
+            # Draw text background (semi-transparent black rectangle)
+            padding = 4
+            bg_rect = [
+                label_x - padding,
+                label_y - padding,
+                label_x + text_w + padding,
+                label_y + text_h + padding
+            ]
+            draw.rectangle(bg_rect, fill=(0, 0, 0, 200))
+            
+            # Draw text
+            draw.text((label_x, label_y), label_text, font=font, fill=(255, 255, 0))
+            
+            # Mark this label area as occupied for subsequent labels
+            occupancy_map[label_y:label_y+text_h, label_x:label_x+text_w] = 255
+        
+        # Convert back to BGR for OpenCV
+        img_rgb_array = np.array(pil_img)
+        img_bgr = cv2.cvtColor(img_rgb_array, cv2.COLOR_RGB2BGR)
+        
+        return img_bgr
+
+    # --------------------------------------------------------------------- #
     # Update preview
     # --------------------------------------------------------------------- #
     def update_preview(self) -> None:
@@ -898,9 +1205,11 @@ class SegmentationViewer:
             self.display_image(thresh, self.canvas_threshold)
             self.display_image(cleaned, self.canvas_morphology)
 
+            # Create contour image with labels
             contour_img = cv2.cvtColor(self.original_image, cv2.COLOR_GRAY2BGR)
             cv2.drawContours(contour_img, bacteria, -1, (0, 255, 0), 2)
 
+            # Highlight probed contour if exists
             if self.probe_point and bacteria:
                 x, y = self.probe_point
                 for contour in bacteria:
@@ -908,9 +1217,14 @@ class SegmentationViewer:
                         cv2.drawContours(contour_img, [contour], -1, (0, 0, 255), 3)
                         break
 
+            # Draw labels with smart positioning
+            contour_img = self.draw_labels_on_contours(contour_img, bacteria)
+
             self.display_image(contour_img, self.canvas_contours)
         except Exception as e:
             self.status_var.set(f"Error: {e}")
+            import traceback
+            traceback.print_exc()
 
     # --------------------------------------------------------------------- #
     # Display fluorescence image in red with enhanced visibility
