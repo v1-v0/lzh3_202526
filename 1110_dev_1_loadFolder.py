@@ -143,7 +143,7 @@ class SegmentationViewer:
     def scan_source_folder(self):
         self.image_files = []
         if self.source_dir.exists():
-            all_files = list(self.source_dir.rglob('*_ch00.tif'))
+            all_files = list(self.source_dir.glob('*_ch00.tif'))
             self.image_files = sorted(
                 [f for f in all_files if self.is_valid_image_file(f)],
                 key=lambda p: str(p)
