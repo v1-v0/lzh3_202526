@@ -13,7 +13,7 @@ Interactive Bacteria Segmentation Parameter Tuner
 - Previous/Next navigation through source folder (FIXED for subfolders + AppleDouble files)
 - Brightfield (_ch00.tif) and Fluorescence (_ch01.tif) pair support
 - Fluorescence displayed in RED color with enhanced visibility
-- Auto-loads first image on startup
+- Auto-loads first image on startup (disable by default)
 - Configurable arrows and labels on Final Contours view with smart positioning
 - SMART POSITIONING: Finds most empty direction, avoids borders and other objects
 - Statistics list showing BF area, fluorescence intensity, and combined overlay view
@@ -1285,6 +1285,7 @@ class SegmentationViewer:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         self.original_image = img
         self.current_file = filepath
+        self.current_index = self.find_file_index(filepath)
         
         # Try to load corresponding fluorescence image
         fluor_path = self.get_fluorescence_path(filepath)
