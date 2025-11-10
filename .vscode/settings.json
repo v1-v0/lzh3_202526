@@ -27,6 +27,5 @@
   ],
   "python.analysis.autoImportCompletions": true,
   "python.analysis.typeCheckingMode": "basic",
-  "python.analysis.autoSearchPaths": true,
-  "python-envs.defaultEnvManager": "ms-python.python:conda"
+  "python.analysis.autoSearchPaths": true
 }
