@@ -6,6 +6,7 @@ Interactive Bacteria Segmentation Parameter Tuner
 - Enhanced folder selection with subfolder picker
 - Smart label positioning
 - Vertical scrollbar for entire left panel
+- Numbered tabs with keyboard shortcuts
 """
 
 import os
@@ -16,7 +17,8 @@ from scipy import ndimage
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk, ImageDraw, ImageFont
-from typing import cast, List, Tuple, Dict, Optional
+from typing import cast, List, Tuple, Dict, Optional, Sequence
+from cv2.typing import MatLike
 
 
 # --------------------------------------------------------------------- #
@@ -29,6 +31,23 @@ class ToolTip:
         self.tip_window = None
         self.widget.bind("<Enter>", self.show_tip)
         self.widget.bind("<Leave>", self.hide_tip)
+            # Declare dynamic attributes for type checker
+        self.tab_original: ttk.Frame
+        self.tab_fluorescence: ttk.Frame
+        self.tab_enhanced: ttk.Frame
+        self.tab_threshold: ttk.Frame
+        self.tab_morphology: ttk.Frame
+        self.tab_contours: ttk.Frame
+        self.tab_overlay: ttk.Frame
+        self.tab_statistics: ttk.Frame
+        
+        self.canvas_original: tk.Canvas
+        self.canvas_fluorescence: tk.Canvas
+        self.canvas_enhanced: tk.Canvas
+        self.canvas_threshold: tk.Canvas
+        self.canvas_morphology: tk.Canvas
+        self.canvas_contours: tk.Canvas
+        self.canvas_overlay: tk.Canvas
 
     def show_tip(self, event=None):
         if self.tip_window or not self.text:
@@ -92,6 +111,26 @@ class SegmentationViewer:
         self.root.geometry("1500x950")
         self.root.protocol("WM_DELETE_WINDOW", self.exit_application)
 
+        # Declare tab attributes for type checker
+        self.tab_original: ttk.Frame
+        self.tab_fluorescence: ttk.Frame
+        self.tab_enhanced: ttk.Frame
+        self.tab_threshold: ttk.Frame
+        self.tab_morphology: ttk.Frame
+        self.tab_contours: ttk.Frame
+        self.tab_overlay: ttk.Frame
+        self.tab_statistics: ttk.Frame
+
+        # Declare canvas attributes for type checker
+        self.canvas_original: tk.Canvas
+        self.canvas_fluorescence: tk.Canvas
+        self.canvas_enhanced: tk.Canvas
+        self.canvas_threshold: tk.Canvas
+        self.canvas_morphology: tk.Canvas
+        self.canvas_contours: tk.Canvas
+        self.canvas_overlay: tk.Canvas
+
+        # Image and state variables ----------------------------------------
         self.original_image: Optional[np.ndarray] = None
         self.fluorescence_image: Optional[np.ndarray] = None
         self.current_contours: List[np.ndarray] = []
@@ -132,6 +171,7 @@ class SegmentationViewer:
         self.measure_labels: Dict[str, ttk.Label] = {}
 
         self.setup_ui()
+        self.setup_keyboard_shortcuts()
         self.root.bind("<Configure>", lambda e: self.root.after_idle(self.update_preview))
 
     # --------------------------------------------------------------------- #
@@ -510,6 +550,24 @@ class SegmentationViewer:
             self.index_label.config(text="-/-")
 
     # --------------------------------------------------------------------- #
+    # Keyboard shortcuts
+    # --------------------------------------------------------------------- #
+    def setup_keyboard_shortcuts(self):
+        """Setup keyboard shortcuts for tab navigation."""
+        # Number keys 1-8 for switching tabs
+        for i in range(8):
+            self.root.bind(str(i + 1), lambda e, idx=i: self.switch_to_tab(idx))
+        
+        # Arrow keys for previous/next image
+        self.root.bind("<Left>", lambda e: self.load_previous_image())
+        self.root.bind("<Right>", lambda e: self.load_next_image())
+    
+    def switch_to_tab(self, index: int):
+        """Switch to tab at given index."""
+        if 0 <= index < self.notebook.index('end'):
+            self.notebook.select(index)
+
+    # --------------------------------------------------------------------- #
     # UI construction
     # --------------------------------------------------------------------- #
     def setup_ui(self):
@@ -572,16 +630,16 @@ class SegmentationViewer:
         row2.grid_columnconfigure(0, weight=1)
         row2.grid_columnconfigure(2, weight=1)
 
-        self.prev_btn = ttk.Button(row2, text="Previous", command=self.load_previous_image, state=tk.DISABLED)
+        self.prev_btn = ttk.Button(row2, text="Previous (←)", command=self.load_previous_image, state=tk.DISABLED)
         self.prev_btn.grid(row=0, column=0, sticky='ew')
-        ToolTip(self.prev_btn, "Previous image in folder")
+        ToolTip(self.prev_btn, "Previous image in folder (or press Left arrow)")
 
         self.index_label = ttk.Label(row2, text="-/-", anchor=tk.CENTER)
         self.index_label.grid(row=0, column=1, sticky='ew')
 
-        self.next_btn = ttk.Button(row2, text="Next", command=self.load_next_image, state=tk.DISABLED)
+        self.next_btn = ttk.Button(row2, text="Next (→)", command=self.load_next_image, state=tk.DISABLED)
         self.next_btn.grid(row=0, column=2, sticky='ew')
-        ToolTip(self.next_btn, "Next image in folder")
+        ToolTip(self.next_btn, "Next image in folder (or press Right arrow)")
 
         # ---- Measurement ------------------------------------------------
         self.measure_panel = CollapsibleFrame(left, title="Measurement on Click")
@@ -619,20 +677,28 @@ class SegmentationViewer:
         self.notebook = ttk.Notebook(img_frame)
         self.notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
 
+        # Updated tabs with numbering
         tabs = [
-            ("Original (BF)", "tab_original"), ("Fluorescence", "tab_fluorescence"),
-            ("CLAHE Enhanced", "tab_enhanced"), ("Threshold", "tab_threshold"),
-            ("Morphology", "tab_morphology"), ("Final Contours", "tab_contours"),
-            ("BF+Fluor Overlay", "tab_overlay"), ("Statistics List", "tab_statistics")
+            ("1_Original (BF)", "tab_original"), 
+            ("2_Fluorescence", "tab_fluorescence"),
+            ("3_CLAHE Enhanced", "tab_enhanced"), 
+            ("4_Threshold", "tab_threshold"),
+            ("5_Morphology", "tab_morphology"), 
+            ("6_Final Contours", "tab_contours"),
+            ("7_BF+Fluor Overlay", "tab_overlay"), 
+            ("8_Statistics List", "tab_statistics")
         ]
+        
         for name, attr in tabs:
             tab = ttk.Frame(self.notebook)
             setattr(self, attr, tab)
             self.notebook.add(tab, text=name)
 
+        # Create canvases for image tabs
         for attr in ["canvas_original", "canvas_fluorescence", "canvas_enhanced",
                      "canvas_threshold", "canvas_morphology", "canvas_contours", "canvas_overlay"]:
-            canvas = tk.Canvas(getattr(self, attr.replace("canvas_", "tab_")), bg='#f8f9fa', highlightthickness=0)
+            tab_attr = attr.replace("canvas_", "tab_")
+            canvas = tk.Canvas(getattr(self, tab_attr), bg='#f8f9fa', highlightthickness=0)
             setattr(self, attr, canvas)
             canvas.pack(fill=tk.BOTH, expand=True)
 
@@ -641,8 +707,17 @@ class SegmentationViewer:
         self.canvas_original.bind("<Button-3>", self.clear_probe)
 
         # Status bar
-        ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN,
-                  anchor=tk.W, padding=(5, 2)).pack(side=tk.BOTTOM, fill=tk.X)
+        status_frame = ttk.Frame(self.root)
+        status_frame.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        ttk.Label(status_frame, textvariable=self.status_var, relief=tk.SUNKEN,
+                  anchor=tk.W, padding=(5, 2)).pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        # Keyboard shortcuts hint
+        shortcut_hint = ttk.Label(status_frame, text="Keys: 1-8 = Tabs | ← → = Images", 
+                                 relief=tk.SUNKEN, anchor=tk.E, padding=(5, 2), 
+                                 foreground="#666", font=("Segoe UI", 8))
+        shortcut_hint.pack(side=tk.RIGHT)
 
     def _on_canvas_configure(self, event):
         """Update the scrollable frame width when canvas is resized."""
@@ -779,7 +854,6 @@ class SegmentationViewer:
             for idx, s in enumerate(self.bacteria_stats):
                 if cv2.pointPolygonTest(s['contour'], (ix, iy), False) >= 0:
                     self.current_bacteria_index = idx
-                    self.update_bacterium_status(idx)
                     break
             else:
                 self.current_bacteria_index = -1
@@ -818,14 +892,6 @@ class SegmentationViewer:
                     "inside_contour": "Inside Contour: -", "contour_area": "Contour Area: - px²"}
         for k, txt in defaults.items():
             self.measure_labels[k].config(text=txt, foreground="#2c3e50")
-
-    def update_bacterium_status(self, idx: int):
-        """Update status bar with current bacterium info."""
-        if 0 <= idx < len(self.bacteria_stats):
-            s = self.bacteria_stats[idx]
-            self.status_var.set(
-                f"Viewing #{idx+1}/{len(self.bacteria_stats)} – BF: {s['bf_area']:.1f} px² | F/A: {s['fluor_per_area']:.3f}"
-            )
 
     # --------------------------------------------------------------------- #
     # Auto-tune
@@ -1126,7 +1192,7 @@ class SegmentationViewer:
 
         contour_mask = (markers > 1).astype(np.uint8) * 255
         res = cv2.findContours(contour_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contours: List[np.ndarray] = res[-2]
+        contours: Sequence[MatLike] = res[-2]
 
         bacteria = [c for c in contours if cv2.contourArea(c) >= self.params['min_area'].get()]
 
@@ -1380,6 +1446,7 @@ class SegmentationViewer:
         canvas.image = photo
 
         if canvas == self.canvas_original and self.probe_point:
+            assert self.original_image is not None
             h0, w0 = self.original_image.shape[:2]
             s = min(cw / w0, ch / h0) * 0.95
             s = min(s, 1.0)
