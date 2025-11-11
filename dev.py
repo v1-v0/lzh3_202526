@@ -4,10 +4,11 @@
 """
 Interactive Bacteria Segmentation Parameter Tuner
 - Enhanced folder selection with subfolder picker
-- Smart label positioning and bacteria navigation
-- All bugs fixed
+- Smart label positioning
+- Vertical scrollbar for entire left panel
 """
 
+import os
 import cv2
 import numpy as np
 from pathlib import Path
@@ -106,6 +107,9 @@ class SegmentationViewer:
         self.image_files: List[Path] = []
         self.current_index: int = -1
 
+        # Create status_var BEFORE setup_ui()
+        self.status_var = tk.StringVar(value="Click 'Load Folder' to start")
+
         # Default parameters -------------------------------------------------
         self.default_params = {
             'use_otsu': False, 'manual_threshold': 50, 'enable_clahe': True,
@@ -126,7 +130,6 @@ class SegmentationViewer:
         self.entries: Dict[str, tk.Entry] = {}
         self.progressbars: Dict[str, ttk.Progressbar] = {}
         self.measure_labels: Dict[str, ttk.Label] = {}
-        self.compact_stats_labels: Dict[str, ttk.Label] = {}
 
         self.setup_ui()
         self.root.bind("<Configure>", lambda e: self.root.after_idle(self.update_preview))
@@ -152,9 +155,10 @@ class SegmentationViewer:
         - If selected folder contains only subfolders → prompt to choose one
         - If selected folder contains images → scan directly
         """
-        # Let user choose starting directory
-        if self.source_dir.exists() and self.source_dir.is_dir():
-            initial_dir = str(self.source_dir)
+        # Always start at "source" subfolder if it exists, otherwise current directory
+        source_subfolder = Path.cwd() / "source"
+        if source_subfolder.exists() and source_subfolder.is_dir():
+            initial_dir = str(source_subfolder)
         else:
             initial_dir = str(Path.cwd())
         
@@ -230,6 +234,7 @@ class SegmentationViewer:
             self.status_var.set("Error analyzing folder")
             messagebox.showerror("Analysis Error", msg)
 
+
     def choose_subfolder(self, parent_path: Path, subfolders: List[Path]) -> Optional[Path]:
         """
         Show dialog to choose from available subfolders.
@@ -241,52 +246,45 @@ class SegmentationViewer:
         Returns:
             Selected subfolder Path or None if cancelled
         """
+        selected_folder = None
+        
+        def on_select():
+            nonlocal selected_folder
+            selection = listbox.curselection()
+            if selection:
+                idx = selection[0]
+                selected_folder = sorted_folders[idx]
+                dialog.destroy()
+            else:
+                messagebox.showwarning("No Selection", "Please select a subfolder")
+        
+        def on_cancel():
+            nonlocal selected_folder
+            selected_folder = None
+            dialog.destroy()
+        
+        def on_double_click(event):
+            nonlocal selected_folder
+            selection = listbox.curselection()
+            if selection:
+                idx = selection[0]
+                selected_folder = sorted_folders[idx]
+                dialog.destroy()
+        
         # Show subfolder picker dialog
         dialog = tk.Toplevel(self.root)
         dialog.title("Select subfolder from source")
-        dialog.geometry("300x400")
+        dialog.geometry("500x400")
         dialog.transient(self.root)
         dialog.grab_set()
-
-        selected_var = tk.StringVar()
-
-        tk.Label(dialog, text="Select a subfolder:", font=("Arial", 10, "bold")).pack(pady=10)
-
-        for subfolder in subfolders:
-            tk.Radiobutton(dialog, text=subfolder, variable=selected_var, 
-                        value=subfolder, font=("Arial", 9)).pack(anchor="w", padx=20)
-
-        def on_ok():
-            if selected_var.get():
-                dialog.result = selected_var.get()
-                dialog.destroy()
-            else:
-                messagebox.showwarning("No selection", "Please select a subfolder")
-
-        def on_cancel():
-            dialog.result = None
-            dialog.destroy()
-
-        tk.Button(dialog, text="OK", command=on_ok, width=10).pack(side="left", padx=20, pady=20)
-        tk.Button(dialog, text="Cancel", command=on_cancel, width=10).pack(side="right", padx=20, pady=20)
-
-        dialog.wait_window()
-
-        if hasattr(dialog, 'result') and dialog.result:
-            folder_path = os.path.join(folder_path, dialog.result)
-            # NOW it will load the .tif files from this subfolder
-            # The rest of your existing code continues here...
-        else:
-            return  # User cancelled
-
         
         # Header
         ttk.Label(dialog, text=f"Multiple subfolders found in:", 
-                 font=("Segoe UI", 10, "bold")).pack(pady=(10, 0))
+                font=("Segoe UI", 10, "bold")).pack(pady=(10, 0))
         ttk.Label(dialog, text=str(parent_path), 
-                 font=("Segoe UI", 9), foreground="#666").pack(pady=(0, 10))
+                font=("Segoe UI", 9), foreground="#666").pack(pady=(0, 10))
         ttk.Label(dialog, text="Select a subfolder to scan:", 
-                 font=("Segoe UI", 10)).pack(pady=(0, 5))
+                font=("Segoe UI", 10)).pack(pady=(0, 5))
         
         # Listbox with scrollbar
         list_frame = ttk.Frame(dialog)
@@ -512,64 +510,47 @@ class SegmentationViewer:
             self.index_label.config(text="-/-")
 
     # --------------------------------------------------------------------- #
-    # Bacteria navigation
-    # --------------------------------------------------------------------- #
-    def navigate_to_bacteria(self, index: int):
-        """Navigate to specific bacterium by index."""
-        if not self.bacteria_stats or not (0 <= index < len(self.bacteria_stats)):
-            return
-        self.current_bacteria_index = index
-        stat = self.bacteria_stats[index]
-        M = cv2.moments(stat['contour'])
-        if M["m00"] == 0:
-            return
-        cx, cy = int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])
-        self.probe_point = (cx, cy)
-        self.update_measurement_panel(cx, cy, int(self.original_image[cy, cx]))
-        self.update_compact_statistics()
-        self.update_preview()
-        self.update_bacterium_status(index)
-
-    def navigate_previous_bacteria(self):
-        """Navigate to previous bacterium (wraps around)."""
-        if self.bacteria_stats:
-            self.navigate_to_bacteria((self.current_bacteria_index - 1) % len(self.bacteria_stats))
-
-    def navigate_next_bacteria(self):
-        """Navigate to next bacterium (wraps around)."""
-        if self.bacteria_stats:
-            self.navigate_to_bacteria((self.current_bacteria_index + 1) % len(self.bacteria_stats))
-
-    def update_bacteria_navigation_buttons(self):
-        """Enable/disable bacteria navigation buttons."""
-        if not hasattr(self, 'bacteria_prev_btn'):
-            return
-        state = tk.NORMAL if self.bacteria_stats else tk.DISABLED
-        self.bacteria_prev_btn.config(state=state)
-        self.bacteria_next_btn.config(state=state)
-
-    def update_bacterium_status(self, idx: int):
-        """Update status bar with current bacterium info."""
-        if 0 <= idx < len(self.bacteria_stats):
-            s = self.bacteria_stats[idx]
-            self.status_var.set(
-                f"Viewing #{idx+1}/{len(self.bacteria_stats)} – BF: {s['bf_area']:.1f} px² | F/A: {s['fluor_per_area']:.3f}"
-            )
-
-    # --------------------------------------------------------------------- #
     # UI construction
     # --------------------------------------------------------------------- #
     def setup_ui(self):
         main = ttk.Frame(self.root)
         main.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
-        left = ttk.Frame(main, width=420)
-        left.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 15))
-        left.pack_propagate(False)
+        # LEFT PANEL WITH SCROLLBAR
+        left_container = ttk.Frame(main, width=420)
+        left_container.pack(side=tk.LEFT, fill=tk.BOTH, padx=(0, 15))
+        left_container.pack_propagate(False)
+
+        # Create canvas for scrolling
+        self.left_canvas = tk.Canvas(left_container, highlightthickness=0)
+        self.left_scrollbar = ttk.Scrollbar(left_container, orient="vertical", command=self.left_canvas.yview)
+        self.scrollable_left = ttk.Frame(self.left_canvas)
+
+        self.scrollable_left.bind(
+            "<Configure>",
+            lambda e: self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
+        )
+
+        self.canvas_frame = self.left_canvas.create_window((0, 0), window=self.scrollable_left, anchor="nw")
+        self.left_canvas.configure(yscrollcommand=self.left_scrollbar.set)
+
+        self.left_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.left_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Bind canvas width changes to update the scrollable frame width
+        self.left_canvas.bind('<Configure>', self._on_canvas_configure)
+
+        # Mouse wheel scrolling
+        self.left_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.left_canvas.bind_all("<Button-4>", self._on_mousewheel)
+        self.left_canvas.bind_all("<Button-5>", self._on_mousewheel)
+
+        # Now build all left panel content inside scrollable_left
+        left = self.scrollable_left
 
         # ---- Navigation -------------------------------------------------
         nav = ttk.LabelFrame(left, text=" Navigation ", padding=10)
-        nav.pack(fill=tk.X, pady=(0, 10))
+        nav.pack(fill=tk.X, pady=(0, 10), padx=5)
 
         row1 = ttk.Frame(nav)
         row1.pack(fill=tk.X, pady=(0, 8))
@@ -604,7 +585,7 @@ class SegmentationViewer:
 
         # ---- Measurement ------------------------------------------------
         self.measure_panel = CollapsibleFrame(left, title="Measurement on Click")
-        self.measure_panel.pack(fill=tk.X, pady=(0, 10))
+        self.measure_panel.pack(fill=tk.X, pady=(0, 10), padx=5)
         mc = self.measure_panel.get_content_frame()
         for key, txt in [("pixel_coord", "Pixel: -, -"), ("pixel_value", "Value: -"),
                          ("inside_contour", "Inside Contour: -"), ("contour_area", "Contour Area: - px²")]:
@@ -614,53 +595,22 @@ class SegmentationViewer:
             lbl.pack(anchor=tk.W)
             self.measure_labels[key] = lbl
 
-        # ---- Config ----------------------------------------------------
+        # ---- Config (inside scrollable left panel) ----------------------
         self.config_panel = CollapsibleFrame(left, title="Configuration Parameters")
-        self.config_panel.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        self.config_panel.pack(fill=tk.X, pady=(0, 10), padx=5)
         cfg = self.config_panel.get_content_frame()
 
-        canvas = tk.Canvas(cfg, height=380)
-        vsb = ttk.Scrollbar(cfg, orient="vertical", command=canvas.yview)
-        scroll = ttk.Frame(canvas)
+        # Direct parameter frame
+        params_frame = ttk.Frame(cfg)
+        params_frame.pack(fill=tk.X)
 
-        scroll.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=scroll, anchor="nw")
-        canvas.configure(yscrollcommand=vsb.set)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.create_threshold_controls(scroll)
-        self.create_clahe_controls(scroll)
-        self.create_morphology_controls(scroll)
-        self.create_watershed_controls(scroll)
-        self.create_fluorescence_controls(scroll)
-        self.create_label_controls(scroll)
-
-        # ---- Compact stats + bacteria navigation -----------------------
-        stats_panel = ttk.LabelFrame(left, text=" Quick Statistics ", padding=8)
-        stats_panel.pack(fill=tk.X)
-
-        for key, txt in [("bacteria_count", "Bacteria: -"), ("current_viewing", ""),
-                         ("avg_bf_area", "Avg BF Area: - px²"), ("avg_fluor_area", "Avg Fluor/Area: -")]:
-            r = ttk.Frame(stats_panel)
-            r.pack(fill=tk.X, pady=1)
-            lbl = ttk.Label(r, text=txt, font=("Consolas", 9), foreground="#34495e")
-            lbl.pack(anchor=tk.W)
-            self.compact_stats_labels[key] = lbl
-        self.compact_stats_labels["current_viewing"].pack_forget()
-
-        ttk.Separator(stats_panel, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
-        nav_bac = ttk.Frame(stats_panel)
-        nav_bac.pack(fill=tk.X, pady=(5, 0))
-        ttk.Label(nav_bac, text="Navigate:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 5))
-        self.bacteria_prev_btn = ttk.Button(nav_bac, text="Previous", width=3,
-                                            command=self.navigate_previous_bacteria, state=tk.DISABLED)
-        self.bacteria_prev_btn.pack(side=tk.LEFT, padx=(0, 2))
-        ToolTip(self.bacteria_prev_btn, "Previous bacterium")
-        self.bacteria_next_btn = ttk.Button(nav_bac, text="Next", width=3,
-                                            command=self.navigate_next_bacteria, state=tk.DISABLED)
-        self.bacteria_next_btn.pack(side=tk.LEFT, padx=(2, 0))
-        ToolTip(self.bacteria_next_btn, "Next bacterium")
+        # Create parameter controls
+        self.create_threshold_controls(params_frame)
+        self.create_clahe_controls(params_frame)
+        self.create_morphology_controls(params_frame)
+        self.create_watershed_controls(params_frame)
+        self.create_fluorescence_controls(params_frame)
+        self.create_label_controls(params_frame)
 
         # ---- Image tabs -------------------------------------------------
         img_frame = ttk.Frame(main)
@@ -690,39 +640,20 @@ class SegmentationViewer:
         self.canvas_original.bind("<Button-1>", self.on_canvas_click)
         self.canvas_original.bind("<Button-3>", self.clear_probe)
 
-        self.status_var = tk.StringVar(value="Click 'Load Folder' to start")
+        # Status bar
         ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN,
                   anchor=tk.W, padding=(5, 2)).pack(side=tk.BOTTOM, fill=tk.X)
 
-    # --------------------------------------------------------------------- #
-    # Compact statistics
-    # --------------------------------------------------------------------- #
-    def update_compact_statistics(self):
-        """Update quick statistics panel."""
-        if self.bacteria_stats:
-            count = len(self.bacteria_stats)
-            avg_bf = np.mean([s['bf_area'] for s in self.bacteria_stats])
-            avg_fpa = np.mean([s['fluor_per_area'] for s in self.bacteria_stats])
+    def _on_canvas_configure(self, event):
+        """Update the scrollable frame width when canvas is resized."""
+        self.left_canvas.itemconfig(self.canvas_frame, width=event.width)
 
-            self.compact_stats_labels["bacteria_count"].config(text=f"Bacteria: {count}", foreground="#27ae60")
-            if 0 <= self.current_bacteria_index < len(self.bacteria_stats):
-                s = self.bacteria_stats[self.current_bacteria_index]
-                txt = (f"Viewing #{self.current_bacteria_index+1} | BF: {s['bf_area']:.1f} px² | "
-                       f"F/A: {s['fluor_per_area']:.3f}")
-                self.compact_stats_labels["current_viewing"].config(text=txt, foreground="#e67e22")
-                if not self.compact_stats_labels["current_viewing"].winfo_ismapped():
-                    self.compact_stats_labels["current_viewing"].pack(fill=tk.X, pady=1)
-            else:
-                self.compact_stats_labels["current_viewing"].pack_forget()
-
-            self.compact_stats_labels["avg_bf_area"].config(text=f"Avg BF Area: {avg_bf:.1f} px²")
-            self.compact_stats_labels["avg_fluor_area"].config(text=f"Avg Fluor/Area: {avg_fpa:.3f}")
-        else:
-            for k in self.compact_stats_labels:
-                self.compact_stats_labels[k].config(text=self.compact_stats_labels[k].cget("text").split(":")[0] + ": -",
-                                                    foreground="#34495e")
-            self.compact_stats_labels["current_viewing"].pack_forget()
-        self.update_bacteria_navigation_buttons()
+    def _on_mousewheel(self, event):
+        """Handle mouse wheel scrolling for left panel."""
+        if event.num == 5 or event.delta < 0:
+            self.left_canvas.yview_scroll(1, "units")
+        elif event.num == 4 or event.delta > 0:
+            self.left_canvas.yview_scroll(-1, "units")
 
     # --------------------------------------------------------------------- #
     # Statistics table
@@ -852,8 +783,6 @@ class SegmentationViewer:
                     break
             else:
                 self.current_bacteria_index = -1
-            self.update_bacteria_navigation_buttons()
-            self.update_compact_statistics()
 
     def clear_probe(self, event=None):
         """Clear probe point and reset measurement panel."""
@@ -862,9 +791,7 @@ class SegmentationViewer:
         self.probe_canvas_ids = []
         self.probe_point = None
         self.current_bacteria_index = -1
-        self.update_bacteria_navigation_buttons()
         self.reset_measurement_panel()
-        self.update_compact_statistics()
         if self.current_file:
             self.status_var.set(f"Ready – {self.current_file.name}")
 
@@ -891,6 +818,14 @@ class SegmentationViewer:
                     "inside_contour": "Inside Contour: -", "contour_area": "Contour Area: - px²"}
         for k, txt in defaults.items():
             self.measure_labels[k].config(text=txt, foreground="#2c3e50")
+
+    def update_bacterium_status(self, idx: int):
+        """Update status bar with current bacterium info."""
+        if 0 <= idx < len(self.bacteria_stats):
+            s = self.bacteria_stats[idx]
+            self.status_var.set(
+                f"Viewing #{idx+1}/{len(self.bacteria_stats)} – BF: {s['bf_area']:.1f} px² | F/A: {s['fluor_per_area']:.3f}"
+            )
 
     # --------------------------------------------------------------------- #
     # Auto-tune
@@ -1133,8 +1068,6 @@ class SegmentationViewer:
         self.clear_probe()
         self.bacteria_stats = []
         self.current_bacteria_index = -1
-        self.update_compact_statistics()
-        self.update_bacteria_navigation_buttons()
 
         h, w = bf.shape[:2]
         fmsg = " + fluorescence" if self.fluorescence_image is not None else ""
@@ -1374,7 +1307,6 @@ class SegmentationViewer:
                 self.status_var.set(f"{base} | {self.current_file.name}{fstat}")
 
             self.update_statistics_table()
-            self.update_compact_statistics()
             for k in self.progressbars:
                 self.update_progressbar(k)
 
