@@ -560,8 +560,8 @@ class SegmentationViewer:
         
         # L for Load Folder
         self.root.bind("l", lambda e: self.choose_and_load_folder())
-        # esc for Exit
-        self.root.bind("<Escape>", lambda e: self.exit_application())
+        # esc for Exit (with confirmation)
+        self.root.bind("<Escape>", lambda e: self.exit_with_confirmation())
                 
         # Arrow keys for previous/next image
         self.root.bind("<Left>", lambda e: self.load_previous_image())
@@ -1468,6 +1468,11 @@ class SegmentationViewer:
     # --------------------------------------------------------------------- #
     # Exit cleanup
     # --------------------------------------------------------------------- #
+    def exit_with_confirmation(self):
+        """Exit application with confirmation dialog (for Escape key)."""
+        if messagebox.askyesno("Exit", "Are you sure you want to exit?"):
+            self.exit_application()
+    
     def exit_application(self):
         """Clean up resources and exit application."""
         try:
