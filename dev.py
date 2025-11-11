@@ -11,6 +11,7 @@ Interactive Bacteria Segmentation Parameter Tuner
 
 import os
 import cv2
+from numpy.typing import NDArray
 import numpy as np
 from pathlib import Path
 from scipy import ndimage
@@ -18,8 +19,6 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 from typing import cast, List, Tuple, Dict, Optional, Sequence
-from cv2.typing import MatLike
-
 
 # --------------------------------------------------------------------- #
 # ToolTip class
@@ -1197,7 +1196,7 @@ class SegmentationViewer:
 
         contour_mask = (markers > 1).astype(np.uint8) * 255
         res = cv2.findContours(contour_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contours: Sequence[MatLike] = res[-2]
+        contours: Sequence[NDArray[np.uint8]] = res[-2]
 
         bacteria = [c for c in contours if cv2.contourArea(c) >= self.params['min_area'].get()]
 
@@ -1494,9 +1493,3 @@ class SegmentationViewer:
                 self.root.destroy()
             except:
                 pass
-
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = SegmentationViewer(root)
-    root.mainloop()
