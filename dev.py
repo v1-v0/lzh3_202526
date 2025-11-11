@@ -558,6 +558,11 @@ class SegmentationViewer:
         for i in range(8):
             self.root.bind(str(i + 1), lambda e, idx=i: self.switch_to_tab(idx))
         
+        # L for Load Folder
+        self.root.bind("l", lambda e: self.choose_and_load_folder())
+        # esc for Exit
+        self.root.bind("<Escape>", lambda e: self.exit_application())
+                
         # Arrow keys for previous/next image
         self.root.bind("<Left>", lambda e: self.load_previous_image())
         self.root.bind("<Right>", lambda e: self.load_next_image())
