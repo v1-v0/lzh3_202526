@@ -5,7 +5,7 @@
 Interactive Bacteria Segmentation Parameter Tuner
 - Enhanced folder selection with subfolder picker
 - Smart label positioning
-- Vertical scrollbar for entire left panel
+- Vertical scrollbar for entire left panel (OPTIMIZED for macOS)
 - Numbered tabs with keyboard shortcuts
 """
 
@@ -19,6 +19,7 @@ from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 from typing import cast, List, Tuple, Dict, Optional, Sequence
 from cv2.typing import MatLike
+import platform
 
 
 # --------------------------------------------------------------------- #
@@ -31,23 +32,6 @@ class ToolTip:
         self.tip_window = None
         self.widget.bind("<Enter>", self.show_tip)
         self.widget.bind("<Leave>", self.hide_tip)
-            # Declare dynamic attributes for type checker
-        self.tab_original: ttk.Frame
-        self.tab_fluorescence: ttk.Frame
-        self.tab_enhanced: ttk.Frame
-        self.tab_threshold: ttk.Frame
-        self.tab_morphology: ttk.Frame
-        self.tab_contours: ttk.Frame
-        self.tab_overlay: ttk.Frame
-        self.tab_statistics: ttk.Frame
-        
-        self.canvas_original: tk.Canvas
-        self.canvas_fluorescence: tk.Canvas
-        self.canvas_enhanced: tk.Canvas
-        self.canvas_threshold: tk.Canvas
-        self.canvas_morphology: tk.Canvas
-        self.canvas_contours: tk.Canvas
-        self.canvas_overlay: tk.Canvas
 
     def show_tip(self, event=None):
         if self.tip_window or not self.text:
@@ -148,6 +132,10 @@ class SegmentationViewer:
 
         # Create status_var BEFORE setup_ui()
         self.status_var = tk.StringVar(value="Click 'Load Folder' to start")
+
+        # Performance optimization flags
+        self._scroll_update_pending = False
+        self._preview_update_pending = False
 
         # Default parameters -------------------------------------------------
         self.default_params = {
@@ -573,13 +561,13 @@ class SegmentationViewer:
             self.notebook.select(index)
 
     # --------------------------------------------------------------------- #
-    # UI construction
+    # UI construction (OPTIMIZED)
     # --------------------------------------------------------------------- #
     def setup_ui(self):
         main = ttk.Frame(self.root)
         main.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
-        # LEFT PANEL WITH SCROLLBAR
+        # LEFT PANEL WITH SCROLLBAR (OPTIMIZED FOR macOS)
         left_container = ttk.Frame(main, width=420)
         left_container.pack(side=tk.LEFT, fill=tk.BOTH, padx=(0, 15))
         left_container.pack_propagate(False)
@@ -589,10 +577,13 @@ class SegmentationViewer:
         self.left_scrollbar = ttk.Scrollbar(left_container, orient="vertical", command=self.left_canvas.yview)
         self.scrollable_left = ttk.Frame(self.left_canvas)
 
-        self.scrollable_left.bind(
-            "<Configure>",
-            lambda e: self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
-        )
+        # OPTIMIZED: Debounced configure binding
+        def update_scroll_region(event=None):
+            if not self._scroll_update_pending:
+                self._scroll_update_pending = True
+                self.root.after(100, self._update_scroll_region_delayed)
+        
+        self.scrollable_left.bind("<Configure>", update_scroll_region)
 
         self.canvas_frame = self.left_canvas.create_window((0, 0), window=self.scrollable_left, anchor="nw")
         self.left_canvas.configure(yscrollcommand=self.left_scrollbar.set)
@@ -603,10 +594,8 @@ class SegmentationViewer:
         # Bind canvas width changes to update the scrollable frame width
         self.left_canvas.bind('<Configure>', self._on_canvas_configure)
 
-        # Mouse wheel scrolling
-        self.left_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-        self.left_canvas.bind_all("<Button-4>", self._on_mousewheel)
-        self.left_canvas.bind_all("<Button-5>", self._on_mousewheel)
+        # OPTIMIZED: Platform-specific mouse wheel binding (NOT bind_all)
+        self._bind_mousewheel()
 
         # Now build all left panel content inside scrollable_left
         left = self.scrollable_left
@@ -724,16 +713,58 @@ class SegmentationViewer:
                                  foreground="#666", font=("Segoe UI", 8))
         shortcut_hint.pack(side=tk.RIGHT)
 
+    # --------------------------------------------------------------------- #
+    # OPTIMIZED scrollbar helpers
+    # --------------------------------------------------------------------- #
+    def _update_scroll_region_delayed(self):
+        """Debounced scroll region update."""
+        try:
+            self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
+        finally:
+            self._scroll_update_pending = False
+
     def _on_canvas_configure(self, event):
         """Update the scrollable frame width when canvas is resized."""
         self.left_canvas.itemconfig(self.canvas_frame, width=event.width)
 
+    def _bind_mousewheel(self):
+        """Platform-specific mouse wheel binding (more efficient than bind_all)."""
+        system = platform.system()
+        
+        # Only bind when mouse enters the canvas area
+        def on_enter(event):
+            if system == "Darwin":  # macOS
+                self.left_canvas.bind("<MouseWheel>", self._on_mousewheel)
+            elif system == "Linux":
+                self.left_canvas.bind("<Button-4>", self._on_mousewheel)
+                self.left_canvas.bind("<Button-5>", self._on_mousewheel)
+            else:  # Windows
+                self.left_canvas.bind("<MouseWheel>", self._on_mousewheel)
+        
+        def on_leave(event):
+            self.left_canvas.unbind("<MouseWheel>")
+            self.left_canvas.unbind("<Button-4>")
+            self.left_canvas.unbind("<Button-5>")
+        
+        self.left_canvas.bind("<Enter>", on_enter)
+        self.left_canvas.bind("<Leave>", on_leave)
+
     def _on_mousewheel(self, event):
-        """Handle mouse wheel scrolling for left panel."""
-        if event.num == 5 or event.delta < 0:
-            self.left_canvas.yview_scroll(1, "units")
-        elif event.num == 4 or event.delta > 0:
-            self.left_canvas.yview_scroll(-1, "units")
+        """Handle mouse wheel scrolling (optimized for platform differences)."""
+        system = platform.system()
+        
+        # Platform-specific delta handling
+        if system == "Darwin":  # macOS
+            # macOS uses event.delta directly
+            delta = -1 if event.delta > 0 else 1
+        elif event.num == 5 or event.delta < 0:  # Linux scroll down / Windows
+            delta = 1
+        elif event.num == 4 or event.delta > 0:  # Linux scroll up / Windows
+            delta = -1
+        else:
+            return
+        
+        self.left_canvas.yview_scroll(delta, "units")
 
     # --------------------------------------------------------------------- #
     # Statistics table
@@ -1351,13 +1382,22 @@ class SegmentationViewer:
         return cv2.cvtColor(img_rgb_array, cv2.COLOR_RGB2BGR)
 
     # --------------------------------------------------------------------- #
-    # Preview update
+    # Preview update (OPTIMIZED with throttling)
     # --------------------------------------------------------------------- #
     def update_preview(self):
-        """Update all preview tabs with current segmentation results."""
-        if self.original_image is None:
+        """Update all preview tabs (with throttling)."""
+        if self._preview_update_pending:
             return
+        
+        self._preview_update_pending = True
+        self.root.after(50, self._do_update_preview)
+
+    def _do_update_preview(self):
+        """Actual preview update logic."""
         try:
+            if self.original_image is None:
+                return
+            
             enhanced, thresh, cleaned, bacteria = self.segment_bacteria(self.original_image)
 
             all_stats = self.calculate_bacteria_statistics(bacteria, self.original_image, self.fluorescence_image)
@@ -1409,6 +1449,8 @@ class SegmentationViewer:
             import traceback
             self.status_var.set(f"Error: {e}")
             traceback.print_exc()
+        finally:
+            self._preview_update_pending = False
 
     # --------------------------------------------------------------------- #
     # Display helpers
