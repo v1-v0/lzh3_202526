@@ -5,7 +5,7 @@
 Interactive Bacteria Segmentation Parameter Tuner
 - Load by folder (recursively)
 - No auto-load on start
-- All bugs fixed
+- All bugs fixed + Enhanced debugging
 """
 
 import cv2
@@ -57,7 +57,7 @@ class CollapsibleFrame(ttk.Frame):
         self.is_collapsed = False
         self.header = ttk.Frame(self, relief=tk.RAISED, borderwidth=1)
         self.header.pack(fill=tk.X, padx=2, pady=2)
-        self.toggle_btn = ttk.Button(self.header, text="Down Arrow", width=3, command=self.toggle)
+        self.toggle_btn = ttk.Button(self.header, text="▼", width=3, command=self.toggle)
         self.toggle_btn.pack(side=tk.LEFT, padx=2)
         self.title_label = ttk.Label(self.header, text=title, font=("Segoe UI", 10, "bold"))
         self.title_label.pack(side=tk.LEFT, padx=5)
@@ -72,12 +72,12 @@ class CollapsibleFrame(ttk.Frame):
 
     def collapse(self):
         self.content.pack_forget()
-        self.toggle_btn.config(text="Right Arrow")
+        self.toggle_btn.config(text="▶")
         self.is_collapsed = True
 
     def expand(self):
         self.content.pack(fill=tk.BOTH, expand=True)
-        self.toggle_btn.config(text="Down Arrow")
+        self.toggle_btn.config(text="▼")
         self.is_collapsed = False
 
     def get_content_frame(self):
@@ -130,29 +130,133 @@ class SegmentationViewer:
         self.setup_ui()
         self.root.bind("<Configure>", lambda e: self.root.after_idle(self.update_preview))
 
-        # Scan default folder (no auto-load)
-        self.scan_source_folder()
+        # Don't scan default folder on startup
+        # self.scan_source_folder()
 
     # --------------------------------------------------------------------- #
-    # Folder / file handling
+    # Folder / file handling – ENHANCED WITH DEBUGGING
     # --------------------------------------------------------------------- #
     def is_valid_image_file(self, filepath: Path) -> bool:
+        """Return True only for real bright-field files."""
         name = filepath.name
-        return not (name.startswith('._') or name.startswith('.')) and name.endswith('_ch00.tif')
+        ok = (
+            not name.startswith('._') and      # skip AppleDouble files
+            not name.startswith('.') and       # skip hidden files
+            name.endswith('_ch00.tif')         # must be bright-field
+        )
+        return ok
 
     def scan_source_folder(self):
+        """Scan **only the selected folder** (no sub-folders) for _ch00.tif files."""
         self.image_files = []
-        if self.source_dir.exists():
-            all_files = list(self.source_dir.glob('*_ch00.tif'))
-            self.image_files = sorted(
-                [f for f in all_files if self.is_valid_image_file(f)],
-                key=lambda p: str(p)
-            )
-        self.update_navigation_buttons()
-        if self.image_files:
-            self.status_var.set(f"Found {len(self.image_files)} brightfield images")
-        else:
-            self.status_var.set("No brightfield images found")
+        
+        print(f"\n{'='*60}")
+        print(f"SCANNING FOLDER: {self.source_dir}")
+        print(f"{'='*60}")
+        
+        if not self.source_dir.exists():
+            msg = f"Selected folder does not exist: {self.source_dir}"
+            self.status_var.set(msg)
+            print(f"❌ {msg}")
+            messagebox.showerror("Folder Error", msg)
+            return
+
+        if not self.source_dir.is_dir():
+            msg = f"Path is not a directory: {self.source_dir}"
+            self.status_var.set(msg)
+            print(f"❌ {msg}")
+            messagebox.showerror("Folder Error", msg)
+            return
+
+        try:
+            # List ALL files in the folder
+            all_files = list(self.source_dir.iterdir())
+            print(f"\n📁 Total files/folders in directory: {len(all_files)}")
+            
+            # Filter for .tif files
+            tif_files = [f for f in all_files if f.is_file() and f.suffix.lower() in ['.tif', '.tiff']]
+            print(f"📄 Total .tif/.tiff files: {len(tif_files)}")
+            
+            # Show all .tif files found
+            if tif_files:
+                print("\n.TIF files found:")
+                for f in sorted(tif_files):
+                    print(f"  • {f.name}")
+            
+            # Filter for _ch00.tif files
+            ch00_files = [f for f in tif_files if '_ch00' in f.name.lower()]
+            print(f"\n🔍 Files containing '_ch00': {len(ch00_files)}")
+            
+            if ch00_files:
+                print("_ch00 files found:")
+                for f in sorted(ch00_files):
+                    print(f"  • {f.name}")
+
+            # ---- Filter + detailed output ----
+            valid = []
+            rejected = []
+            
+            for f in ch00_files:
+                if self.is_valid_image_file(f):
+                    valid.append(f)
+                    print(f"✅ ACCEPTED: {f.name}")
+                else:
+                    reasons = []
+                    if f.name.startswith('._'): reasons.append("AppleDouble")
+                    if f.name.startswith('.'): reasons.append("hidden")
+                    if not f.name.endswith('_ch00.tif'): reasons.append("wrong suffix")
+                    rejected.append((f, reasons))
+                    print(f"❌ REJECTED: {f.name} - {', '.join(reasons)}")
+
+            self.image_files = sorted(valid, key=lambda p: p.name)
+
+            # ---- Update UI ----
+            self.update_navigation_buttons()
+            
+            print(f"\n{'='*60}")
+            print(f"RESULTS: {len(self.image_files)} valid files")
+            print(f"{'='*60}\n")
+            
+            if self.image_files:
+                self.status_var.set(
+                    f"Found {len(self.image_files)} bright-field image(s) in folder"
+                )
+                # auto-load the first one
+                self.load_image_by_index(0)
+            else:
+                # Detailed message when nothing matches
+                msg_parts = []
+                msg_parts.append(f"No valid _ch00.tif files found in:\n{self.source_dir}\n")
+                
+                if not tif_files:
+                    msg_parts.append("❌ No .tif files found at all.")
+                elif not ch00_files:
+                    msg_parts.append(f"❌ Found {len(tif_files)} .tif file(s) but none contain '_ch00'.")
+                elif rejected:
+                    msg_parts.append(f"❌ Found {len(ch00_files)} _ch00.tif file(s) but all were rejected:")
+                    for f, reasons in rejected[:5]:  # Show first 5
+                        msg_parts.append(f"  • {f.name}: {', '.join(reasons)}")
+                
+                msg_parts.append("\n✓ Valid files must:")
+                msg_parts.append("  • End with '_ch00.tif'")
+                msg_parts.append("  • Not start with '.' or '._'")
+                
+                msg = "\n".join(msg_parts)
+                self.status_var.set("No valid images found - see details")
+                messagebox.showinfo("No Images Found", msg)
+                
+        except PermissionError as e:
+            msg = f"Permission denied accessing folder:\n{self.source_dir}\n\n{str(e)}"
+            print(f"❌ PERMISSION ERROR: {e}")
+            self.status_var.set("Permission denied")
+            messagebox.showerror("Permission Error", msg)
+        except Exception as e:
+            msg = f"Error scanning folder:\n{self.source_dir}\n\n{str(e)}"
+            print(f"❌ ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            self.status_var.set("Error scanning folder")
+            messagebox.showerror("Scan Error", msg)
 
     def choose_and_load_folder(self):
         folder = filedialog.askdirectory(title="Select Folder containing _ch00.tif files")
@@ -160,10 +264,6 @@ class SegmentationViewer:
             return
         self.source_dir = Path(folder)
         self.scan_source_folder()
-        if self.image_files:
-            self.load_image_by_index(0)
-        else:
-            messagebox.showinfo("No images", "No valid _ch00.tif files found in the selected folder.")
 
     def get_fluorescence_path(self, bf_path: Path) -> Optional[Path]:
         if not bf_path.name.endswith('_ch00.tif'):
@@ -385,7 +485,7 @@ class SegmentationViewer:
         self.canvas_original.bind("<Button-1>", self.on_canvas_click)
         self.canvas_original.bind("<Button-3>", self.clear_probe)
 
-        self.status_var = tk.StringVar(value="Choose a folder to start.")
+        self.status_var = tk.StringVar(value="Click 'Load Folder' to start")
         ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN,
                   anchor=tk.W, padding=(5, 2)).pack(side=tk.BOTTOM, fill=tk.X)
 
@@ -500,7 +600,7 @@ class SegmentationViewer:
     # Click handling
     # --------------------------------------------------------------------- #
     def on_canvas_click(self, event):
-        if not self.original_image:
+        if self.original_image is None:
             return
         cw, ch = self.canvas_original.winfo_width(), self.canvas_original.winfo_height()
         if cw <= 1 or ch <= 1:
@@ -576,7 +676,7 @@ class SegmentationViewer:
         defaults = {"pixel_coord": "Pixel: -, -", "pixel_value": "Value: -",
                     "inside_contour": "Inside Contour: -", "contour_area": "Contour Area: - px²"}
         for k, txt in defaults.items():
-            self.measure_labels[k].config(text=txt, foreground46="black")
+            self.measure_labels[k].config(text=txt, foreground="#2c3e50")
 
     # --------------------------------------------------------------------- #
     # Auto-tune
@@ -605,7 +705,7 @@ class SegmentationViewer:
         self.status_var.set("Click inside a contour to auto-tune")
 
     # --------------------------------------------------------------------- #
-    # Parameter controls
+    # Parameter controls - NOW IMPLEMENTED
     # --------------------------------------------------------------------- #
     def add_entry_with_progress(self, parent, label, tip, var, mn, mx, res=1.0, fl=False):
         f = ttk.Frame(parent)
@@ -663,15 +763,95 @@ class SegmentationViewer:
         mn, mx = rng[name]
         pb['value'] = (v - mn) / (mx - mn) * 100
 
-    # --------------------------------------------------------------------- #
-    # Control groups (unchanged – placeholders)
-    # --------------------------------------------------------------------- #
-    def create_threshold_controls(self, p): ...
-    def create_clahe_controls(self, p): ...
-    def create_morphology_controls(self, p): ...
-    def create_watershed_controls(self, p): ...
-    def create_fluorescence_controls(self, p): ...
-    def create_label_controls(self, p): ...
+    def create_threshold_controls(self, parent):
+        lf = ttk.LabelFrame(parent, text=" Threshold ", padding=8)
+        lf.pack(fill=tk.X, pady=(0, 5))
+        
+        cb = ttk.Checkbutton(lf, text="Use Otsu", variable=self.params['use_otsu'],
+                             command=self.update_preview)
+        cb.pack(anchor=tk.W, pady=2)
+        ToolTip(cb, "Automatically calculate threshold using Otsu's method")
+        
+        self.add_entry_with_progress(lf, "Manual Threshold:", 
+                                     "Threshold value (0-255)", 
+                                     self.params['manual_threshold'], 0, 255)
+
+    def create_clahe_controls(self, parent):
+        lf = ttk.LabelFrame(parent, text=" CLAHE Enhancement ", padding=8)
+        lf.pack(fill=tk.X, pady=(0, 5))
+        
+        cb = ttk.Checkbutton(lf, text="Enable CLAHE", variable=self.params['enable_clahe'],
+                             command=self.update_preview)
+        cb.pack(anchor=tk.W, pady=2)
+        ToolTip(cb, "Apply Contrast Limited Adaptive Histogram Equalization")
+        
+        self.add_entry_with_progress(lf, "Clip Limit:", 
+                                     "CLAHE clip limit (1-10)",
+                                     self.params['clahe_clip'], 1, 10, 0.1, True)
+        self.add_entry_with_progress(lf, "Tile Size:", 
+                                     "CLAHE tile grid size (4-32)",
+                                     self.params['clahe_tile'], 4, 32)
+
+    def create_morphology_controls(self, parent):
+        lf = ttk.LabelFrame(parent, text=" Morphology ", padding=8)
+        lf.pack(fill=tk.X, pady=(0, 5))
+        
+        self.add_entry_with_progress(lf, "Open Kernel:", 
+                                     "Opening kernel size (odd, 1-15)",
+                                     self.params['open_kernel'], 1, 15)
+        self.add_entry_with_progress(lf, "Open Iterations:", 
+                                     "Opening iterations (1-5)",
+                                     self.params['open_iter'], 1, 5)
+        self.add_entry_with_progress(lf, "Close Kernel:", 
+                                     "Closing kernel size (odd, 1-15)",
+                                     self.params['close_kernel'], 1, 15)
+        self.add_entry_with_progress(lf, "Close Iterations:", 
+                                     "Closing iterations (1-5)",
+                                     self.params['close_iter'], 1, 5)
+
+    def create_watershed_controls(self, parent):
+        lf = ttk.LabelFrame(parent, text=" Watershed & Filtering ", padding=8)
+        lf.pack(fill=tk.X, pady=(0, 5))
+        
+        self.add_entry_with_progress(lf, "Watershed Dilate:", 
+                                     "Watershed marker dilation (1-20)",
+                                     self.params['watershed_dilate'], 1, 20)
+        self.add_entry_with_progress(lf, "Min Area (px²):", 
+                                     "Minimum bacteria area in pixels (10-500)",
+                                     self.params['min_area'], 10, 500)
+
+    def create_fluorescence_controls(self, parent):
+        lf = ttk.LabelFrame(parent, text=" Fluorescence ", padding=8)
+        lf.pack(fill=tk.X, pady=(0, 5))
+        
+        self.add_entry_with_progress(lf, "Brightness:", 
+                                     "Fluorescence brightness multiplier (0.5-5)",
+                                     self.params['fluor_brightness'], 0.5, 5, 0.1, True)
+        self.add_entry_with_progress(lf, "Gamma:", 
+                                     "Fluorescence gamma correction (0.2-2)",
+                                     self.params['fluor_gamma'], 0.2, 2, 0.1, True)
+        self.add_entry_with_progress(lf, "Min Fluor/Area:", 
+                                     "Minimum fluorescence per area ratio (0-255)",
+                                     self.params['min_fluor_per_area'], 0, 255, 0.1, True)
+
+    def create_label_controls(self, parent):
+        lf = ttk.LabelFrame(parent, text=" Labels ", padding=8)
+        lf.pack(fill=tk.X, pady=(0, 5))
+        
+        cb = ttk.Checkbutton(lf, text="Show Labels", variable=self.params['show_labels'],
+                             command=self.update_preview)
+        cb.pack(anchor=tk.W, pady=2)
+        ToolTip(cb, "Display numbered labels for bacteria")
+        
+        self.add_entry_with_progress(lf, "Font Size:", 
+                                     "Label font size (10-60)",
+                                     self.params['label_font_size'], 10, 60)
+        self.add_entry_with_progress(lf, "Arrow Length:", 
+                                     "Arrow length in pixels (20-100)",
+                                     self.params['arrow_length'], 20, 100)
+        self.add_entry_with_progress(lf, "Label Offset:", 
+                                     "Label offset from arrow (5-50)",
+                                     self.params['label_offset'], 5, 50)
 
     # --------------------------------------------------------------------- #
     # Reset
@@ -692,10 +872,16 @@ class SegmentationViewer:
     # Load image (safe)
     # --------------------------------------------------------------------- #
     def load_image_from_path(self, path: Path):
+        print(f"\n📸 Loading image: {path}")
+        
         bf = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
         if bf is None:
-            self.status_var.set(f"Cannot read {path.name}")
+            msg = f"Cannot read {path.name}"
+            self.status_var.set(msg)
+            print(f"❌ {msg}")
+            messagebox.showerror("Load Error", f"Failed to load image:\n{path}")
             return
+            
         if len(bf.shape) == 3:
             bf = cv2.cvtColor(bf, cv2.COLOR_BGR2GRAY)
         self.original_image = bf
@@ -705,11 +891,17 @@ class SegmentationViewer:
         fluor_path = self.get_fluorescence_path(path)
         self.fluorescence_image = None
         if fluor_path:
+            print(f"  🔍 Looking for fluorescence: {fluor_path.name}")
             fluor = cv2.imread(str(fluor_path), cv2.IMREAD_UNCHANGED)
             if fluor is not None:
                 if len(fluor.shape) == 3:
                     fluor = cv2.cvtColor(fluor, cv2.COLOR_BGR2GRAY)
                 self.fluorescence_image = fluor
+                print(f"  ✅ Fluorescence loaded")
+            else:
+                print(f"  ⚠️ Fluorescence file exists but couldn't be read")
+        else:
+            print(f"  ℹ️ No fluorescence file found")
 
         self.probe_point = None
         self.clear_probe()
@@ -724,6 +916,7 @@ class SegmentationViewer:
         self.root.title(f"{path.name} - Bacteria Segmentation Tuner")
         self.update_navigation_buttons()
         self.update_preview()
+        print(f"✅ Image loaded successfully: {w}x{h}{fmsg}\n")
 
     # --------------------------------------------------------------------- #
     # SEGMENTATION – FULLY RESTORED
