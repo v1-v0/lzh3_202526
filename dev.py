@@ -5,13 +5,13 @@
 Interactive Bacteria Segmentation Parameter Tuner
 - Enhanced folder selection with subfolder picker
 - Smart label positioning
-- Vertical scrollbar for entire left panel
+- Vertical scrollbar for entire left panel (OPTIMIZED for macOS)
 - Numbered tabs with keyboard shortcuts
+- Dark mode support (inline toggle button)
 """
 
 import os
 import cv2
-from numpy.typing import NDArray
 import numpy as np
 from pathlib import Path
 from scipy import ndimage
@@ -19,6 +19,9 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 from typing import cast, List, Tuple, Dict, Optional, Sequence
+from cv2.typing import MatLike
+import platform
+
 
 # --------------------------------------------------------------------- #
 # ToolTip class
@@ -30,23 +33,6 @@ class ToolTip:
         self.tip_window = None
         self.widget.bind("<Enter>", self.show_tip)
         self.widget.bind("<Leave>", self.hide_tip)
-            # Declare dynamic attributes for type checker
-        self.tab_original: ttk.Frame
-        self.tab_fluorescence: ttk.Frame
-        self.tab_enhanced: ttk.Frame
-        self.tab_threshold: ttk.Frame
-        self.tab_morphology: ttk.Frame
-        self.tab_contours: ttk.Frame
-        self.tab_overlay: ttk.Frame
-        self.tab_statistics: ttk.Frame
-        
-        self.canvas_original: tk.Canvas
-        self.canvas_fluorescence: tk.Canvas
-        self.canvas_enhanced: tk.Canvas
-        self.canvas_threshold: tk.Canvas
-        self.canvas_morphology: tk.Canvas
-        self.canvas_contours: tk.Canvas
-        self.canvas_overlay: tk.Canvas
 
     def show_tip(self, event=None):
         if self.tip_window or not self.text:
@@ -147,6 +133,10 @@ class SegmentationViewer:
 
         # Create status_var BEFORE setup_ui()
         self.status_var = tk.StringVar(value="Click 'Load Folder' to start")
+
+        # Performance optimization flags
+        self._scroll_update_pending = False
+        self._preview_update_pending = False
 
         # Default parameters -------------------------------------------------
         self.default_params = {
@@ -553,18 +543,34 @@ class SegmentationViewer:
     # --------------------------------------------------------------------- #
     def setup_keyboard_shortcuts(self):
         """Setup keyboard shortcuts for tab navigation."""
-        # Number keys 1-8 for switching tabs
-        for i in range(8):
-            self.root.bind(str(i + 1), lambda e, idx=i: self.switch_to_tab(idx))
-        
+        # Use comma to move to previous tab, period to move to next tab
+        self.root.bind("<comma>", lambda e: self.move_to_previous_tab())
+        self.root.bind("<period>", lambda e: self.move_to_next_tab())
+
         # L for Load Folder
         self.root.bind("l", lambda e: self.choose_and_load_folder())
+        # D for Dark mode toggle
+        self.root.bind("d", lambda e: self.toggle_dark_mode())
         # esc for Exit (with confirmation)
         self.root.bind("<Escape>", lambda e: self.exit_with_confirmation())
                 
         # Arrow keys for previous/next image
         self.root.bind("<Left>", lambda e: self.load_previous_image())
         self.root.bind("<Right>", lambda e: self.load_next_image())
+
+    def move_to_previous_tab(self):
+        """Switch to the previous tab."""
+        current_tab = self.notebook.index(self.notebook.select())
+        total_tabs = self.notebook.index("end")
+        previous_tab = (current_tab - 1) % total_tabs
+        self.notebook.select(previous_tab)
+
+    def move_to_next_tab(self):
+        """Switch to the next tab."""
+        current_tab = self.notebook.index(self.notebook.select())
+        total_tabs = self.notebook.index("end")
+        next_tab = (current_tab + 1) % total_tabs
+        self.notebook.select(next_tab)
     
     def switch_to_tab(self, index: int):
         """Switch to tab at given index."""
@@ -572,13 +578,191 @@ class SegmentationViewer:
             self.notebook.select(index)
 
     # --------------------------------------------------------------------- #
-    # UI construction
+    # Dark Mode / Light Mode
+    # --------------------------------------------------------------------- #
+    def apply_dark_mode(self):
+        """Apply dark mode colors to the application."""
+        # Define dark color scheme
+        dark_bg = "#2b2b2b"
+        dark_fg = "#e0e0e0"  # Light gray text
+        dark_frame = "#3c3c3c"
+        dark_button_bg = "#4a4a4a"
+        dark_button_fg = "#ffffff"
+        dark_canvas_bg = "#1e1e1e"
+        
+        # Apply to root window
+        self.root.configure(bg=dark_bg)
+        
+        # Apply to ttk widgets
+        style = ttk.Style()
+        style.theme_use('default')  # Reset to default theme first
+        
+        # Configure notebook/tabs
+        style.configure("TNotebook", background=dark_bg, borderwidth=0)
+        style.configure("TNotebook.Tab", 
+                       background=dark_frame, 
+                       foreground=dark_fg,
+                       padding=[10, 2])
+        style.map("TNotebook.Tab", 
+                 background=[("selected", dark_button_bg)],
+                 foreground=[("selected", "#ffffff")])
+        
+        # Configure frames
+        style.configure("TFrame", background=dark_bg)
+        style.configure("TLabelframe", background=dark_bg, foreground=dark_fg)
+        style.configure("TLabelframe.Label", background=dark_bg, foreground=dark_fg)
+        
+        # Configure labels
+        style.configure("TLabel", background=dark_bg, foreground=dark_fg)
+        
+        # Configure buttons
+        style.configure("TButton", 
+                       background=dark_button_bg, 
+                       foreground=dark_button_fg,
+                       borderwidth=1)
+        style.map("TButton",
+                 background=[("active", "#5a5a5a")],
+                 foreground=[("active", "#ffffff")])
+        
+        # Configure checkbuttons
+        style.configure("TCheckbutton", background=dark_bg, foreground=dark_fg)
+        
+        # Configure entry widgets
+        style.configure("TEntry", 
+                       fieldbackground=dark_frame,
+                       foreground=dark_fg,
+                       insertcolor=dark_fg)
+        
+        # Configure scrollbars
+        style.configure("Vertical.TScrollbar", background=dark_button_bg)
+        style.configure("Horizontal.TScrollbar", background=dark_button_bg)
+        
+        # Configure progressbars
+        style.configure("TProgressbar", background="#4CAF50", troughcolor=dark_frame)
+        
+        # Configure canvas backgrounds
+        for canvas_attr in ["canvas_original", "canvas_fluorescence", "canvas_enhanced",
+                           "canvas_threshold", "canvas_morphology", "canvas_contours", 
+                           "canvas_overlay", "left_canvas"]:
+            if hasattr(self, canvas_attr):
+                getattr(self, canvas_attr).configure(bg=dark_canvas_bg)
+        
+        # Update measurement labels foreground
+        for label in self.measure_labels.values():
+            label.configure(foreground=dark_fg)
+        
+        # Update statistics tree
+        style.configure("Treeview", 
+                       background=dark_frame,
+                       foreground=dark_fg,
+                       fieldbackground=dark_frame)
+        style.configure("Treeview.Heading", background=dark_button_bg, foreground=dark_fg)
+        style.map("Treeview", 
+                 background=[("selected", dark_button_bg)],
+                 foreground=[("selected", "#ffffff")])
+        
+        # Update dark mode button text
+        self.dark_mode_btn.config(text="🌙 Dark")
+        self.status_var.set("Dark mode activated")
+
+    def apply_light_mode(self):
+        """Apply light mode colors to the application."""
+        # Define light color scheme
+        light_bg = "#ffffff"
+        light_fg = "#000000"
+        light_frame = "#f0f0f0"
+        light_button_bg = "#e1e1e1"
+        light_canvas_bg = "#f8f9fa"
+        
+        # Apply to root window
+        self.root.configure(bg=light_bg)
+        
+        # Apply to ttk widgets
+        style = ttk.Style()
+        style.theme_use('default')
+        
+        # Configure notebook/tabs
+        style.configure("TNotebook", background=light_bg, borderwidth=0)
+        style.configure("TNotebook.Tab", 
+                       background=light_frame, 
+                       foreground=light_fg,
+                       padding=[10, 2])
+        style.map("TNotebook.Tab", 
+                 background=[("selected", light_button_bg)],
+                 foreground=[("selected", light_fg)])
+        
+        # Configure frames
+        style.configure("TFrame", background=light_bg)
+        style.configure("TLabelframe", background=light_bg, foreground=light_fg)
+        style.configure("TLabelframe.Label", background=light_bg, foreground=light_fg)
+        
+        # Configure labels
+        style.configure("TLabel", background=light_bg, foreground=light_fg)
+        
+        # Configure buttons
+        style.configure("TButton", 
+                       background=light_button_bg, 
+                       foreground=light_fg,
+                       borderwidth=1)
+        style.map("TButton",
+                 background=[("active", "#d0d0d0")])
+        
+        # Configure checkbuttons
+        style.configure("TCheckbutton", background=light_bg, foreground=light_fg)
+        
+        # Configure entry widgets
+        style.configure("TEntry", 
+                       fieldbackground="white",
+                       foreground=light_fg,
+                       insertcolor=light_fg)
+        
+        # Configure scrollbars
+        style.configure("Vertical.TScrollbar", background=light_button_bg)
+        style.configure("Horizontal.TScrollbar", background=light_button_bg)
+        
+        # Configure progressbars
+        style.configure("TProgressbar", background="#4CAF50", troughcolor=light_frame)
+        
+        # Configure canvas backgrounds
+        for canvas_attr in ["canvas_original", "canvas_fluorescence", "canvas_enhanced",
+                           "canvas_threshold", "canvas_morphology", "canvas_contours", 
+                           "canvas_overlay", "left_canvas"]:
+            if hasattr(self, canvas_attr):
+                getattr(self, canvas_attr).configure(bg=light_canvas_bg)
+        
+        # Update measurement labels foreground
+        for label in self.measure_labels.values():
+            label.configure(foreground="#2c3e50")
+        
+        # Update statistics tree
+        style.configure("Treeview", 
+                       background="white",
+                       foreground=light_fg,
+                       fieldbackground="white")
+        style.configure("Treeview.Heading", background=light_button_bg, foreground=light_fg)
+        style.map("Treeview", 
+                 background=[("selected", light_button_bg)])
+        
+        # Update dark mode button text
+        self.dark_mode_btn.config(text="☀️ Light")
+        self.status_var.set("Light mode activated")
+
+    def toggle_dark_mode(self):
+        """Toggle between dark and light mode."""
+        self.dark_mode_var.set(not self.dark_mode_var.get())
+        if self.dark_mode_var.get():
+            self.apply_dark_mode()
+        else:
+            self.apply_light_mode()
+
+    # --------------------------------------------------------------------- #
+    # UI construction (OPTIMIZED)
     # --------------------------------------------------------------------- #
     def setup_ui(self):
         main = ttk.Frame(self.root)
         main.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
-        # LEFT PANEL WITH SCROLLBAR
+        # LEFT PANEL WITH SCROLLBAR (OPTIMIZED FOR macOS)
         left_container = ttk.Frame(main, width=420)
         left_container.pack(side=tk.LEFT, fill=tk.BOTH, padx=(0, 15))
         left_container.pack_propagate(False)
@@ -588,10 +772,13 @@ class SegmentationViewer:
         self.left_scrollbar = ttk.Scrollbar(left_container, orient="vertical", command=self.left_canvas.yview)
         self.scrollable_left = ttk.Frame(self.left_canvas)
 
-        self.scrollable_left.bind(
-            "<Configure>",
-            lambda e: self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
-        )
+        # OPTIMIZED: Debounced configure binding
+        def update_scroll_region(event=None):
+            if not self._scroll_update_pending:
+                self._scroll_update_pending = True
+                self.root.after(100, self._update_scroll_region_delayed)
+        
+        self.scrollable_left.bind("<Configure>", update_scroll_region)
 
         self.canvas_frame = self.left_canvas.create_window((0, 0), window=self.scrollable_left, anchor="nw")
         self.left_canvas.configure(yscrollcommand=self.left_scrollbar.set)
@@ -602,10 +789,8 @@ class SegmentationViewer:
         # Bind canvas width changes to update the scrollable frame width
         self.left_canvas.bind('<Configure>', self._on_canvas_configure)
 
-        # Mouse wheel scrolling
-        self.left_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-        self.left_canvas.bind_all("<Button-4>", self._on_mousewheel)
-        self.left_canvas.bind_all("<Button-5>", self._on_mousewheel)
+        # OPTIMIZED: Platform-specific mouse wheel binding (NOT bind_all)
+        self._bind_mousewheel()
 
         # Now build all left panel content inside scrollable_left
         left = self.scrollable_left
@@ -614,21 +799,33 @@ class SegmentationViewer:
         nav = ttk.LabelFrame(left, text=" Navigation ", padding=10)
         nav.pack(fill=tk.X, pady=(0, 10), padx=5)
 
+        # Top row with 4 buttons (Load, Reset, Dark/Light toggle, Exit)
         row1 = ttk.Frame(nav)
         row1.pack(fill=tk.X, pady=(0, 8))
+        row1.grid_columnconfigure(0, weight=1)
+        row1.grid_columnconfigure(1, weight=1)
+        row1.grid_columnconfigure(2, weight=1)
+        row1.grid_columnconfigure(3, weight=1)
 
         load_btn = ttk.Button(row1, text="Load Folder", command=self.choose_and_load_folder)
-        load_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
-        ToolTip(load_btn, "Select a folder – all _ch00.tif images inside it will be scanned.")
+        load_btn.grid(row=0, column=0, sticky='ew', padx=(0, 2))
+        ToolTip(load_btn, "Select a folder – all _ch00.tif images inside it will be scanned. (Shortcut: L)")
 
         reset_btn = ttk.Button(row1, text="Reset", command=self.reset_to_defaults)
-        reset_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 2))
+        reset_btn.grid(row=0, column=1, sticky='ew', padx=(2, 2))
         ToolTip(reset_btn, "Restore default parameters.")
 
-        exit_btn = ttk.Button(row1, text="Exit", command=self.exit_application)
-        exit_btn.pack(side=tk.RIGHT, fill=tk.X, expand=True, padx=(2, 0))
-        ToolTip(exit_btn, "Close the application.")
+        # Dark mode toggle button (inline)
+        self.dark_mode_var = tk.BooleanVar(value=True)
+        self.dark_mode_btn = ttk.Button(row1, text="☀️ Light", command=self.toggle_dark_mode)
+        self.dark_mode_btn.grid(row=0, column=2, sticky='ew', padx=(2, 2))
+        ToolTip(self.dark_mode_btn, "Toggle between light and dark mode (Shortcut: D)")
 
+        exit_btn = ttk.Button(row1, text="Exit", command=self.exit_application)
+        exit_btn.grid(row=0, column=3, sticky='ew', padx=(2, 0))
+        ToolTip(exit_btn, "Close the application. (Shortcut: Esc)")
+
+        # Navigation buttons row
         row2 = ttk.Frame(nav)
         row2.pack(fill=tk.X)
         row2.grid_columnconfigure(0, weight=1)
@@ -718,21 +915,67 @@ class SegmentationViewer:
                   anchor=tk.W, padding=(5, 2)).pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         # Keyboard shortcuts hint
-        shortcut_hint = ttk.Label(status_frame, text="Keys: 1-8 = Tabs | ← → = Images", 
+        shortcut_hint = ttk.Label(status_frame, text="Keys: , . = Tabs | ← → = Images | L = Load | D = Dark | Esc = Exit", 
                                  relief=tk.SUNKEN, anchor=tk.E, padding=(5, 2), 
                                  foreground="#666", font=("Segoe UI", 8))
         shortcut_hint.pack(side=tk.RIGHT)
+
+        # Apply dark mode by default if enabled
+        if self.dark_mode_var.get():
+            self.apply_dark_mode()
+
+    # --------------------------------------------------------------------- #
+    # OPTIMIZED scrollbar helpers
+    # --------------------------------------------------------------------- #
+    def _update_scroll_region_delayed(self):
+        """Debounced scroll region update."""
+        try:
+            self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
+        finally:
+            self._scroll_update_pending = False
 
     def _on_canvas_configure(self, event):
         """Update the scrollable frame width when canvas is resized."""
         self.left_canvas.itemconfig(self.canvas_frame, width=event.width)
 
+    def _bind_mousewheel(self):
+        """Platform-specific mouse wheel binding (more efficient than bind_all)."""
+        system = platform.system()
+        
+        # Only bind when mouse enters the canvas area
+        def on_enter(event):
+            if system == "Darwin":  # macOS
+                self.left_canvas.bind("<MouseWheel>", self._on_mousewheel)
+            elif system == "Linux":
+                self.left_canvas.bind("<Button-4>", self._on_mousewheel)
+                self.left_canvas.bind("<Button-5>", self._on_mousewheel)
+            else:  # Windows
+                self.left_canvas.bind("<MouseWheel>", self._on_mousewheel)
+        
+        def on_leave(event):
+            self.left_canvas.unbind("<MouseWheel>")
+            self.left_canvas.unbind("<Button-4>")
+            self.left_canvas.unbind("<Button-5>")
+        
+        self.left_canvas.bind("<Enter>", on_enter)
+        self.left_canvas.bind("<Leave>", on_leave)
+
     def _on_mousewheel(self, event):
-        """Handle mouse wheel scrolling for left panel."""
-        if event.num == 5 or event.delta < 0:
-            self.left_canvas.yview_scroll(1, "units")
-        elif event.num == 4 or event.delta > 0:
-            self.left_canvas.yview_scroll(-1, "units")
+        """Handle mouse wheel scrolling (optimized for platform differences)."""
+        system = platform.system()
+        
+        # Platform-specific delta handling
+        if system == "Darwin":  # macOS
+            # macOS uses event.delta directly
+            delta = -1 if event.delta > 0 else 1
+        elif event.num == 5 or event.delta < 0:  # Linux scroll down / Windows
+            delta = 1
+        elif event.num == 4 or event.delta > 0:  # Linux scroll up / Windows
+            delta = -1
+        else:
+            return
+        
+        self.left_canvas.yview_scroll(delta, "units")
 
     # --------------------------------------------------------------------- #
     # Statistics table
@@ -895,7 +1138,8 @@ class SegmentationViewer:
         defaults = {"pixel_coord": "Pixel: -, -", "pixel_value": "Value: -",
                     "inside_contour": "Inside Contour: -", "contour_area": "Contour Area: - px²"}
         for k, txt in defaults.items():
-            self.measure_labels[k].config(text=txt, foreground="#2c3e50")
+            fg = "#e0e0e0" if self.dark_mode_var.get() else "#2c3e50"
+            self.measure_labels[k].config(text=txt, foreground=fg)
 
     # --------------------------------------------------------------------- #
     # Auto-tune
@@ -1196,7 +1440,7 @@ class SegmentationViewer:
 
         contour_mask = (markers > 1).astype(np.uint8) * 255
         res = cv2.findContours(contour_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        contours: Sequence[NDArray[np.uint8]] = res[-2]
+        contours: Sequence[MatLike] = res[-2]
 
         bacteria = [c for c in contours if cv2.contourArea(c) >= self.params['min_area'].get()]
 
@@ -1350,13 +1594,22 @@ class SegmentationViewer:
         return cv2.cvtColor(img_rgb_array, cv2.COLOR_RGB2BGR)
 
     # --------------------------------------------------------------------- #
-    # Preview update
+    # Preview update (OPTIMIZED with throttling)
     # --------------------------------------------------------------------- #
     def update_preview(self):
-        """Update all preview tabs with current segmentation results."""
-        if self.original_image is None:
+        """Update all preview tabs (with throttling)."""
+        if self._preview_update_pending:
             return
+        
+        self._preview_update_pending = True
+        self.root.after(50, self._do_update_preview)
+
+    def _do_update_preview(self):
+        """Actual preview update logic."""
         try:
+            if self.original_image is None:
+                return
+            
             enhanced, thresh, cleaned, bacteria = self.segment_bacteria(self.original_image)
 
             all_stats = self.calculate_bacteria_statistics(bacteria, self.original_image, self.fluorescence_image)
@@ -1408,6 +1661,8 @@ class SegmentationViewer:
             import traceback
             self.status_var.set(f"Error: {e}")
             traceback.print_exc()
+        finally:
+            self._preview_update_pending = False
 
     # --------------------------------------------------------------------- #
     # Display helpers
@@ -1493,3 +1748,9 @@ class SegmentationViewer:
                 self.root.destroy()
             except:
                 pass
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = SegmentationViewer(root)
+    root.mainloop()
