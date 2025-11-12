@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
 Bacteria Segmentation Batch Processor (Enhanced)
@@ -36,6 +34,7 @@ import tempfile
 import os
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
+from collections import defaultdict
 
 # --------------------------------------------------------------------- #
 # Configuration
@@ -566,6 +565,8 @@ def export_to_excel(pairs: List[Tuple[Path, Path, str, str]]):
     print(f"Starting Excel export (LANDSCAPE format)...")
     print(f"{'='*70}")
 
+    folder_counters = defaultdict(int)
+
     for bf_path, fluor_path, idx, rel_path in pairs:
         print(f"\n[{idx}/{len(pairs):02d}] Processing: {rel_path}")
 
@@ -608,7 +609,9 @@ def export_to_excel(pairs: List[Tuple[Path, Path, str, str]]):
         # Create worksheet
         print(f"  → Creating Excel worksheet (landscape layout)...")
         source_folder_name = bf_path.parent.name
-        sheet_title = f"{source_folder_name}-{idx}"
+        folder_counters[source_folder_name] += 1
+        seq_num = folder_counters[source_folder_name]
+        sheet_title = f"{source_folder_name}-{seq_num}"
         ws = wb.create_sheet(title=sheet_title)
 
         # === COMPACT LANDSCAPE LAYOUT ===
@@ -693,6 +696,49 @@ def export_to_excel(pairs: List[Tuple[Path, Path, str, str]]):
             for row in ws[f"A{detail_row}:E{detail_row + len(stats_df)}"]:
                 for cell in row:
                     cell.border = Border(top=thin, left=thin, right=thin, bottom=thin)
+
+            # Apply shading for higher 20% and lower 20% per column (B to E)
+            green_fill = PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid")  # light green for high
+            red_fill = PatternFill(start_color="FFB6C1", end_color="FFB6C1", fill_type="solid")  # light red for low
+
+            is_shaded_row = [False] * len(stats_df)
+
+            for col_letter in ['B', 'C', 'D', 'E']:
+                col_idx = ord(col_letter) - ord('A') + 1
+                values = [ws.cell(r, col_idx).value for r in range(detail_row + 1, detail_row + 1 + len(stats_df))]
+                if not values:
+                    continue
+                top_thresh = np.percentile(values, 80)
+                bottom_thresh = np.percentile(values, 20)
+                for r in range(detail_row + 1, detail_row + 1 + len(stats_df)):
+                    cell = ws.cell(r, col_idx)
+                    row_idx = r - detail_row - 1
+                    if cell.value >= top_thresh:
+                        cell.fill = green_fill
+                        is_shaded_row[row_idx] = True
+                    elif cell.value <= bottom_thresh:
+                        cell.fill = red_fill
+                        is_shaded_row[row_idx] = True
+
+            # Highlight IDs for clear rows
+            bold_font = Font(size=9, bold=True)
+            for row_idx, is_shaded in enumerate(is_shaded_row):
+                if not is_shaded:
+                    r = detail_row + 1 + row_idx
+                    id_cell = ws.cell(r, 1)
+                    id_cell.font = bold_font
+
+            # Add recommendation if there are clear items
+            clear_ids = sorted([int(ws.cell(detail_row + 1 + i, 1).value) for i in range(len(stats_df)) if not is_shaded_row[i]])
+            if clear_ids:
+                rec_row = detail_row + len(stats_df) + 2
+                rec_text = f"Recommended items: IDs {', '.join(map(str, clear_ids))}"
+                if len(clear_ids) < 3:
+                    rec_text += " (fewer than 3 available)"
+                rec_cell = ws.cell(rec_row, 1, rec_text)
+                rec_cell.font = Font(italic=True)
+                ws.merge_cells(start_row=rec_row, start_column=1, end_row=rec_row, end_column=5)
+
         else:
             ws.cell(row=detail_row + 1, column=1, value="No bacteria detected")
 
