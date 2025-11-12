@@ -18,7 +18,7 @@ File Naming Convention:
     - Brightfield: *_ch00.tif
     - Fluorescence: *_ch01.tif
 
-Configuration matches the interactive viewer (1029-dev-8-BF-list.py)
+Configuration matches the interactive viewer (dev.py)
 """
 
 import cv2
@@ -48,19 +48,19 @@ TARGET_IMAGE_SIZE = (480, 480)  # Width, Height for embedded images (LARGER)
 
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# Match parameters from 1029-dev-8-BF-list.py
+# Match parameters from dev.py
 PARAMS = {
     'use_otsu': False,
-    'manual_threshold': 50,
+    'manual_threshold': 110,
     'enable_clahe': True,
     'clahe_clip': 5.0,
-    'clahe_tile': 16,
+    'clahe_tile': 32,
     'open_kernel': 3,
     'close_kernel': 5,
     'open_iter': 3,
     'close_iter': 2,
     'min_area': 50,
-    'watershed_dilate': 15,
+    'watershed_dilate': 10,
     'fluor_brightness': 2.0,
     'fluor_gamma': 0.5,
     # Label settings (matching interactive viewer)
@@ -68,6 +68,7 @@ PARAMS = {
     'label_font_size': 20,
     'arrow_length': 60,
     'label_offset': 15,
+    'min_fluor_per_area': 0.1,
 }
 
 # --------------------------------------------------------------------- #
@@ -240,18 +241,15 @@ def segment_bacteria(gray_bf: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.nd
     return enhanced, thresh, cleaned, bacteria
 
 # --------------------------------------------------------------------- #
-# Statistics
+# Statistics (with filter and sort matching dev.py)
 # --------------------------------------------------------------------- #
-def calculate_statistics(contours: List[np.ndarray], bf_img: np.ndarray, fluor_img: Optional[np.ndarray]) -> Tuple[pd.DataFrame, Dict]:
+def get_processed_stats_and_contours(contours: List[np.ndarray], bf_img: np.ndarray, fluor_img: Optional[np.ndarray], min_fpa: float) -> Tuple[pd.DataFrame, Dict, List[np.ndarray]]:
     """
-    Calculate per-bacterium and summary statistics.
-    
-    Returns:
-        Tuple of (detailed_dataframe, summary_dict)
+    Calculate per-bacterium statistics, apply filter/sort matching dev.py, and return df, summary, filtered/sorted contours.
     """
-    stats_list = []
+    all_stats: List[Dict] = []
     
-    for idx, contour in enumerate(contours, 1):
+    for contour in contours:
         area = cv2.contourArea(contour)
         
         # Create mask for this bacterium
@@ -259,32 +257,56 @@ def calculate_statistics(contours: List[np.ndarray], bf_img: np.ndarray, fluor_i
         cv2.drawContours(mask, [contour], -1, 255, -1)
         
         # Calculate fluorescence statistics
-        fluor_mean = fluor_total = 0
+        fluor_mean = 0.0
+        fluor_total = 0.0
+        fluor_per_area = 0.0
         if fluor_img is not None:
             values = fluor_img[mask == 255]
             if len(values) > 0:
                 fluor_mean = float(np.mean(values))
                 fluor_total = float(np.sum(values))
+                fluor_per_area = fluor_total / area if area > 0 else 0.0
         
-        fluor_per_area = fluor_total / area if area > 0 else 0
-        
+        all_stats.append({
+            'contour': contour,
+            'area': area,
+            'fluor_mean': fluor_mean,
+            'fluor_total': fluor_total,
+            'fluor_per_area': fluor_per_area
+        })
+    
+    # Filter by min_fluor_per_area (matching dev.py)
+    if fluor_img is not None and min_fpa > 0:
+        filtered_stats = [s for s in all_stats if s['fluor_per_area'] >= min_fpa]
+    else:
+        filtered_stats = all_stats
+    
+    # Sort by fluor_per_area descending (matching default in dev.py)
+    filtered_stats.sort(key=lambda s: s['fluor_per_area'], reverse=True)
+    
+    # Extract sorted contours
+    filtered_contours = [s['contour'] for s in filtered_stats]
+    
+    # Create rounded stats for df
+    stats_list = []
+    for idx, s in enumerate(filtered_stats, 1):
         stats_list.append({
             'ID': idx,
-            'Area (px²)': round(area, 1),
-            'Fluor Mean': round(fluor_mean, 2),
-            'Fluor Total': round(fluor_total, 1),
-            'Fluor/Area': round(fluor_per_area, 3)
+            'Area (px²)': round(s['area'], 1),
+            'Fluor Mean': round(s['fluor_mean'], 2),
+            'Fluor Total': round(s['fluor_total'], 1),
+            'Fluor/Area': round(s['fluor_per_area'], 3)
         })
     
     df = pd.DataFrame(stats_list)
 
     # Calculate summary statistics
-    total_bacteria = len(contours)
+    total_bacteria = len(filtered_stats)
     total_area = df['Area (px²)'].sum() if not df.empty else 0
     image_area = bf_img.shape[0] * bf_img.shape[1]
-    coverage = (total_area / image_area) * 100 if total_area > 0 else 0
+    coverage = (total_area / image_area) * 100 if image_area > 0 else 0
     avg_area = df['Area (px²)'].mean() if not df.empty else 0
-    avg_fluor_area = df['Fluor/Area'].mean() if not df.empty and 'Fluor/Area' in df.columns else 0
+    avg_fluor_area = df['Fluor/Area'].mean() if not df.empty else 0
 
     summary = {
         'Total Bacteria': total_bacteria,
@@ -294,7 +316,7 @@ def calculate_statistics(contours: List[np.ndarray], bf_img: np.ndarray, fluor_i
         'Avg Fluor/Area': round(avg_fluor_area, 3)
     }
     
-    return df, summary
+    return df, summary, filtered_contours
 
 # --------------------------------------------------------------------- #
 # Smart Label Positioning (matching interactive viewer)
@@ -330,185 +352,123 @@ def calculate_direction_score(centroid, angle, arrow_len, label_size, occupancy_
     cx, cy = centroid
     h, w = occupancy_map.shape
     label_w, label_h = label_size
-    
-    # Calculate arrow end point
     rad = np.deg2rad(angle)
     arrow_x = int(cx + arrow_len * np.cos(rad))
     arrow_y = int(cy - arrow_len * np.sin(rad))
-    
-    # Calculate label position
     label_x = int(arrow_x + offset * np.cos(rad) - label_w / 2)
     label_y = int(arrow_y - offset * np.sin(rad) - label_h / 2)
-    
-    # Check bounds
     if (label_x < 0 or label_x + label_w >= w or
         label_y < 0 or label_y + label_h >= h):
         return float('inf')
-    
-    # Score based on occupancy
     label_region = occupancy_map[label_y:label_y+label_h, label_x:label_x+label_w]
     occupied_pixels = np.sum(label_region > 0)
     total_pixels = label_region.size
-    
-    # Check arrow path
+    if total_pixels == 0:
+        return float('inf')
     arrow_score = 0
     num_samples = 10
     for i in range(num_samples):
         t = i / num_samples
-        sample_x = int(cx + t * arrow_len * np.cos(rad))
-        sample_y = int(cy - t * arrow_len * np.sin(rad))
-        
-        if 0 <= sample_x < w and 0 <= sample_y < h:
-            if occupancy_map[sample_y, sample_x] > 0:
-                arrow_score += 10
-    
+        sx = int(cx + t * arrow_len * np.cos(rad))
+        sy = int(cy - t * arrow_len * np.sin(rad))
+        if 0 <= sx < w and 0 <= sy < h and occupancy_map[sy, sx] > 0:
+            arrow_score += 10
     score = (occupied_pixels / total_pixels) * 100 + arrow_score
     return score
 
 def find_best_label_position(centroid, img_shape, arrow_len, label_size, offset, occupancy_map):
-    """
-    Find the best position for a label by testing multiple directions.
-    """
+    """Find best position for label by testing multiple angles."""
     cx, cy = centroid
     h, w = img_shape
     label_w, label_h = label_size
-    
-    # Test 16 directions
     angles = [i * 22.5 for i in range(16)]
-    
     best_score = float('inf')
-    best_position = None
-    
+    best_pos = None
     for angle in angles:
-        score = calculate_direction_score(centroid, angle, arrow_len, label_size, occupancy_map, offset)
-        
+        score = calculate_direction_score(
+            centroid, angle, arrow_len, label_size, occupancy_map, offset
+        )
         if score < best_score:
             best_score = score
-            
             rad = np.deg2rad(angle)
             arrow_x = int(cx + arrow_len * np.cos(rad))
             arrow_y = int(cy - arrow_len * np.sin(rad))
             label_x = int(arrow_x + offset * np.cos(rad) - label_w / 2)
             label_y = int(arrow_y - offset * np.sin(rad) - label_h / 2)
-            
             label_x = max(0, min(label_x, w - label_w))
             label_y = max(0, min(label_y, h - label_h))
-            
-            best_position = (arrow_x, arrow_y, label_x, label_y, angle)
-    
-    return best_position
+            best_pos = (arrow_x, arrow_y, label_x, label_y, angle)
+    return best_pos
 
 def get_label_font():
-    """Get a font with the current font size setting."""
+    """Get font for labels, trying multiple system font paths."""
     font_size = PARAMS['label_font_size']
-    
-    try:
-        return ImageFont.truetype("arial.ttf", font_size)
-    except:
+    font_paths = [
+        "arial.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "C:\\Windows\\Fonts\\arial.ttf",
+    ]
+    for fp in font_paths:
         try:
-            return ImageFont.truetype("/System/Library/Fonts/Helvetica.ttc", font_size)
-        except:
-            font_paths = [
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                "/System/Library/Fonts/Supplemental/Arial.ttf",
-                "C:\\Windows\\Fonts\\arial.ttf",
-            ]
-            for path in font_paths:
-                try:
-                    return ImageFont.truetype(path, font_size)
-                except:
-                    continue
-            return ImageFont.load_default()
+            return ImageFont.truetype(fp, font_size)
+        except (OSError, IOError):
+            continue
+    return ImageFont.load_default()
 
 def draw_labels_on_contours(img_bgr, contours):
-    """
-    Draw labels with arrows on detected bacteria using smart positioning.
-    Matches the interactive viewer's label arrangement.
-    """
+    """Draw numbered labels on bacteria contours with smart positioning."""
     if not PARAMS['show_labels'] or not contours:
         return img_bgr
-    
-    # Convert to RGB for PIL
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     pil_img = Image.fromarray(img_rgb)
     draw = ImageDraw.Draw(pil_img)
-    
     arrow_len = PARAMS['arrow_length']
     label_offset = PARAMS['label_offset']
     font = get_label_font()
-    
     h, w = img_bgr.shape[:2]
-    
-    # Create occupancy map
     occupancy_map = create_occupancy_map((h, w), contours, margin=20)
-    
-    # Draw labels for each contour
     for idx, contour in enumerate(contours, 1):
         M = cv2.moments(contour)
         if M["m00"] == 0:
             continue
-        
         cx = int(M["m10"] / M["m00"])
         cy = int(M["m01"] / M["m00"])
-        
         label_text = str(idx)
         bbox = draw.textbbox((0, 0), label_text, font=font)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
-        
-        # Find best position
         result = find_best_label_position(
-            (cx, cy), (h, w), arrow_len, (text_w, text_h), 
-            label_offset, occupancy_map
+            (cx, cy), (h, w), arrow_len, (text_w, text_h), label_offset, occupancy_map
         )
-        
         if result is None:
             continue
-        
         arrow_x, arrow_y, label_x, label_y, angle = result
-        
-        arrow_color = (255, 255, 0)  # Yellow
+        arrow_color = (255, 255, 0)
         arrow_width = 2
-        
-        # Draw arrow line
         draw.line([(cx, cy), (arrow_x, arrow_y)], fill=arrow_color, width=arrow_width)
-        
-        # Draw arrow head
         head_len = 8
         head_angle = 25
         angle_rad = np.deg2rad(angle)
-        
         left_angle = angle_rad + np.deg2rad(180 - head_angle)
         left_x = int(arrow_x + head_len * np.cos(left_angle))
         left_y = int(arrow_y - head_len * np.sin(left_angle))
         draw.line([(arrow_x, arrow_y), (left_x, left_y)], fill=arrow_color, width=arrow_width)
-        
         right_angle = angle_rad + np.deg2rad(180 + head_angle)
         right_x = int(arrow_x + head_len * np.cos(right_angle))
         right_y = int(arrow_y - head_len * np.sin(right_angle))
         draw.line([(arrow_x, arrow_y), (right_x, right_y)], fill=arrow_color, width=arrow_width)
-        
-        # Draw text background
         padding = 4
         bg_rect = [
-            label_x - padding,
-            label_y - padding,
-            label_x + text_w + padding,
-            label_y + text_h + padding
+            label_x - padding, label_y - padding,
+            label_x + text_w + padding, label_y + text_h + padding
         ]
         draw.rectangle(bg_rect, fill=(0, 0, 0, 200))
-        
-        # Draw text
         draw.text((label_x, label_y), label_text, font=font, fill=arrow_color)
-        
-        # Mark occupied
         occupancy_map[label_y:label_y+text_h, label_x:label_x+text_w] = 255
-    
-    # Convert back to BGR
     img_rgb_array = np.array(pil_img)
-    img_bgr = cv2.cvtColor(img_rgb_array, cv2.COLOR_RGB2BGR)
-    
-    return img_bgr
+    return cv2.cvtColor(img_rgb_array, cv2.COLOR_RGB2BGR)
 
 # --------------------------------------------------------------------- #
 # Image creation
@@ -624,8 +584,13 @@ def export_to_excel(pairs: List[Tuple[Path, Path, str, str]]):
 
         # Segment bacteria
         print(f"  → Segmenting bacteria...")
-        _, _, _, contours = segment_bacteria(bf_img)
-        print(f"  → Found {len(contours)} bacteria")
+        _, _, _, all_contours = segment_bacteria(bf_img)
+        print(f"  → Found {len(all_contours)} initial bacteria")
+
+        # Calculate statistics with filter and sort
+        print(f"  → Calculating statistics with filter/sort...")
+        stats_df, summary, contours = get_processed_stats_and_contours(all_contours, bf_img, fluor_img, PARAMS['min_fluor_per_area'])
+        print(f"  → After filter/sort: {len(contours)} bacteria")
 
         # Create visualization images
         print(f"  → Creating visualizations with smart labels...")
@@ -640,13 +605,11 @@ def export_to_excel(pairs: List[Tuple[Path, Path, str, str]]):
         
         temp_files.extend([bf_temp, fluor_temp, overlay_temp])
 
-        # Calculate statistics
-        print(f"  → Calculating statistics...")
-        stats_df, summary = calculate_statistics(contours, bf_img, fluor_img)
-        
         # Create worksheet
         print(f"  → Creating Excel worksheet (landscape layout)...")
-        ws = wb.create_sheet(title=idx)
+        source_folder_name = bf_path.parent.name
+        sheet_title = f"{source_folder_name}-{idx}"
+        ws = wb.create_sheet(title=sheet_title)
 
         # === COMPACT LANDSCAPE LAYOUT ===
         # Images side by side at top, statistics below
@@ -757,7 +720,7 @@ def export_to_excel(pairs: List[Tuple[Path, Path, str, str]]):
         ws.oddFooter.left.text = f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
         ws.oddFooter.right.text = "&P / &N"
 
-        print(f"  ✓ Worksheet '{idx}' created (LANDSCAPE, large images)")
+        print(f"  ✓ Worksheet '{sheet_title}' created (LANDSCAPE, large images)")
 
     # Save workbook
     print(f"\n{'='*70}")
