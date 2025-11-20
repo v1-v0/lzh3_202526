@@ -3,10 +3,10 @@ Behavior of Parameter Changes:
 
 Watershed & Filtering: Watershed Dilate (integer, default: 15, range: 1-20)
 
-Segment objects of interest
-Convert the mask into an intensity profile using the distance transform
-Run the watershed algorithm
-Update the original mask
+1) Segment objects of interest
+2) Convert the mask into an intensity profile using the distance transform
+3) Run the watershed algorithm
+4) Update the original mask
 
 Behavior on change:
 Increasing: Creates smaller, more conservative foreground markers, leading to greater separation of objects. This results in more individual contours (better splits clumped bacteria) but can cause over-segmentation or fragmentation if too high.
