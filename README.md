@@ -12,6 +12,13 @@ Behavior on change:
 Increasing: Creates smaller, more conservative foreground markers, leading to greater separation of objects. This results in more individual contours (better splits clumped bacteria) but can cause over-segmentation or fragmentation if too high.
 Decreasing: Creates larger markers, reducing separation and potentially merging nearby objects into fewer, larger contours. Useful for under-segmented images but risks failing to separate touching bacteria.
 
+CLAHE (contrast limiting adqptive equalization) for enhancing local contrast
+1) The image is dicided into small titles or blocks
+2) A histogram is calculated for each title
+3) If any histogram bin is above the specific cliplimit, those excess pixels are clipped and the contrast of that tile is limited
+4) The clipped excess is redistributed uniformly to other bins before applying the histogram equalization
+5) Histogran equalization is apply to each tile
+6) The final image is obtained by interpolating the equalized tiles
 
 Watershed & Filtering: Min Area (px²) (integer, default: 50, range: 10-500)
 
@@ -47,7 +54,7 @@ The tool is designed for researchers and biologists working with bacterial micro
 - **Folder Loading & Navigation**: Select folders containing _ch00.tif images (with optional subfolder picker). Navigate between images using arrow keys or buttons.
 - **Parameter Tuning**: Interactive controls for:
   - Thresholding (Otsu or manual)
-  - CLAHE enhancement
+  - CLAHE enhancement (enchancing local contrast)
   - Morphology operations (opening/closing kernels and iterations)
   - Watershed segmentation
   - Fluorescence adjustments (brightness, gamma)
