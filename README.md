@@ -3,7 +3,11 @@ Behavior of Parameter Changes:
 
 Watershed & Filtering: Watershed Dilate (integer, default: 15, range: 1-20)
 
-Description: Percentage threshold for creating sure foreground markers in the watershed algorithm, which uses distance transform to separate touching or clumped objects into individual contours.
+Segment objects of interest
+Convert the mask into an intensity profile using the distance transform
+Run the watershed algorithm
+Update the original mask
+
 Behavior on change:
 Increasing: Creates smaller, more conservative foreground markers, leading to greater separation of objects. This results in more individual contours (better splits clumped bacteria) but can cause over-segmentation or fragmentation if too high.
 Decreasing: Creates larger markers, reducing separation and potentially merging nearby objects into fewer, larger contours. Useful for under-segmented images but risks failing to separate touching bacteria.
