@@ -49,7 +49,7 @@ cd pd
 
 ```bash
 python -m venv .venv
-python -m pip install --upgrade pip
+
 ```
 
 ### Activation
@@ -58,11 +58,14 @@ python -m pip install --upgrade pip
 .\.venv\Scripts\Activate.bat # Windows Command Prompt
 .\.venv\Scripts\Activate.ps1 # Windows PowerShell
 source .venv/Scripts/activate # Linux
+
+
 ```
 
 ### Libraries
 
 ```bash
+python -m pip install --upgrade pip
 pip install opencv-python pillow numpy scipy
 pip install tk  # Usually bundled with Python
 pip install pandas openpyxl
