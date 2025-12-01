@@ -77,6 +77,8 @@ The tool is designed for researchers and biologists working with bacterial micro
 - Python 3.8 or higher
 - Dependencies: Install via pip (requirements.txt provided below)
 
+pip install --upgrade pip
+
 Create a `requirements.txt` file with:
 
 ```
