@@ -75,21 +75,21 @@ source .venv/Scripts/activate # Linux
 python app.py
 ```
 
-2. Load Folder: Click "Load Folder" (or L key) to select a directory with \_ch00.tif images. If subfolders are present, pick one.
+2. **Load Folder**: Click "Load Folder" (or L key) to select a directory with \_ch00.tif images. If subfolders are present, pick one.
 
-3. Tune Parameters: Adjust values in the left panel; previews update automatically.
+3. **Tune Parameters**: Adjust values in the left panel; previews update automatically.
 
-4. Navigate Images: Use ←/→ arrows or Previous/Next buttons.
+4. **Navigate Images**: Use ←/→ arrows or Previous/Next buttons.
 
-5. Probe & Measure: Left-click on images for details; right-click to clear.
+5. **Probe & Measure**: Left-click on images for details; right-click to clear.
 
-6. Statistics: View in tab 8; sort columns, select rows to highlight, export to CSV.
+6. **Statistics**: View in tab 8; sort columns, select rows to highlight, export to CSV.
 
-7. Exit: Click "Exit" or Esc (with confirmation).
+7. **Exit**: Click "Exit" or Esc (with confirmation).
 
 ### Example Workflow for PD Samples
 
-- Load a folder from ./source/ (default initial dir) containing PD clinical sample images.
+- Load a folder from `./source/` (default initial dir) containing PD clinical sample images.
 - Enable CLAHE and adjust clip/tile for better contrast in microgel samples.
 - Set manual threshold ~110 for initial bacterial segmentation.
 - Refine morphology to clean noise from debris or artifacts.
