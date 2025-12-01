@@ -1,7 +1,6 @@
-# Interactive Bacteria Segmentation Parameter Tuner
+# Interactive Segment Peritoneal Dialysis Bacteria tool
 
-[![Python](https://img.shields.io/badge/Python-3.8%2B-blue.svg)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-blue.svg)](https://www.python.org/)
 
 ## Overview
 
