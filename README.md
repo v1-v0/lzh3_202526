@@ -10,12 +10,7 @@ The tool is designed for researchers and clinicians working with bacterial micro
 
 ## Clinical Application: Peritoneal Dialysis
 
-This tool was developed specifically for analyzing microscopy images from **Peritoneal Dialysis (PD)** clinical samples. PD is a renal replacement therapy where the peritoneal membrane serves as a natural dialysis filter. Monitoring bacterial contamination and biofilm formation in dialysate samples is critical for:
-
-- **Detecting peritonitis**: Early identification of bacterial infections in PD patients
-- **Microgel analysis**: Characterizing positive microgel cultures from dialysate
-- **Treatment monitoring**: Assessing bacterial load and viability through fluorescence imaging
-- **Quality control**: Evaluating sample preparation protocols (e.g., "water C protocol")
+This tool was developed specifically for analyzing microscopy images from **Peritoneal Dialysis (PD)** clinical samples. PD is a renal replacement therapy where the peritoneal membrane serves as a natural dialysis filter.
 
 The dual-channel imaging approach (brightfield + fluorescence) enables differentiation between total bacterial count and metabolically active bacteria, providing valuable clinical insights for PD patient management.
 
@@ -42,7 +37,7 @@ The dual-channel imaging approach (brightfield + fluorescence) enables different
 
 ### Prerequisites
 
-- Python 3.8 or higher
+- Python 3.12 or higher
 - Dependencies: Install via pip (requirements.txt provided below)
 
 ```bash
