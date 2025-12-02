@@ -1,46 +1,109 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 """
-utils/file_utils.py - File Operations and Folder Dialogs
+File and folder management utilities.
 """
+
 from pathlib import Path
 from typing import List, Optional
-import tkinter.filedialog as filedialog
 
 
-def is_valid_image_file(filepath: Path) -> bool:
-    """Check if file is a valid brightfield image (ch00.tif)."""
-    name = filepath.name
-    is_valid = (not name.startswith('.') and 
-                not name.startswith('~') and 
-                name.endswith('ch00.tif'))
-    return is_valid
-
-
-def scan_source_folder(source_dir: Path) -> List[Path]:
-    """Scan folder for all valid ch00.tif files."""
-    if not source_dir.exists() or not source_dir.is_dir():
-        return []
-
-    try:
-        all_files = list(source_dir.iterdir())
-        tif_files = [f for f in all_files 
-                    if f.is_file() and f.suffix.lower() in ['.tif', '.tiff']]
-        ch00_files = [f for f in tif_files if 'ch00' in f.name.lower()]
-
-        valid = [f for f in ch00_files if is_valid_image_file(f)]
-        return sorted(valid, key=lambda p: p.name)
-
-    except Exception as e:
-        print(f"Error scanning folder: {e}")
-        return []
-
-
-def choose_and_load_folder() -> Optional[Path]:
-    """Open folder selection dialog."""
-    folder = filedialog.askdirectory(
-        title="Select Folder containing ch00.tif files"
-    )
-
-    if folder:
-        return Path(folder)
-
-    return None
+class ImageFileManager:
+    """Manages image file scanning and validation."""
+    
+    @staticmethod
+    def is_valid_brightfield_file(filepath: Path) -> bool:
+        """Check if file is a valid bright-field image.
+        
+        Args:
+            filepath: Path to file
+            
+        Returns:
+            True if valid bright-field file
+        """
+        name = filepath.name
+        return (
+            not name.startswith('._') and
+            not name.startswith('.') and
+            name.endswith('_ch00.tif')
+        )
+    
+    @staticmethod
+    def get_fluorescence_path(bf_path: Path) -> Optional[Path]:
+        """Get matching fluorescence image path for bright-field image.
+        
+        Args:
+            bf_path: Path to bright-field image (_ch00.tif)
+            
+        Returns:
+            Path to fluorescence image (_ch01.tif) or None
+        """
+        if not bf_path.name.endswith('_ch00.tif'):
+            return None
+        
+        fluor_path = bf_path.parent / bf_path.name.replace('_ch00.tif', '_ch01.tif')
+        
+        if fluor_path.exists() and not fluor_path.name.startswith('._'):
+            return fluor_path
+        
+        return None
+    
+    @staticmethod
+    def scan_folder(folder_path: Path, 
+                   recursive: bool = False) -> List[Path]:
+        """Scan folder for valid bright-field images.
+        
+        Args:
+            folder_path: Path to folder to scan
+            recursive: Scan subfolders if True
+            
+        Returns:
+            Sorted list of valid image paths
+        """
+        if not folder_path.exists() or not folder_path.is_dir():
+            return []
+        
+        valid_files = []
+        
+        try:
+            if recursive:
+                files = folder_path.rglob('*_ch00.tif')
+            else:
+                files = folder_path.glob('*_ch00.tif')
+            
+            for f in files:
+                if ImageFileManager.is_valid_brightfield_file(f):
+                    valid_files.append(f)
+        
+        except PermissionError as e:
+            print(f"❌ Permission denied: {e}")
+            return []
+        except Exception as e:
+            print(f"❌ Error scanning folder: {e}")
+            return []
+        
+        return sorted(valid_files, key=lambda p: p.name)
+    
+    @staticmethod
+    def get_subfolders(folder_path: Path) -> List[Path]:
+        """Get list of subfolders in given folder.
+        
+        Args:
+            folder_path: Path to parent folder
+            
+        Returns:
+            Sorted list of subfolder paths
+        """
+        if not folder_path.exists() or not folder_path.is_dir():
+            return []
+        
+        try:
+            subfolders = [
+                item for item in folder_path.iterdir()
+                if item.is_dir() and not item.name.startswith('.')
+            ]
+            return sorted(subfolders, key=lambda p: p.name.lower())
+        except Exception as e:
+            print(f"❌ Error getting subfolders: {e}")
+            return []
