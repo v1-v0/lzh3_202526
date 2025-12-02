@@ -104,6 +104,13 @@ python app.py
 - Filter by min Fluor/Area to distinguish metabolically active bacteria from background.
 - Export statistics for clinical reporting and patient assessment.
 
+### Metadata Integration Setup
+
+- Explains file placement and structure
+- Shows example JSON with pixel_size_um (required), description, magnification, camera
+- Demonstrates output format with physical units (µm, µm²)
+- Graceful fallback to pixel-only when metadata absent
+
 ## Parameter Reference
 
 ### CLAHE (Contrast Limited Adaptive Histogram Equalization)
@@ -159,6 +166,13 @@ Process:
 
 - **Increasing**: More selective, removing contours with low fluorescence density (e.g., dim or non-fluorescent bacteria), reducing the number of displayed contours to focus on "active" ones.
 - **Decreasing**: Less filtering, including contours with weaker or no fluorescence, increasing the number of retained contours but potentially including irrelevant ones.
+
+### Histogram Visualization in Statistics Tab
+
+- What histograms show (distribution analysis)
+- How they help identify population subsets
+- Export capabilities for presentations
+- Conditional feature (graceful if matplotlib absent)
 
 ## Dependencies
 
