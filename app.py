@@ -2,12 +2,18 @@
 # -*- coding: utf-8 -*-
 
 """
-Interactive Bacteria Segmentation Parameter Tuner
-- Enhanced folder selection with subfolder picker
+Interactive Bacteria Segmentation Parameter Tuner with Metadata Integration
+- Enhanced folder selection with subfolder picker (IMPROVED for Linux)
 - Smart label positioning
 - Vertical scrollbar for entire left panel (OPTIMIZED for macOS)
 - Numbered tabs with keyboard shortcuts
 - Dark mode support (inline toggle button)
+- Metadata integration for quantitative, reproducible analysis
+- Physical unit conversions (µm, µm²)
+- Reproducible display settings from acquisition metadata
+- GRACEFUL HANDLING of folders without metadata
+- Scale bar with physical units
+- Histogram visualization in statistics tab
 """
 
 import os
@@ -21,6 +27,20 @@ from PIL import Image, ImageTk, ImageDraw, ImageFont
 from typing import cast, List, Tuple, Dict, Optional, Sequence
 from cv2.typing import MatLike
 import platform
+import json
+from datetime import datetime
+
+# ✨ FIXED: Try importing matplotlib, provide fallback if not available
+try:
+    import matplotlib
+    matplotlib.use('TkAgg')
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    print("⚠️  matplotlib not installed - histograms will be disabled")
+    print("   Install with: pip install matplotlib")
 
 
 # --------------------------------------------------------------------- #
@@ -98,22 +118,22 @@ class SegmentationViewer:
 
         # Declare tab attributes for type checker
         self.tab_original: ttk.Frame
-        self.tab_fluorescence: ttk.Frame
         self.tab_enhanced: ttk.Frame
         self.tab_threshold: ttk.Frame
         self.tab_morphology: ttk.Frame
         self.tab_contours: ttk.Frame
         self.tab_overlay: ttk.Frame
+        self.tab_fluorescence: ttk.Frame
         self.tab_statistics: ttk.Frame
 
         # Declare canvas attributes for type checker
         self.canvas_original: tk.Canvas
-        self.canvas_fluorescence: tk.Canvas
         self.canvas_enhanced: tk.Canvas
         self.canvas_threshold: tk.Canvas
         self.canvas_morphology: tk.Canvas
         self.canvas_contours: tk.Canvas
         self.canvas_overlay: tk.Canvas
+        self.canvas_fluorescence: tk.Canvas
 
         # Image and state variables ----------------------------------------
         self.original_image: Optional[np.ndarray] = None
@@ -122,6 +142,8 @@ class SegmentationViewer:
         self.probe_point: Optional[Tuple[int, int]] = None
         self.probe_canvas_ids: List[int] = []
         self.current_file: Optional[Path] = None
+        self.current_metadata: Optional[Dict] = None
+        self.has_metadata: bool = False
 
         self.bacteria_stats: List[Dict] = []
         self.current_bacteria_index: int = -1
@@ -145,7 +167,7 @@ class SegmentationViewer:
             'open_iter': 3, 'close_iter': 2, 'min_area': 100, 'watershed_dilate': 15,
             'fluor_brightness': 2.0, 'fluor_gamma': 0.5, 'show_labels': True,
             'label_font_size': 20, 'arrow_length': 60, 'label_offset': 15,
-            'min_fluor_per_area': 0.1,
+            'min_fluor_per_area': 10, 'show_scale_bar': True,
         }
 
         self.params: Dict[str, tk.Variable] = {
@@ -169,27 +191,86 @@ class SegmentationViewer:
         self.root.bind("<Configure>", lambda e: self.root.after_idle(self.update_preview))
 
     # --------------------------------------------------------------------- #
-    # Folder / file handling
+    # Metadata handling (IMPROVED: graceful fallback)
+    # --------------------------------------------------------------------- #
+    def load_metadata_for_image(self, image_path: Path) -> Optional[Dict]:
+        """Load metadata JSON for current image (returns None if not found)."""
+        metadata_dir = Path.cwd() / "metadata_json"
+        if not metadata_dir.exists():
+            print(f"  ℹ️  No metadata_json folder found")
+            return None
+        
+        sample_name = image_path.stem.replace('_ch00', '').replace('_ch01', '')
+        metadata_file = metadata_dir / f"{sample_name}.json"
+        if not metadata_file.exists():
+            print(f"  ℹ️  No metadata file: {metadata_file.name}")
+            return None
+        
+        try:
+            with open(metadata_file, 'r') as f:
+                metadata = json.load(f)
+            print(f"  ✅ Metadata loaded: {metadata_file.name}")
+            return metadata
+        except Exception as e:
+            print(f"  ⚠️  Failed to load metadata: {e}")
+            return None
+
+    def apply_metadata_display_settings(self):
+        """Apply brightness/gamma settings from metadata to fluorescence channel."""
+        if not self.current_metadata or 'channels' not in self.current_metadata:
+            print(f"  ℹ️  No channel metadata - keeping manual display settings")
+            return
+        
+        channels = self.current_metadata['channels']
+        if 'Red' in channels:
+            red_channel = channels['Red']
+            black_val = red_channel['normalized']['BlackValue']
+            white_val = red_channel['normalized']['WhiteValue']
+            gamma_val = red_channel.get('GammaValue', 1.0)
+            
+            brightness = 1.0 / white_val if white_val > 0 else 2.0
+            brightness = max(0.5, min(5.0, brightness))
+            gamma = max(0.2, min(2.0, gamma_val))
+            
+            self.params['fluor_brightness'].set(brightness)
+            self.params['fluor_gamma'].set(gamma)
+            
+            if 'fluor_brightness' in self.entries:
+                self.entries['fluor_brightness'].delete(0, tk.END)
+                self.entries['fluor_brightness'].insert(0, f"{brightness:.2f}")
+                self.update_progressbar('fluor_brightness')
+            
+            if 'fluor_gamma' in self.entries:
+                self.entries['fluor_gamma'].delete(0, tk.END)
+                self.entries['fluor_gamma'].insert(0, f"{gamma:.2f}")
+                self.update_progressbar('fluor_gamma')
+            
+            print(f"  🎨 Applied metadata display settings: Brightness={brightness:.2f}, Gamma={gamma:.2f}")
+        else:
+            print(f"  ℹ️  No 'Red' channel in metadata - keeping manual settings")
+
+    def get_pixel_size(self) -> float:
+        """Get pixel size in µm from metadata or default (0.1289 µm)."""
+        if self.current_metadata:
+            pixel_size = self.current_metadata.get('pixel_size_um', 0.1289)
+            return pixel_size
+        return 0.1289
+
+    # --------------------------------------------------------------------- #
+    # Folder / file handling (IMPROVED for Linux)
     # --------------------------------------------------------------------- #
     def is_valid_image_file(self, filepath: Path) -> bool:
         """Return True only for real bright-field files."""
         name = filepath.name
         ok = (
-            not name.startswith('._') and      # skip AppleDouble files
-            not name.startswith('.') and       # skip hidden files
-            name.endswith('_ch00.tif')         # must be bright-field
+            not name.startswith('._') and
+            not name.startswith('.') and
+            name.endswith('_ch00.tif')
         )
         return ok
 
     def choose_and_load_folder(self):
-        """
-        Open folder selection dialog and load images.
-        
-        Enhanced with subfolder detection:
-        - If selected folder contains only subfolders → prompt to choose one
-        - If selected folder contains images → scan directly
-        """
-        # Always start at "source" subfolder if it exists, otherwise current directory
+        """Open folder selection dialog and load images."""
         source_subfolder = Path.cwd() / "source"
         if source_subfolder.exists() and source_subfolder.is_dir():
             initial_dir = str(source_subfolder)
@@ -199,17 +280,21 @@ class SegmentationViewer:
         print(f"\n🔍 Opening folder selection dialog...")
         print(f"   Initial directory: {initial_dir}")
         
-        folder = filedialog.askdirectory(
-            title="Select Folder containing _ch00.tif files (or parent of subfolders)",
-            initialdir=initial_dir
-        )
+        # Platform-specific folder dialog with better Linux support
+        system = platform.system()
         
-        # If user cancelled (empty string returned)
+        if system == "Linux":
+            folder = self._linux_folder_dialog(initial_dir)
+        else:
+            folder = filedialog.askdirectory(
+                title="Select Folder containing _ch00.tif files (or parent of subfolders)",
+                initialdir=initial_dir
+            )
+        
         if not folder:
             print("ℹ️  Folder selection cancelled by user\n")
             return
         
-        # Convert string path to Path object
         selected_path = Path(folder)
         
         print(f"\n{'='*70}")
@@ -219,7 +304,6 @@ class SegmentationViewer:
         print(f"Absolute path: {selected_path.resolve()}")
         print(f"{'='*70}\n")
         
-        # Check what's inside the selected folder
         try:
             items = list(selected_path.iterdir())
             subfolders = [item for item in items if item.is_dir() and not item.name.startswith('.')]
@@ -229,14 +313,12 @@ class SegmentationViewer:
             print(f"   Subfolders: {len(subfolders)}")
             print(f"   .tif files: {len(tif_files)}")
             
-            # Case 1: Has .tif files directly → scan this folder
             if tif_files:
                 print(f"\n✅ Found .tif files directly in selected folder")
                 self.source_dir = selected_path
                 self.scan_source_folder()
                 return
             
-            # Case 2: Has subfolders but no .tif files → let user pick a subfolder
             if subfolders:
                 print(f"\n📂 Found {len(subfolders)} subfolders, no direct .tif files")
                 print(f"   Showing subfolder selection dialog...")
@@ -249,7 +331,6 @@ class SegmentationViewer:
                     print("ℹ️  Subfolder selection cancelled\n")
                 return
             
-            # Case 3: Empty folder or no valid content
             msg = f"Selected folder contains no .tif files or subfolders:\n{selected_path}"
             print(f"⚠️ {msg}")
             self.status_var.set("No images or subfolders found")
@@ -268,18 +349,144 @@ class SegmentationViewer:
             self.status_var.set("Error analyzing folder")
             messagebox.showerror("Analysis Error", msg)
 
+    def _linux_folder_dialog(self, initial_dir: str) -> str:
+        """Custom folder selection dialog optimized for Linux."""
+        selected_folder = tk.StringVar(value="")
+        current_path = Path(initial_dir)  # Move initialization here
+        
+        def on_folder_click(event):
+            selection = listbox.curselection()
+            if selection:
+                idx = selection[0]
+                folder_name = listbox.get(idx)
+                if folder_name == "..":
+                    return
+                else:
+                    potential_path = current_path / folder_name
+                    path_entry.delete(0, tk.END)
+                    path_entry.insert(0, str(potential_path))
+        
+        def on_folder_double_click(event):
+            nonlocal current_path  # Declare before use
+            selection = listbox.curselection()
+            if selection:
+                idx = selection[0]
+                folder_name = listbox.get(idx)
+                if folder_name == "..":
+                    current_path = current_path.parent
+                    refresh_folder_list()
+                else:
+                    potential_path = current_path / folder_name
+                    if potential_path.is_dir():
+                        current_path = potential_path
+                        refresh_folder_list()
+                        path_entry.delete(0, tk.END)
+                        path_entry.insert(0, str(current_path))
+        
+        def refresh_folder_list():
+            nonlocal current_path  # Declare before use
+            listbox.delete(0, tk.END)
+            
+            if current_path.parent != current_path:
+                listbox.insert(tk.END, "..")
+            
+            try:
+                items = sorted([
+                    item for item in current_path.iterdir() 
+                    if item.is_dir() and not item.name.startswith('.')
+                ], key=lambda p: p.name.lower())
+                
+                for item in items:
+                    listbox.insert(tk.END, item.name)
+                
+                current_path_label.config(text=f"Current: {current_path}")
+                path_entry.delete(0, tk.END)
+                path_entry.insert(0, str(current_path))
+                
+            except PermissionError:
+                messagebox.showerror("Permission Denied", f"Cannot access: {current_path}")
+                current_path = current_path.parent
+                refresh_folder_list()
+        
+        def on_select():
+            path_text = path_entry.get().strip()
+            if path_text:
+                selected_path = Path(path_text)
+                if selected_path.is_dir():
+                    selected_folder.set(str(selected_path))
+                    dialog.destroy()
+                else:
+                    messagebox.showwarning("Invalid Path", "Please select a valid folder")
+            else:
+                selected_folder.set(str(current_path))
+                dialog.destroy()
+        
+        def on_cancel():
+            selected_folder.set("")
+            dialog.destroy()
+        
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Select Folder")
+        dialog.geometry("700x500")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        current_path_label = ttk.Label(dialog, text=f"Current: {current_path}", 
+                                    font=("Segoe UI", 9), foreground="#666")
+        current_path_label.pack(pady=(10, 5), padx=10, anchor=tk.W)
+        
+        list_frame = ttk.Frame(dialog)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, 
+                            font=("Monospace", 10), height=20)
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=listbox.yview)
+        
+        listbox.bind('<ButtonRelease-1>', on_folder_click)
+        listbox.bind('<Double-Button-1>', on_folder_double_click)
+        
+        path_frame = ttk.Frame(dialog)
+        path_frame.pack(fill=tk.X, padx=10, pady=(5, 10))
+        
+        ttk.Label(path_frame, text="Selected path:").pack(side=tk.LEFT, padx=(0, 5))
+        path_entry = ttk.Entry(path_frame, font=("Monospace", 9))
+        path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        path_entry.insert(0, str(current_path))
+        path_entry.bind('<Return>', lambda e: on_select())
+        
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=10)
+        
+        ttk.Button(btn_frame, text="Select This Folder", command=on_select, 
+                width=20).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Cancel", command=on_cancel, 
+                width=12).pack(side=tk.LEFT, padx=5)
+        
+        instructions = ttk.Label(dialog, 
+            text="💡 Single-click: Preview path | Double-click: Navigate into folder | '..' = Go up",
+            font=("Segoe UI", 8), foreground="#888")
+        instructions.pack(pady=(0, 10))
+        
+        refresh_folder_list()
+        
+        listbox.focus_set()
+        if listbox.size() > 0:
+            listbox.selection_set(0)
+        
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+        
+        dialog.wait_window()
+        return selected_folder.get()
 
     def choose_subfolder(self, parent_path: Path, subfolders: List[Path]) -> Optional[Path]:
-        """
-        Show dialog to choose from available subfolders.
-        
-        Args:
-            parent_path: Parent directory containing subfolders
-            subfolders: List of subfolder Path objects
-        
-        Returns:
-            Selected subfolder Path or None if cancelled
-        """
+        """Show dialog to choose from available subfolders."""
         selected_folder = None
         
         def on_select():
@@ -305,14 +512,12 @@ class SegmentationViewer:
                 selected_folder = sorted_folders[idx]
                 dialog.destroy()
         
-        # Show subfolder picker dialog
         dialog = tk.Toplevel(self.root)
         dialog.title("Select subfolder from source")
         dialog.geometry("500x400")
         dialog.transient(self.root)
         dialog.grab_set()
         
-        # Header
         ttk.Label(dialog, text=f"Multiple subfolders found in:", 
                 font=("Segoe UI", 10, "bold")).pack(pady=(10, 0))
         ttk.Label(dialog, text=str(parent_path), 
@@ -320,7 +525,6 @@ class SegmentationViewer:
         ttk.Label(dialog, text="Select a subfolder to scan:", 
                 font=("Segoe UI", 10)).pack(pady=(0, 5))
         
-        # Listbox with scrollbar
         list_frame = ttk.Frame(dialog)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
@@ -332,7 +536,6 @@ class SegmentationViewer:
         listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=listbox.yview)
         
-        # Populate listbox
         sorted_folders = sorted(subfolders, key=lambda p: p.name.lower())
         for folder in sorted_folders:
             listbox.insert(tk.END, folder.name)
@@ -342,14 +545,12 @@ class SegmentationViewer:
             listbox.selection_set(0)
             listbox.focus_set()
         
-        # Buttons
         btn_frame = ttk.Frame(dialog)
         btn_frame.pack(pady=10)
         
         ttk.Button(btn_frame, text="Select", command=on_select, width=12).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="Cancel", command=on_cancel, width=12).pack(side=tk.LEFT, padx=5)
         
-        # Center dialog
         dialog.update_idletasks()
         x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
         y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
@@ -359,9 +560,7 @@ class SegmentationViewer:
         return selected_folder
 
     def scan_source_folder(self):
-        """
-        Scan **only the selected folder** (no sub-folders) for _ch00.tif files.
-        """
+        """Scan only the selected folder for _ch00.tif files."""
         self.image_files = []
         
         print(f"\n{'='*60}")
@@ -369,7 +568,6 @@ class SegmentationViewer:
         print(f"ABSOLUTE PATH: {self.source_dir.resolve()}")
         print(f"{'='*60}")
         
-        # Verify the path we're actually scanning
         if not self.source_dir.exists():
             msg = f"Selected folder does not exist: {self.source_dir}"
             self.status_var.set(msg)
@@ -385,12 +583,10 @@ class SegmentationViewer:
             return
 
         try:
-            # List ALL files INSIDE the selected folder (direct children only)
             all_files = list(self.source_dir.iterdir())
             print(f"\n📁 Contents of {self.source_dir.name}/:")
             print(f"   Total items found: {len(all_files)}")
             
-            # Show first few items for debugging
             print(f"\n   First 10 items:")
             for i, item in enumerate(all_files[:10]):
                 item_type = "DIR" if item.is_dir() else "FILE"
@@ -398,17 +594,14 @@ class SegmentationViewer:
             if len(all_files) > 10:
                 print(f"     ... and {len(all_files) - 10} more items")
             
-            # Filter for .tif files
             tif_files = [f for f in all_files if f.is_file() and f.suffix.lower() in ['.tif', '.tiff']]
             print(f"\n📄 Total .tif/.tiff files: {len(tif_files)}")
             
-            # Show all .tif files found
             if tif_files:
                 print("\n.TIF files found:")
                 for f in sorted(tif_files):
                     print(f"  • {f.name}")
             
-            # Filter for _ch00.tif files
             ch00_files = [f for f in tif_files if '_ch00' in f.name.lower()]
             print(f"\n🔍 Files containing '_ch00': {len(ch00_files)}")
             
@@ -417,7 +610,6 @@ class SegmentationViewer:
                 for f in sorted(ch00_files):
                     print(f"  • {f.name}")
 
-            # Filter valid files
             valid = []
             rejected = []
             
@@ -435,7 +627,6 @@ class SegmentationViewer:
 
             self.image_files = sorted(valid, key=lambda p: p.name)
 
-            # Update UI
             self.update_navigation_buttons()
             
             print(f"\n{'='*60}")
@@ -446,10 +637,8 @@ class SegmentationViewer:
                 self.status_var.set(
                     f"Found {len(self.image_files)} image(s) in: {self.source_dir.name}/"
                 )
-                # auto-load the first one
                 self.load_image_by_index(0)
             else:
-                # Detailed message when nothing matches
                 msg_parts = []
                 msg_parts.append(f"No valid _ch00.tif files found in:\n{self.source_dir}\n")
                 
@@ -484,15 +673,7 @@ class SegmentationViewer:
             messagebox.showerror("Scan Error", msg)
 
     def get_fluorescence_path(self, bf_path: Path) -> Optional[Path]:
-        """
-        Given a bright-field image path (*_ch00.tif), find matching fluorescence (*_ch01.tif).
-        
-        Args:
-            bf_path: Path to bright-field image (must end with _ch00.tif)
-        
-        Returns:
-            Path to fluorescence image if exists, None otherwise
-        """
+        """Given a bright-field image path (*_ch00.tif), find matching fluorescence (*_ch01.tif)."""
         if not bf_path.name.endswith('_ch00.tif'):
             return None
         fluor_path = bf_path.parent / bf_path.name.replace('_ch00.tif', '_ch01.tif')
@@ -548,18 +729,11 @@ class SegmentationViewer:
     # --------------------------------------------------------------------- #
     def setup_keyboard_shortcuts(self):
         """Setup keyboard shortcuts for tab navigation."""
-        # Use comma to move to previous tab, period to move to next tab
         self.root.bind("<comma>", lambda e: self.move_to_previous_tab())
         self.root.bind("<period>", lambda e: self.move_to_next_tab())
-
-        # L for Load Folder
         self.root.bind("l", lambda e: self.choose_and_load_folder())
-        # D for Dark mode toggle
         self.root.bind("d", lambda e: self.toggle_dark_mode())
-        # esc for Exit (with confirmation)
         self.root.bind("<Escape>", lambda e: self.exit_with_confirmation())
-                
-        # Arrow keys for previous/next image
         self.root.bind("<Left>", lambda e: self.load_previous_image())
         self.root.bind("<Right>", lambda e: self.load_next_image())
 
@@ -587,22 +761,18 @@ class SegmentationViewer:
     # --------------------------------------------------------------------- #
     def apply_dark_mode(self):
         """Apply dark mode colors to the application."""
-        # Define dark color scheme
         dark_bg = "#2b2b2b"
-        dark_fg = "#e0e0e0"  # Light gray text
+        dark_fg = "#e0e0e0"
         dark_frame = "#3c3c3c"
         dark_button_bg = "#4a4a4a"
         dark_button_fg = "#ffffff"
         dark_canvas_bg = "#1e1e1e"
         
-        # Apply to root window
         self.root.configure(bg=dark_bg)
         
-        # Apply to ttk widgets
         style = ttk.Style()
-        style.theme_use('default')  # Reset to default theme first
+        style.theme_use('default')
         
-        # Configure notebook/tabs
         style.configure("TNotebook", background=dark_bg, borderwidth=0)
         style.configure("TNotebook.Tab", 
             background=dark_frame, 
@@ -612,15 +782,11 @@ class SegmentationViewer:
             background=[("selected", dark_button_bg)],
             foreground=[("selected", "#ffffff")])
         
-        # Configure frames
         style.configure("TFrame", background=dark_bg)
         style.configure("TLabelframe", background=dark_bg, foreground=dark_fg)
         style.configure("TLabelframe.Label", background=dark_bg, foreground=dark_fg)
-        
-        # Configure labels
         style.configure("TLabel", background=dark_bg, foreground=dark_fg)
         
-        # Configure buttons
         style.configure("TButton", 
                        background=dark_button_bg, 
                        foreground=dark_button_fg,
@@ -629,34 +795,26 @@ class SegmentationViewer:
                  background=[("active", "#5a5a5a")],
                  foreground=[("active", "#ffffff")])
         
-        # Configure checkbuttons
         style.configure("TCheckbutton", background=dark_bg, foreground=dark_fg)
         
-        # Configure entry widgets
         style.configure("TEntry", 
                        fieldbackground=dark_frame,
                        foreground=dark_fg,
                        insertcolor=dark_fg)
         
-        # Configure scrollbars
         style.configure("Vertical.TScrollbar", background=dark_button_bg)
         style.configure("Horizontal.TScrollbar", background=dark_button_bg)
-        
-        # Configure progressbars
         style.configure("TProgressbar", background="#4CAF50", troughcolor=dark_frame)
         
-        # Configure canvas backgrounds
         for canvas_attr in ["canvas_original", "canvas_fluorescence", "canvas_enhanced",
                            "canvas_threshold", "canvas_morphology", "canvas_contours", 
                            "canvas_overlay", "left_canvas"]:
             if hasattr(self, canvas_attr):
                 getattr(self, canvas_attr).configure(bg=dark_canvas_bg)
         
-        # Update measurement labels foreground
         for label in self.measure_labels.values():
             label.configure(foreground=dark_fg)
         
-        # Update statistics tree
         style.configure("Treeview", 
                        background=dark_frame,
                        foreground=dark_fg,
@@ -666,27 +824,22 @@ class SegmentationViewer:
                  background=[("selected", dark_button_bg)],
                  foreground=[("selected", "#ffffff")])
         
-        # Update dark mode button text
         self.dark_mode_btn.config(text="🌙 Dark")
         self.status_var.set("Dark mode activated")
 
     def apply_light_mode(self):
         """Apply light mode colors to the application."""
-        # Define light color scheme
         light_bg = "#ffffff"
         light_fg = "#000000"
         light_frame = "#f0f0f0"
         light_button_bg = "#e1e1e1"
         light_canvas_bg = "#f8f9fa"
         
-        # Apply to root window
         self.root.configure(bg=light_bg)
         
-        # Apply to ttk widgets
         style = ttk.Style()
         style.theme_use('default')
         
-        # Configure notebook/tabs
         style.configure("TNotebook", background=light_bg, borderwidth=0)
         style.configure("TNotebook.Tab", 
                        background=light_frame, 
@@ -696,15 +849,11 @@ class SegmentationViewer:
                  background=[("selected", light_button_bg)],
                  foreground=[("selected", light_fg)])
         
-        # Configure frames
         style.configure("TFrame", background=light_bg)
         style.configure("TLabelframe", background=light_bg, foreground=light_fg)
         style.configure("TLabelframe.Label", background=light_bg, foreground=light_fg)
-        
-        # Configure labels
         style.configure("TLabel", background=light_bg, foreground=light_fg)
         
-        # Configure buttons
         style.configure("TButton", 
                        background=light_button_bg, 
                        foreground=light_fg,
@@ -712,34 +861,26 @@ class SegmentationViewer:
         style.map("TButton",
                  background=[("active", "#d0d0d0")])
         
-        # Configure checkbuttons
         style.configure("TCheckbutton", background=light_bg, foreground=light_fg)
         
-        # Configure entry widgets
         style.configure("TEntry", 
                        fieldbackground="white",
                        foreground=light_fg,
                        insertcolor=light_fg)
         
-        # Configure scrollbars
         style.configure("Vertical.TScrollbar", background=light_button_bg)
         style.configure("Horizontal.TScrollbar", background=light_button_bg)
-        
-        # Configure progressbars
         style.configure("TProgressbar", background="#4CAF50", troughcolor=light_frame)
         
-        # Configure canvas backgrounds
         for canvas_attr in ["canvas_original", "canvas_fluorescence", "canvas_enhanced",
                            "canvas_threshold", "canvas_morphology", "canvas_contours", 
                            "canvas_overlay", "left_canvas"]:
             if hasattr(self, canvas_attr):
                 getattr(self, canvas_attr).configure(bg=light_canvas_bg)
         
-        # Update measurement labels foreground
         for label in self.measure_labels.values():
             label.configure(foreground="#2c3e50")
         
-        # Update statistics tree
         style.configure("Treeview", 
                        background="white",
                        foreground=light_fg,
@@ -748,7 +889,6 @@ class SegmentationViewer:
         style.map("Treeview", 
                  background=[("selected", light_button_bg)])
         
-        # Update dark mode button text
         self.dark_mode_btn.config(text="☀️ Light")
         self.status_var.set("Light mode activated")
 
@@ -767,17 +907,15 @@ class SegmentationViewer:
         main = ttk.Frame(self.root)
         main.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
-        # LEFT PANEL WITH SCROLLBAR (OPTIMIZED FOR macOS)
+        # LEFT PANEL WITH SCROLLBAR
         left_container = ttk.Frame(main, width=420)
         left_container.pack(side=tk.LEFT, fill=tk.BOTH, padx=(0, 15))
         left_container.pack_propagate(False)
 
-        # Create canvas for scrolling
         self.left_canvas = tk.Canvas(left_container, highlightthickness=0)
         self.left_scrollbar = ttk.Scrollbar(left_container, orient="vertical", command=self.left_canvas.yview)
         self.scrollable_left = ttk.Frame(self.left_canvas)
 
-        # OPTIMIZED: Debounced configure binding
         def update_scroll_region(event=None):
             if not self._scroll_update_pending:
                 self._scroll_update_pending = True
@@ -791,20 +929,15 @@ class SegmentationViewer:
         self.left_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.left_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Bind canvas width changes to update the scrollable frame width
         self.left_canvas.bind('<Configure>', self._on_canvas_configure)
-
-        # OPTIMIZED: Platform-specific mouse wheel binding (NOT bind_all)
         self._bind_mousewheel()
 
-        # Now build all left panel content inside scrollable_left
         left = self.scrollable_left
 
         # ---- Navigation -------------------------------------------------
         nav = ttk.LabelFrame(left, text=" Navigation ", padding=10)
         nav.pack(fill=tk.X, pady=(0, 10), padx=5)
 
-        # Top row with 4 buttons (Load, Reset, Dark/Light toggle, Exit)
         row1 = ttk.Frame(nav)
         row1.pack(fill=tk.X, pady=(0, 8))
         row1.grid_columnconfigure(0, weight=1)
@@ -820,7 +953,6 @@ class SegmentationViewer:
         reset_btn.grid(row=0, column=1, sticky='ew', padx=(2, 2))
         ToolTip(reset_btn, "Restore default parameters.")
 
-        # Dark mode toggle button (inline)
         self.dark_mode_var = tk.BooleanVar(value=True)
         self.dark_mode_btn = ttk.Button(row1, text="☀️ Light", command=self.toggle_dark_mode)
         self.dark_mode_btn.grid(row=0, column=2, sticky='ew', padx=(2, 2))
@@ -830,7 +962,6 @@ class SegmentationViewer:
         exit_btn.grid(row=0, column=3, sticky='ew', padx=(2, 0))
         ToolTip(exit_btn, "Close the application. (Shortcut: Esc)")
 
-        # Navigation buttons row
         row2 = ttk.Frame(nav)
         row2.pack(fill=tk.X)
         row2.grid_columnconfigure(0, weight=1)
@@ -847,28 +978,49 @@ class SegmentationViewer:
         self.next_btn.grid(row=0, column=2, sticky='ew')
         ToolTip(self.next_btn, "Next image in folder (or press Right arrow)")
 
+        # ---- Metadata Info Panel ----------------------------------------
+        self.metadata_panel = CollapsibleFrame(left, title="Image Metadata")
+        self.metadata_panel.pack(fill=tk.X, pady=(0, 10), padx=5)
+        mc = self.metadata_panel.get_content_frame()
+        
+        metadata_keys = [
+            ("sample_name", "Sample: -"),
+            ("pixel_size", "Pixel Size: -"),
+            ("objective", "Objective: -"),
+            ("acquired", "Acquired: -"),
+            ("exposure_bf", "BF Exposure: -"),
+            ("exposure_fluor", "Fluor Exposure: -")
+        ]
+        
+        for key, txt in metadata_keys:
+            r = ttk.Frame(mc)
+            r.pack(fill=tk.X, pady=2)
+            lbl = ttk.Label(r, text=txt, font=("Consolas", 9), foreground="#2c3e50")
+            lbl.pack(anchor=tk.W)
+            self.measure_labels[key] = lbl
+
         # ---- Measurement ------------------------------------------------
         self.measure_panel = CollapsibleFrame(left, title="Measurement on Click")
         self.measure_panel.pack(fill=tk.X, pady=(0, 10), padx=5)
         mc = self.measure_panel.get_content_frame()
         for key, txt in [("pixel_coord", "Pixel: -, -"), ("pixel_value", "Value: -"),
-                         ("inside_contour", "Inside Contour: -"), ("contour_area", "Contour Area: - px²")]:
+                         ("inside_contour", "Inside Contour: -"), 
+                         ("contour_area_px", "Contour Area: - px²"),
+                         ("contour_area_um", "Contour Area: - µm²")]:
             r = ttk.Frame(mc)
             r.pack(fill=tk.X, pady=2)
             lbl = ttk.Label(r, text=txt, font=("Consolas", 10), foreground="#2c3e50")
             lbl.pack(anchor=tk.W)
             self.measure_labels[key] = lbl
 
-        # ---- Config (inside scrollable left panel) ----------------------
+        # ---- Config ----------------------
         self.config_panel = CollapsibleFrame(left, title="Configuration Parameters")
         self.config_panel.pack(fill=tk.X, pady=(0, 10), padx=5)
         cfg = self.config_panel.get_content_frame()
 
-        # Direct parameter frame
         params_frame = ttk.Frame(cfg)
         params_frame.pack(fill=tk.X)
 
-        # Create parameter controls
         self.create_threshold_controls(params_frame)
         self.create_clahe_controls(params_frame)
         self.create_morphology_controls(params_frame)
@@ -876,23 +1028,22 @@ class SegmentationViewer:
         self.create_fluorescence_controls(params_frame)
         self.create_label_controls(params_frame)
 
-        # ---- Image tabs -------------------------------------------------
+        # ---- Image tabs (REORGANIZED) -------------------------------------------------
         img_frame = ttk.Frame(main)
         img_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
         self.notebook = ttk.Notebook(img_frame)
         self.notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
 
-        # Updated tabs with numbering
         tabs = [
             ("1_Original (BF)", "tab_original"), 
-            ("2_Fluorescence", "tab_fluorescence"),
-            ("3_CLAHE Enhanced", "tab_enhanced"), 
-            ("4_Threshold", "tab_threshold"),
-            ("5_Morphology", "tab_morphology"), 
-            ("6_Final Contours", "tab_contours"),
-            ("7_BF+Fluor Overlay", "tab_overlay"), 
-            ("8_Statistics List", "tab_statistics")
+            ("2_CLAHE Enhanced", "tab_enhanced"), 
+            ("3_Threshold", "tab_threshold"),
+            ("4_Morphology", "tab_morphology"), 
+            ("5_Final Contours", "tab_contours"),
+            ("6_BF+Fluor Overlay", "tab_overlay"), 
+            ("7_Fluorescence", "tab_fluorescence"),
+            ("8_Statistics", "tab_statistics")
         ]
         
         for name, attr in tabs:
@@ -901,8 +1052,9 @@ class SegmentationViewer:
             self.notebook.add(tab, text=name)
 
         # Create canvases for image tabs
-        for attr in ["canvas_original", "canvas_fluorescence", "canvas_enhanced",
-                     "canvas_threshold", "canvas_morphology", "canvas_contours", "canvas_overlay"]:
+        for attr in ["canvas_original", "canvas_enhanced", "canvas_threshold",
+                     "canvas_morphology", "canvas_contours", "canvas_overlay", 
+                     "canvas_fluorescence"]:
             tab_attr = attr.replace("canvas_", "tab_")
             canvas = tk.Canvas(getattr(self, tab_attr), bg='#f8f9fa', highlightthickness=0)
             setattr(self, attr, canvas)
@@ -919,13 +1071,11 @@ class SegmentationViewer:
         ttk.Label(status_frame, textvariable=self.status_var, relief=tk.SUNKEN,
                   anchor=tk.W, padding=(5, 2)).pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        # Keyboard shortcuts hint
         shortcut_hint = ttk.Label(status_frame, text="Keys: , . = Tabs | ← → = Images | L = Load | D = Dark | Esc = Exit", 
                                  relief=tk.SUNKEN, anchor=tk.E, padding=(5, 2), 
                                  foreground="#666", font=("Segoe UI", 8))
         shortcut_hint.pack(side=tk.RIGHT)
 
-        # Apply dark mode by default if enabled
         if self.dark_mode_var.get():
             self.apply_dark_mode()
 
@@ -944,17 +1094,16 @@ class SegmentationViewer:
         self.left_canvas.itemconfig(self.canvas_frame, width=event.width)
 
     def _bind_mousewheel(self):
-        """Platform-specific mouse wheel binding (more efficient than bind_all)."""
+        """Platform-specific mouse wheel binding."""
         system = platform.system()
         
-        # Only bind when mouse enters the canvas area
         def on_enter(event):
-            if system == "Darwin":  # macOS
+            if system == "Darwin":
                 self.left_canvas.bind("<MouseWheel>", self._on_mousewheel)
             elif system == "Linux":
                 self.left_canvas.bind("<Button-4>", self._on_mousewheel)
                 self.left_canvas.bind("<Button-5>", self._on_mousewheel)
-            else:  # Windows
+            else:
                 self.left_canvas.bind("<MouseWheel>", self._on_mousewheel)
         
         def on_leave(event):
@@ -966,16 +1115,14 @@ class SegmentationViewer:
         self.left_canvas.bind("<Leave>", on_leave)
 
     def _on_mousewheel(self, event):
-        """Handle mouse wheel scrolling (optimized for platform differences)."""
+        """Handle mouse wheel scrolling."""
         system = platform.system()
         
-        # Platform-specific delta handling
-        if system == "Darwin":  # macOS
-            # macOS uses event.delta directly
+        if system == "Darwin":
             delta = -1 if event.delta > 0 else 1
-        elif event.num == 5 or event.delta < 0:  # Linux scroll down / Windows
+        elif event.num == 5 or event.delta < 0:
             delta = 1
-        elif event.num == 4 or event.delta > 0:  # Linux scroll up / Windows
+        elif event.num == 4 or event.delta > 0:
             delta = -1
         else:
             return
@@ -983,23 +1130,29 @@ class SegmentationViewer:
         self.left_canvas.yview_scroll(delta, "units")
 
     # --------------------------------------------------------------------- #
-    # Statistics table
+    # Statistics table (WITH HISTOGRAM - ✨ FIXED)
     # --------------------------------------------------------------------- #
     def setup_statistics_table(self):
-        """Setup the statistics table in the Statistics List tab."""
-        frame = ttk.Frame(self.tab_statistics)
-        frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        cols = ("Index", "BF Area (px²)", "Fluor Mean", "Fluor Total", "Fluor/Area")
-        # Store columns and map display titles to stat keys
+        """Setup the statistics table with histogram in the Statistics tab."""
+        main_container = ttk.Frame(self.tab_statistics)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Top section: Table
+        table_frame = ttk.Frame(main_container)
+        table_frame.pack(fill=tk.BOTH, expand=True)
+        
+        cols = ("Index", "BF Area (px²)", "BF Area (µm²)", "Fluor Mean", "Fluor Total", "Fluor/Area")
         self.stats_columns = cols
         self.stats_col_map = {
             "Index": "index",
-            "BF Area (px²)": "bf_area",
+            "BF Area (px²)": "bf_area_px",
+            "BF Area (µm²)": "bf_area_um2",
             "Fluor Mean": "fluor_mean",
             "Fluor Total": "fluor_total",
             "Fluor/Area": "fluor_per_area",
         }
-        self.stats_tree = ttk.Treeview(frame, columns=cols, show='headings', height=20)
+        
+        self.stats_tree = ttk.Treeview(table_frame, columns=cols, show='headings', height=12)
         for c in cols:
             key = self.stats_col_map.get(c, "")
             if key:
@@ -1009,20 +1162,19 @@ class SegmentationViewer:
             self.stats_tree.column(c, width=120, anchor=tk.CENTER)
         self.stats_tree.column("Index", width=60)
 
-        # Bind row selection to highlight bacterium
         self.stats_tree.bind('<<TreeviewSelect>>', self.on_stats_row_select)
 
-        vsb = ttk.Scrollbar(frame, orient="vertical", command=self.stats_tree.yview)
-        hsb = ttk.Scrollbar(frame, orient="horizontal", command=self.stats_tree.xview)
+        vsb = ttk.Scrollbar(table_frame, orient="vertical", command=self.stats_tree.yview)
+        hsb = ttk.Scrollbar(table_frame, orient="horizontal", command=self.stats_tree.xview)
         self.stats_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
         self.stats_tree.grid(row=0, column=0, sticky='nsew')
         vsb.grid(row=0, column=1, sticky='ns')
         hsb.grid(row=1, column=0, sticky='ew')
-        frame.grid_rowconfigure(0, weight=1)
-        frame.grid_columnconfigure(0, weight=1)
+        table_frame.grid_rowconfigure(0, weight=1)
+        table_frame.grid_columnconfigure(0, weight=1)
 
-        # Bottom row with summary and export button
-        bottom_frame = ttk.Frame(frame)
+        # Summary and export row
+        bottom_frame = ttk.Frame(table_frame)
         bottom_frame.grid(row=2, column=0, columnspan=2, pady=5, sticky='ew')
         
         self.stats_summary = ttk.Label(bottom_frame, text="No data", font=("Segoe UI", 10, "bold"))
@@ -1032,14 +1184,104 @@ class SegmentationViewer:
         export_btn.pack(side=tk.RIGHT)
         ToolTip(export_btn, "Export current statistics table to CSV file")
         
-        # Show default sort arrow
+        # ✨ FIXED: Bottom section: Histogram (only if matplotlib available)
+        if MATPLOTLIB_AVAILABLE:
+            histogram_frame = ttk.LabelFrame(main_container, text=" Distribution Histograms ", padding=10)
+            histogram_frame.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+            
+            self.hist_fig = Figure(figsize=(12, 3), dpi=80)
+            self.hist_canvas_widget = FigureCanvasTkAgg(self.hist_fig, master=histogram_frame)
+            self.hist_canvas_widget.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        else:
+            # Show message if matplotlib not available
+            no_hist_frame = ttk.LabelFrame(main_container, text=" Histograms ", padding=10)
+            no_hist_frame.pack(fill=tk.X, pady=(10, 0))
+            ttk.Label(no_hist_frame, 
+                     text="⚠️  matplotlib not installed\nInstall with: pip install matplotlib",
+                     font=("Segoe UI", 9), foreground="#e67e22").pack()
+        
         self.update_stats_heading_arrows()
 
+    def update_histograms(self):
+        """Update histogram plots with current bacteria statistics."""
+        if not MATPLOTLIB_AVAILABLE:
+            return
+            
+        if not self.bacteria_stats:
+            self.hist_fig.clear()
+            self.hist_canvas_widget.draw()
+            return
+        
+        # Clear previous plots
+        self.hist_fig.clear()
+        
+        # Extract data
+        areas_um2 = [s['bf_area_um2'] for s in self.bacteria_stats]
+        fluor_per_area = [s['fluor_per_area'] for s in self.bacteria_stats]
+        fluor_total = [s['fluor_total'] for s in self.bacteria_stats]
+        
+        # Create subplots
+        ax1 = self.hist_fig.add_subplot(131)
+        ax2 = self.hist_fig.add_subplot(132)
+        ax3 = self.hist_fig.add_subplot(133)
+        
+        # Determine if dark mode
+        is_dark = self.dark_mode_var.get()
+        bg_color = '#2b2b2b' if is_dark else 'white'
+        fg_color = '#e0e0e0' if is_dark else 'black'
+        grid_color = '#4a4a4a' if is_dark else '#e0e0e0'
+        
+        # ✨ FIXED: Use set_facecolor instead of patch.set_facecolor
+        self.hist_fig.set_facecolor(bg_color)
+        for ax in [ax1, ax2, ax3]:
+            ax.set_facecolor(bg_color)
+            ax.tick_params(colors=fg_color)
+            ax.spines['bottom'].set_color(fg_color)
+            ax.spines['top'].set_color(fg_color)
+            ax.spines['left'].set_color(fg_color)
+            ax.spines['right'].set_color(fg_color)
+            ax.xaxis.label.set_color(fg_color)
+            ax.yaxis.label.set_color(fg_color)
+            # ✨ FIXED: Use set_color instead of title.set_color
+            ax.title.set_color(fg_color)
+        
+        # Plot 1: Area distribution
+        ax1.hist(areas_um2, bins=20, color='#4CAF50', alpha=0.7, edgecolor='black')
+        ax1.set_xlabel('Area (µm²)', fontsize=9)
+        ax1.set_ylabel('Count', fontsize=9)
+        ax1.set_title(f'BF Area (n={len(areas_um2)})', fontsize=10)
+        ax1.grid(True, alpha=0.3, color=grid_color)
+        ax1.tick_params(labelsize=8)
+        
+        # Plot 2: Fluorescence/Area distribution
+        ax2.hist(fluor_per_area, bins=20, color='#FF5722', alpha=0.7, edgecolor='black')
+        ax2.set_xlabel('Fluor/Area', fontsize=9)
+        ax2.set_ylabel('Count', fontsize=9)
+        ax2.set_title(f'Fluorescence per Area (n={len(fluor_per_area)})', fontsize=10)
+        ax2.grid(True, alpha=0.3, color=grid_color)
+        ax2.tick_params(labelsize=8)
+        
+        # Plot 3: Total fluorescence distribution
+        ax3.hist(fluor_total, bins=20, color='#2196F3', alpha=0.7, edgecolor='black')
+        ax3.set_xlabel('Total Fluorescence', fontsize=9)
+        ax3.set_ylabel('Count', fontsize=9)
+        ax3.set_title(f'Total Fluorescence (n={len(fluor_total)})', fontsize=10)
+        ax3.grid(True, alpha=0.3, color=grid_color)
+        ax3.tick_params(labelsize=8)
+        
+        self.hist_fig.tight_layout()
+        self.hist_canvas_widget.draw()
+
     def calculate_bacteria_statistics(self, contours, bf_img, fluor_img=None):
-        """Calculate statistics for each bacterium contour."""
+        """Calculate statistics for each bacterium contour with physical units."""
+        pixel_size = self.get_pixel_size()
+        pixel_area = pixel_size ** 2
+        
         stats = []
         for idx, cnt in enumerate(contours):
-            area = cv2.contourArea(cnt)
+            area_px = cv2.contourArea(cnt)
+            area_um2 = area_px * pixel_area
+            
             mask = np.zeros(bf_img.shape, dtype=np.uint8)
             cv2.drawContours(mask, [cnt], -1, 255, -1)
             f_mean = f_total = f_per = 0.0
@@ -1048,11 +1290,16 @@ class SegmentationViewer:
                 if len(vals):
                     f_mean = float(np.mean(vals))
                     f_total = float(np.sum(vals))
-                    f_per = f_total / area if area else 0.0
+                    f_per = f_total / area_px if area_px else 0.0
+            
             stats.append({
                 'orig_idx': idx,
-                'bf_area': area, 'fluor_mean': f_mean, 'fluor_total': f_total,
-                'fluor_per_area': f_per, 'contour': cnt
+                'bf_area_px': area_px,
+                'bf_area_um2': area_um2,
+                'fluor_mean': f_mean,
+                'fluor_total': f_total,
+                'fluor_per_area': f_per,
+                'contour': cnt
             })
         return stats
 
@@ -1087,34 +1334,29 @@ class SegmentationViewer:
             self.stats_tree.heading(title, text=f"{title}{arrow}")
 
     def on_stats_row_select(self, event):
-        """Handle row selection in statistics table - highlight selected bacterium."""
+        """Handle row selection in statistics table."""
         selection = self.stats_tree.selection()
         if not selection:
             return
         
-        # Get selected item
         item = selection[0]
         values = self.stats_tree.item(item, 'values')
         if not values:
             return
         
-        # Index is 1-based in display, convert to 0-based for bacteria_stats
         selected_index = int(values[0]) - 1
         
         if 0 <= selected_index < len(self.bacteria_stats):
             self.current_bacteria_index = selected_index
-            # Switch to the contours tab to show the highlighted bacterium
             self.notebook.select(self.tab_contours)
-            # Refresh the display to show the highlight
             self.update_preview()
 
     def export_stats_to_csv(self):
-        """Export statistics table to CSV file."""
+        """Export statistics table to CSV file with metadata."""
         if not self.bacteria_stats:
             messagebox.showinfo("No Data", "No statistics to export. Load an image first.")
             return
         
-        # Suggest filename based on current image
         default_name = "bacteria_statistics.csv"
         if self.current_file:
             default_name = self.current_file.stem + "_statistics.csv"
@@ -1131,23 +1373,55 @@ class SegmentationViewer:
         
         try:
             import csv
+            
             with open(filepath, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
-                # Write header
-                writer.writerow(["Index", "BF Area (px²)", "Fluor Mean", "Fluor Total", "Fluor/Area"])
-                # Write data
+                
+                writer.writerow(["# Bacteria Segmentation Analysis"])
+                writer.writerow([f"# Exported: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"])
+                writer.writerow([f"# Image: {self.current_file.name if self.current_file else 'Unknown'}"])
+                
+                if self.current_metadata and self.has_metadata:
+                    writer.writerow([f"# Sample: {self.current_metadata.get('sample_name', 'N/A')}"])
+                    writer.writerow([f"# Pixel Size: {self.current_metadata.get('pixel_size_um', 0.1289):.4f} µm"])
+                    writer.writerow([f"# Objective: {self.current_metadata.get('objective', 'N/A')}"])
+                    if 'acquired' in self.current_metadata:
+                        writer.writerow([f"# Acquired: {self.current_metadata['acquired']}"])
+                    if 'exposure_times' in self.current_metadata:
+                        exp = self.current_metadata['exposure_times']
+                        writer.writerow([f"# BF Exposure: {exp.get('brightfield_ms', 'N/A')} ms"])
+                        writer.writerow([f"# Fluor Exposure: {exp.get('fluorescence_ms', 'N/A')} ms"])
+                else:
+                    writer.writerow([f"# ⚠️  No metadata available for this image"])
+                    writer.writerow([f"# Pixel Size: 0.1289 µm (default fallback)"])
+                
+                writer.writerow(["# Analysis Parameters:"])
+                writer.writerow([f"# Threshold: {'Otsu' if self.params['use_otsu'].get() else self.params['manual_threshold'].get()}"])
+                writer.writerow([f"# CLAHE: {'Enabled' if self.params['enable_clahe'].get() else 'Disabled'}"])
+                if self.params['enable_clahe'].get():
+                    writer.writerow([f"# CLAHE Clip: {self.params['clahe_clip'].get()}"])
+                    writer.writerow([f"# CLAHE Tile: {self.params['clahe_tile'].get()}"])
+                writer.writerow([f"# Min Area: {self.params['min_area'].get()} px²"])
+                writer.writerow([f"# Min Fluor/Area: {self.params['min_fluor_per_area'].get()}"])
+                writer.writerow([f"# Watershed Dilate: {self.params['watershed_dilate'].get()}"])
+                writer.writerow([])
+                
+                writer.writerow(["Index", "BF Area (px²)", "BF Area (µm²)", "Fluor Mean", "Fluor Total", "Fluor/Area"])
+                
                 for i, s in enumerate(self.bacteria_stats, 1):
                     writer.writerow([
                         i,
-                        f"{s['bf_area']:.1f}",
+                        f"{s['bf_area_px']:.1f}",
+                        f"{s['bf_area_um2']:.3f}",
                         f"{s['fluor_mean']:.2f}",
                         f"{s['fluor_total']:.1f}",
                         f"{s['fluor_per_area']:.3f}"
                     ])
             
-            self.status_var.set(f"Statistics exported to {Path(filepath).name}")
-            messagebox.showinfo("Export Successful", f"Statistics exported to:\n{filepath}")
-            print(f"✅ Statistics exported: {filepath}")
+            metadata_status = "with metadata" if self.has_metadata else "without metadata (defaults used)"
+            self.status_var.set(f"Statistics exported {metadata_status} to {Path(filepath).name}")
+            messagebox.showinfo("Export Successful", f"Statistics exported to:\n{filepath}\n\n{metadata_status.capitalize()}")
+            print(f"✅ Statistics exported ({metadata_status}): {filepath}")
             
         except Exception as e:
             import traceback
@@ -1158,20 +1432,147 @@ class SegmentationViewer:
             traceback.print_exc()
 
     def update_statistics_table(self):
-        """Update the statistics table with current bacteria data."""
+        """Update the statistics table and histograms with current bacteria data."""
         for i in self.stats_tree.get_children():
             self.stats_tree.delete(i)
         if self.bacteria_stats:
             for i, s in enumerate(self.bacteria_stats, 1):
                 self.stats_tree.insert('', 'end', values=(
-                    i, f"{s['bf_area']:.1f}", f"{s['fluor_mean']:.2f}",
-                    f"{s['fluor_total']:.1f}", f"{s['fluor_per_area']:.3f}"
+                    i,
+                    f"{s['bf_area_px']:.1f}",
+                    f"{s['bf_area_um2']:.3f}",
+                    f"{s['fluor_mean']:.2f}",
+                    f"{s['fluor_total']:.1f}",
+                    f"{s['fluor_per_area']:.3f}"
                 ))
             total = len(self.bacteria_stats)
-            avg = np.mean([s['fluor_per_area'] for s in self.bacteria_stats])
-            self.stats_summary.config(text=f"Total: {total} bacteria | Avg Fluor/Area: {avg:.3f}")
+            avg_um2 = np.mean([s['bf_area_um2'] for s in self.bacteria_stats])
+            avg_fpa = np.mean([s['fluor_per_area'] for s in self.bacteria_stats])
+            self.stats_summary.config(
+                text=f"Total: {total} bacteria | Avg Area: {avg_um2:.3f} µm² | Avg F/A: {avg_fpa:.3f}"
+            )
+            self.update_histograms()
         else:
             self.stats_summary.config(text="No bacteria detected")
+            if MATPLOTLIB_AVAILABLE and hasattr(self, 'hist_fig'):
+                self.hist_fig.clear()
+                self.hist_canvas_widget.draw()
+
+    def update_metadata_panel(self):
+        """Update metadata panel with current image metadata."""
+        if not self.current_metadata or not self.has_metadata:
+            self.measure_labels["sample_name"].config(
+                text="⚠️  No metadata (using defaults)", 
+                foreground="#e67e22"
+            )
+            self.measure_labels["pixel_size"].config(
+                text="Pixel Size: 0.1289 µm (default)",
+                foreground="#95a5a6"
+            )
+            self.measure_labels["objective"].config(text="Objective: -", foreground="#95a5a6")
+            self.measure_labels["acquired"].config(text="Acquired: -", foreground="#95a5a6")
+            self.measure_labels["exposure_bf"].config(text="BF Exposure: -", foreground="#95a5a6")
+            self.measure_labels["exposure_fluor"].config(text="Fluor Exposure: -", foreground="#95a5a6")
+            return
+        
+        normal_color = "#e0e0e0" if self.dark_mode_var.get() else "#2c3e50"
+        
+        sample = self.current_metadata.get('sample_name', '-')
+        pixel_size = self.current_metadata.get('pixel_size_um', 0.1289)
+        objective = self.current_metadata.get('objective', '-')
+        acquired = self.current_metadata.get('acquired', '-')
+        
+        self.measure_labels["sample_name"].config(
+            text=f"Sample: {sample}",
+            foreground=normal_color
+        )
+        self.measure_labels["pixel_size"].config(
+            text=f"Pixel Size: {pixel_size:.4f} µm",
+            foreground=normal_color
+        )
+        self.measure_labels["objective"].config(
+            text=f"Objective: {objective}",
+            foreground=normal_color
+        )
+        
+        if len(acquired) > 30:
+            acquired = acquired[:27] + "..."
+        self.measure_labels["acquired"].config(
+            text=f"Acquired: {acquired}",
+            foreground=normal_color
+        )
+        
+        if 'exposure_times' in self.current_metadata:
+            exp = self.current_metadata['exposure_times']
+            bf_exp = exp.get('brightfield_ms', '-')
+            fluor_exp = exp.get('fluorescence_ms', '-')
+            self.measure_labels["exposure_bf"].config(
+                text=f"BF Exposure: {bf_exp} ms",
+                foreground=normal_color
+            )
+            self.measure_labels["exposure_fluor"].config(
+                text=f"Fluor Exposure: {fluor_exp} ms",
+                foreground=normal_color
+            )
+        else:
+            self.measure_labels["exposure_bf"].config(text="BF Exposure: -", foreground="#95a5a6")
+            self.measure_labels["exposure_fluor"].config(text="Fluor Exposure: -", foreground="#95a5a6")
+
+    # --------------------------------------------------------------------- #
+    # Scale bar
+    # --------------------------------------------------------------------- #
+    def draw_scale_bar(self, img_pil, pixel_size_um):
+        """Draw scale bar on PIL image with physical units."""
+        if not self.params['show_scale_bar'].get():
+            return img_pil
+        
+        draw = ImageDraw.Draw(img_pil)
+        img_width, img_height = img_pil.size
+        
+        # Scale bar parameters
+        target_bar_length_um = 5.0  # Target 5 µm bar
+        bar_length_px = int(target_bar_length_um / pixel_size_um)
+        
+        # Adjust if bar is too long for image
+        max_bar_width = img_width * 0.25
+        if bar_length_px > max_bar_width:
+            bar_length_px = int(max_bar_width)
+            target_bar_length_um = bar_length_px * pixel_size_um
+        
+        bar_thickness = 3
+        margin = 15
+        
+        # Position at bottom-right
+        x1 = img_width - margin - bar_length_px
+        y1 = img_height - margin - bar_thickness - 20
+        x2 = img_width - margin
+        y2 = y1 + bar_thickness
+        
+        # Draw white bar with black outline
+        draw.rectangle([x1-1, y1-1, x2+1, y2+1], fill='black')
+        draw.rectangle([x1, y1, x2, y2], fill='white')
+        
+        # Draw text label
+        font_size = 12
+        try:
+            font = ImageFont.truetype("arial.ttf", font_size)
+        except:
+            font = ImageFont.load_default()
+        
+        text = f"{target_bar_length_um:.1f} µm"
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        
+        text_x = x1 + (bar_length_px - text_w) // 2
+        text_y = y2 + 3
+        
+        # Text with black outline
+        for dx, dy in [(-1,-1), (-1,1), (1,-1), (1,1)]:
+            draw.text((text_x+dx, text_y+dy), text, font=font, fill='black')
+        draw.text((text_x, text_y), text, font=font, fill='white')
+        
+        return img_pil
 
     # --------------------------------------------------------------------- #
     # Overlay
@@ -1223,14 +1624,11 @@ class SegmentationViewer:
             self.measure_panel.expand()
         self.update_measurement_panel(ix, iy, int(self.original_image[iy, ix]))
 
-        # Run segmentation first
         self.update_preview()
 
-        # Auto-tune only on Ctrl+Click
         if event.state & 0x4:
             self.auto_tune_from_point(ix, iy, int(self.original_image[iy, ix]))
 
-        # Highlight clicked bacterium
         if self.bacteria_stats:
             for idx, s in enumerate(self.bacteria_stats):
                 if cv2.pointPolygonTest(s['contour'], (ix, iy), False) >= 0:
@@ -1252,28 +1650,39 @@ class SegmentationViewer:
 
     def update_measurement_panel(self, x, y, val):
         """Update measurement panel with clicked pixel information."""
+        pixel_size = self.get_pixel_size()
+        
         self.measure_labels["pixel_coord"].config(text=f"Pixel: ({x}, {y})")
         self.measure_labels["pixel_value"].config(text=f"Value: {val}")
-        inside = area = 0
+        inside = area_px = area_um2 = 0
         if self.current_contours:
             for c in self.current_contours:
                 if cv2.pointPolygonTest(c, (x, y), False) >= 0:
                     inside = True
-                    area = cv2.contourArea(c)
+                    area_px = cv2.contourArea(c)
+                    area_um2 = area_px * (pixel_size ** 2)
                     break
         self.measure_labels["inside_contour"].config(
             text=f"Inside Contour: {'Yes' if inside else 'No'}",
             foreground="#27ae60" if inside else "#e74c3c")
-        self.measure_labels["contour_area"].config(
-            text=f"Contour Area: {int(area)} px²" if inside else "Contour Area: - px²")
+        self.measure_labels["contour_area_px"].config(
+            text=f"Contour Area: {int(area_px)} px²" if inside else "Contour Area: - px²")
+        self.measure_labels["contour_area_um"].config(
+            text=f"Contour Area: {area_um2:.3f} µm²" if inside else "Contour Area: - µm²")
 
     def reset_measurement_panel(self):
         """Reset measurement panel to default values."""
-        defaults = {"pixel_coord": "Pixel: -, -", "pixel_value": "Value: -",
-                    "inside_contour": "Inside Contour: -", "contour_area": "Contour Area: - px²"}
+        defaults = {
+            "pixel_coord": "Pixel: -, -", 
+            "pixel_value": "Value: -",
+            "inside_contour": "Inside Contour: -", 
+            "contour_area_px": "Contour Area: - px²",
+            "contour_area_um": "Contour Area: - µm²"
+        }
         for k, txt in defaults.items():
-            fg = "#e0e0e0" if self.dark_mode_var.get() else "#2c3e50"
-            self.measure_labels[k].config(text=txt, foreground=fg)
+            if k in self.measure_labels:
+                fg = "#e0e0e0" if self.dark_mode_var.get() else "#2c3e50"
+                self.measure_labels[k].config(text=txt, foreground=fg)
 
     # --------------------------------------------------------------------- #
     # Auto-tune
@@ -1442,13 +1851,18 @@ class SegmentationViewer:
 
     def create_label_controls(self, parent):
         """Create label display parameter controls."""
-        lf = ttk.LabelFrame(parent, text=" Labels ", padding=8)
+        lf = ttk.LabelFrame(parent, text=" Labels & Scale ", padding=8)
         lf.pack(fill=tk.X, pady=(0, 5))
         
         cb = ttk.Checkbutton(lf, text="Show Labels", variable=self.params['show_labels'],
                              command=self.update_preview)
         cb.pack(anchor=tk.W, pady=2)
         ToolTip(cb, "Display numbered labels for bacteria")
+        
+        cb_scale = ttk.Checkbutton(lf, text="Show Scale Bar", variable=self.params['show_scale_bar'],
+                                   command=self.update_preview)
+        cb_scale.pack(anchor=tk.W, pady=2)
+        ToolTip(cb_scale, "Display scale bar with physical units (µm)")
         
         self.add_entry_with_progress(lf, "Font Size:", 
                                      "Label font size (10-60)",
@@ -1477,7 +1891,7 @@ class SegmentationViewer:
             self.status_var.set("Parameters reset")
 
     # --------------------------------------------------------------------- #
-    # Load image
+    # Load image (IMPROVED: metadata handling)
     # --------------------------------------------------------------------- #
     def load_image_from_path(self, path: Path):
         """Load bright-field image and matching fluorescence image if available."""
@@ -1497,6 +1911,17 @@ class SegmentationViewer:
         self.current_file = path
         self.current_index = self.find_file_index(path)
 
+        metadata = self.load_metadata_for_image(path)
+        if metadata:
+            self.current_metadata = metadata
+            self.has_metadata = True
+            pixel_size = metadata.get('pixel_size_um', 0.1289)
+            print(f"  📊 Metadata loaded - Pixel size: {pixel_size:.4f} µm")
+        else:
+            print(f"  ⚠️  No metadata found - using defaults")
+            self.current_metadata = {'pixel_size_um': 0.1289}
+            self.has_metadata = False
+
         fluor_path = self.get_fluorescence_path(path)
         self.fluorescence_image = None
         if fluor_path:
@@ -1507,10 +1932,15 @@ class SegmentationViewer:
                     fluor = cv2.cvtColor(fluor, cv2.COLOR_BGR2GRAY)
                 self.fluorescence_image = fluor
                 print(f"  ✅ Fluorescence loaded")
+                
+                if self.has_metadata and 'channels' in self.current_metadata:
+                    self.apply_metadata_display_settings()
+                else:
+                    print(f"  ℹ️  No channel metadata - keeping manual display settings")
             else:
-                print(f"  ⚠️ Fluorescence file exists but couldn't be read")
+                print(f"  ⚠️  Fluorescence file exists but couldn't be read")
         else:
-            print(f"  ℹ️ No fluorescence file found")
+            print(f"  ℹ️  No fluorescence file found")
 
         self.probe_point = None
         self.clear_probe()
@@ -1519,22 +1949,19 @@ class SegmentationViewer:
 
         h, w = bf.shape[:2]
         fmsg = " + fluorescence" if self.fluorescence_image is not None else ""
-        self.status_var.set(f"Loaded: {path.name}{fmsg} ({w}x{h})")
+        meta_status = " (with metadata)" if self.has_metadata else " (no metadata)"
+        self.status_var.set(f"Loaded: {path.name}{fmsg}{meta_status} ({w}x{h})")
         self.root.title(f"{path.name} - Bacteria Segmentation Tuner")
         self.update_navigation_buttons()
+        self.update_metadata_panel()
         self.update_preview()
-        print(f"✅ Image loaded successfully: {w}x{h}{fmsg}\n")
+        print(f"✅ Image loaded successfully: {w}x{h}{fmsg}{meta_status}\n")
 
     # --------------------------------------------------------------------- #
     # SEGMENTATION
     # --------------------------------------------------------------------- #
     def segment_bacteria(self, gray_bf: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, List[np.ndarray]]:
-        """
-        Segment bacteria from bright-field image.
-        
-        Returns:
-            Tuple of (enhanced, threshold, cleaned, bacteria_contours)
-        """
+        """Segment bacteria from bright-field image."""
         if self.params['enable_clahe'].get():
             bf8 = cv2.convertScaleAbs(gray_bf)
             clahe = cv2.createCLAHE(clipLimit=self.params['clahe_clip'].get(),
@@ -1724,6 +2151,10 @@ class SegmentationViewer:
             draw.rectangle(bg_rect, fill=(0, 0, 0, 200))
             draw.text((label_x, label_y), label_text, font=font, fill=arrow_color)
             occupancy_map[label_y:label_y+text_h, label_x:label_x+text_w] = 255
+        
+        pixel_size = self.get_pixel_size()
+        pil_img = self.draw_scale_bar(pil_img, pixel_size)
+        
         img_rgb_array = np.array(pil_img)
         return cv2.cvtColor(img_rgb_array, cv2.COLOR_RGB2BGR)
 
@@ -1753,7 +2184,6 @@ class SegmentationViewer:
                 self.bacteria_stats = [s for s in all_stats if s['fluor_per_area'] >= min_fpa]
             else:
                 self.bacteria_stats = all_stats
-            # Apply sort and rebuild bacteria list in sorted order
             self.apply_stats_sort()
             bacteria = [s['contour'] for s in self.bacteria_stats]
             self.current_contours = bacteria
@@ -1763,7 +2193,8 @@ class SegmentationViewer:
                 base = f"Detected {len(self.bacteria_stats)}/{len(all_stats)} (min F/A {min_fpa:.1f})"
             if not self.probe_point and self.current_file:
                 fstat = " (with fluorescence)" if self.fluorescence_image is not None else ""
-                self.status_var.set(f"{base} | {self.current_file.name}{fstat}")
+                meta_status = "" if self.has_metadata else " [no metadata]"
+                self.status_var.set(f"{base} | {self.current_file.name}{fstat}{meta_status}")
 
             self.update_statistics_table()
             for k in self.progressbars:
@@ -1791,6 +2222,10 @@ class SegmentationViewer:
             self.display_image(cnt_img, self.canvas_contours)
 
             ov = self.create_overlay_image(self.original_image, self.fluorescence_image, bacteria)
+            ov_rgb = cv2.cvtColor(ov, cv2.COLOR_BGR2RGB)
+            ov_pil = Image.fromarray(ov_rgb)
+            ov_pil = self.draw_scale_bar(ov_pil, self.get_pixel_size())
+            ov = cv2.cvtColor(np.array(ov_pil), cv2.COLOR_RGB2BGR)
             self.display_image(ov, self.canvas_overlay)
 
         except Exception as e:
@@ -1890,3 +2325,4 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = SegmentationViewer(root)
     root.mainloop()
+    

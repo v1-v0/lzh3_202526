@@ -140,7 +140,7 @@ Process:
 - Increasing: Creates smaller, more conservative foreground markers, leading to greater separation of objects. This results in more individual contours (better splits clumped bacteria) but can cause over-segmentation or fragmentation if too high.
 - Decreasing: Creates larger markers, reducing separation and potentially merging nearby objects into fewer, larger contours. Useful for under-segmented images but risks failing to separate touching bacteria.
 
-#### Min Area (px²) (integer, default: 50, range: 10-500)
+#### Min Area (px²) (integer, default: 100, range: 10-500)
 
 **Description**: Minimum area (in pixels) required for a contour to be considered a valid bacterium; smaller contours are filtered out after detection.
 
