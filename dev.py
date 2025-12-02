@@ -164,7 +164,7 @@ class SegmentationViewer:
         self.default_params = {
             'use_otsu': False, 'manual_threshold': 110, 'enable_clahe': True,
             'clahe_clip': 5.0, 'clahe_tile': 32, 'open_kernel': 3, 'close_kernel': 5,
-            'open_iter': 3, 'close_iter': 2, 'min_area': 100, 'watershed_dilate': 15,
+            'open_iter': 3, 'close_iter': 2, 'min_area': 67, 'watershed_dilate': 15,
             'fluor_brightness': 2.0, 'fluor_gamma': 0.5, 'show_labels': True,
             'label_font_size': 20, 'arrow_length': 60, 'label_offset': 15,
             'min_fluor_per_area': 10, 'show_scale_bar': True,
