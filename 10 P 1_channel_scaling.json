@@ -1,0 +1,32 @@
+{
+    "ImageName": "10 P 1",
+    "SourceXML": "10 P 1.xml",
+    "Scaling_Normalized": {
+        "Gray": {
+            "LUT": "Gray",
+            "WhiteValue": 0.188034188034188,
+            "BlackValue": 0.043956043956044,
+            "Gamma": 1.0,
+            "Automatic": false
+        },
+        "Red": {
+            "LUT": "(none)",
+            "WhiteValue": 0.0732600732600733,
+            "BlackValue": 0.043956043956044,
+            "Gamma": 1.0,
+            "Automatic": false
+        }
+    },
+    "Intensity_12bit": {
+        "Gray": {
+            "WhiteLevel_12bit": 770.0,
+            "BlackLevel_12bit": 180.0,
+            "DynamicRange_12bit": 590.0
+        },
+        "Red": {
+            "WhiteLevel_12bit": 300.0,
+            "BlackLevel_12bit": 180.0,
+            "DynamicRange_12bit": 120.0
+        }
+    }
+}
