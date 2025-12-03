@@ -1765,7 +1765,7 @@ class SegmentationViewer:
         rng = {
             'manual_threshold': (0, 255), 'clahe_clip': (1, 10), 'clahe_tile': (4, 32),
             'open_kernel': (1, 15), 'close_kernel': (1, 15), 'open_iter': (1, 5),
-            'close_iter': (1, 5), 'min_area': (10, 500), 'watershed_dilate': (1, 20),
+            'close_iter': (1, 5), 'min_area': (10, 500), 'watershed_dilate': (20, 60),
             'fluor_brightness': (0.5, 5), 'fluor_gamma': (0.2, 2),
             'label_font_size': (10, 60), 'arrow_length': (20, 100),
             'label_offset': (5, 50), 'min_fluor_per_area': (0, 255),
@@ -1828,8 +1828,8 @@ class SegmentationViewer:
         lf.pack(fill=tk.X, pady=(0, 5))
         
         self.add_entry_with_progress(lf, "Watershed Dilate:", 
-                                     "Watershed marker dilation (1-20)",
-                                     self.params['watershed_dilate'], 1, 20)
+                                     "Watershed marker dilation (20-60)",
+                                     self.params['watershed_dilate'], 20, 60)
         self.add_entry_with_progress(lf, "Min Area (px²):", 
                                      "Minimum bacteria area in pixels (10-500)",
                                      self.params['min_area'], 10, 500)
