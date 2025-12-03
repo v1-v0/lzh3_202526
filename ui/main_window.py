@@ -10,92 +10,21 @@ from tkinter import ttk, filedialog, messagebox
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import Optional, List, Dict, Any, TYPE_CHECKING
+from typing import Optional, List, Dict
 import json
 
-# Use TYPE_CHECKING to avoid runtime import issues while still providing type hints
-if TYPE_CHECKING:
-    from ..config.parameters import ParameterManager
-    from ..config.themes import ThemeManager
-    from ..core.image_processing import ImageProcessor
-    from ..core.segmentation import BacteriaSegmenter
-    from analysis.statistics import BacteriaStatistics
-    from analysis.visualization import ResultVisualizer
-    from ..utils.file_utils import ImageFileManager
-    from ..utils.platform_utils import PlatformHelper
-    from controls import ParameterControls
-    from .canvas_manager import CanvasManager
-    from .statistics_panel import StatisticsPanel
-    from .widgets import ToolTip
-
-# Runtime imports with error handling
-try:
-    from ..config.parameters import ParameterManager  # type: ignore
-except (ImportError, AttributeError) as exec:
-        # This is during module import; raising here will stop app startup
-    raise ImportError(
-        "Required dependency 'ParameterManager' could not be imported from "
-        "'..config.parameters'.\n\n"
-        "Check that:\n"
-        "  • The file 'parameters.py' exists in the 'config' package\n"
-        "  • It defines a class or symbol named 'ParameterManager'\n"
-        "  • Your PYTHONPATH / package layout is correct\n"
-    ) from exec
-
-try:
-    from ..config.themes import ThemeManager  # type: ignore
-except (ImportError, AttributeError):
-    ThemeManager = None  # type: ignore
-
-try:
-    from ..core.image_processing import ImageProcessor  # type: ignore
-except (ImportError, AttributeError):
-    ImageProcessor = None  # type: ignore
-
-try:
-    from ..core.segmentation import BacteriaSegmenter  # type: ignore
-except (ImportError, AttributeError):
-    BacteriaSegmenter = None  # type: ignore
-
-try:
-    from ..analysis.statistics import BacteriaStatistics  # type: ignore
-except (ImportError, AttributeError):
-    BacteriaStatistics = None  # type: ignore
-
-try:
-    from ..analysis.visualization import ResultVisualizer  # type: ignore
-except (ImportError, AttributeError):
-    ResultVisualizer = None  # type: ignore
-
-try:
-    from ..utils.file_utils import ImageFileManager  # type: ignore
-except (ImportError, AttributeError):
-    ImageFileManager = None  # type: ignore
-
-try:
-    from ..utils.platform_utils import PlatformHelper  # type: ignore
-except (ImportError, AttributeError):
-    PlatformHelper = None  # type: ignore
-
-try:
-    from .controls import ParameterControls  # type: ignore
-except (ImportError, AttributeError):
-    ParameterControls = None  # type: ignore
-
-try:
-    from .canvas_manager import CanvasManager  # type: ignore
-except (ImportError, AttributeError):
-    CanvasManager = None  # type: ignore
-
-try:
-    from .statistics_panel import StatisticsPanel  # type: ignore
-except (ImportError, AttributeError):
-    StatisticsPanel = None  # type: ignore
-
-try:
-    from .widgets import ToolTip  # type: ignore
-except (ImportError, AttributeError):
-    ToolTip = None  # type: ignore
+from config.parameters import ParameterManager
+from config.themes import ThemeManager
+from core.image_processing import ImageProcessor
+from core.segmentation import BacteriaSegmenter
+from analysis.statistics import BacteriaStatistics
+from analysis.visualization import ResultVisualizer
+from utils.file_utils import ImageFileManager
+from utils.platform_utils import PlatformHelper
+from controls import ParameterControls
+from canvas_manager import CanvasManager
+from statistics_panel import StatisticsPanel
+from widgets import ToolTip
 
 
 class MainWindow:
@@ -112,15 +41,6 @@ class MainWindow:
         self.root.geometry("1600x900")
         
         # Initialize managers
-        if ParameterManager is None:
-            raise ImportError("ParameterManager could not be imported")
-        if ThemeManager is None:
-            raise ImportError("ThemeManager could not be imported")
-        if CanvasManager is None:
-            raise ImportError("CanvasManager could not be imported")
-        if ImageFileManager is None:
-            raise ImportError("ImageFileManager could not be imported")
-            
         self.param_manager = ParameterManager()
         self.theme_manager = ThemeManager()
         self.canvas_manager = CanvasManager()
@@ -135,8 +55,8 @@ class MainWindow:
         self.bf_image: Optional[np.ndarray] = None
         self.fluor_image: Optional[np.ndarray] = None
         self.labeled_image: Optional[np.ndarray] = None
-        self.contours: List[np.ndarray] = []
-        self.stats: List[Dict[str, Any]] = []
+        self.contours: List = []
+        self.stats: List[Dict] = []
         
         # UI variables
         self.dark_mode_var = tk.BooleanVar(value=False)
@@ -245,8 +165,7 @@ class MainWindow:
         open_btn = ttk.Button(btn_frame, text="📁 Open Folder",
                             command=self._open_folder)
         open_btn.pack(side=tk.LEFT, padx=(0, 5))
-        if ToolTip is not None:
-            ToolTip(open_btn, "Select folder containing microscopy images")
+        ToolTip(open_btn, "Select folder containing microscopy images")
         
         ttk.Checkbutton(btn_frame, text="Recursive",
                        variable=self.recursive_var).pack(side=tk.LEFT)
@@ -272,28 +191,25 @@ class MainWindow:
         prev_btn = ttk.Button(nav_frame, text="◀ Previous",
                             command=lambda: self._navigate_image(-1))
         prev_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
-        if ToolTip is not None:
-            ToolTip(prev_btn, "Previous image (Left Arrow)")
+        ToolTip(prev_btn, "Previous image (Left Arrow)")
         
         next_btn = ttk.Button(nav_frame, text="Next ▶",
                             command=lambda: self._navigate_image(1))
         next_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
-        if ToolTip is not None:
-            ToolTip(next_btn, "Next image (Right Arrow)")
+        ToolTip(next_btn, "Next image (Right Arrow)")
         
         # Parameter controls
-        if ParameterControls is not None:
-            params = self.param_manager.get_tk_variables()
-            self.param_controls = ParameterControls(
-                scrollable_frame, params, self._on_parameter_change
-            )
-            
-            self.param_controls.create_threshold_controls()
-            self.param_controls.create_clahe_controls()
-            self.param_controls.create_morphology_controls()
-            self.param_controls.create_watershed_controls()
-            self.param_controls.create_fluorescence_controls()
-            self.param_controls.create_label_controls()
+        params = self.param_manager.get_tk_variables()
+        self.param_controls = ParameterControls(
+            scrollable_frame, params, self._on_parameter_change
+        )
+        
+        self.param_controls.create_threshold_controls()
+        self.param_controls.create_clahe_controls()
+        self.param_controls.create_morphology_controls()
+        self.param_controls.create_watershed_controls()
+        self.param_controls.create_fluorescence_controls()
+        self.param_controls.create_label_controls()
         
         # Action buttons
         action_frame = ttk.LabelFrame(scrollable_frame,
@@ -304,43 +220,39 @@ class MainWindow:
         process_btn = ttk.Button(action_frame, text="🔄 Reprocess",
                                command=self._process_current_image)
         process_btn.pack(fill=tk.X, pady=2)
-        if ToolTip is not None:
-            ToolTip(process_btn, "Reprocess current image with current parameters")
+        ToolTip(process_btn, "Reprocess current image with current parameters")
         
         save_btn = ttk.Button(action_frame, text="💾 Save Results",
                             command=self._save_results)
         save_btn.pack(fill=tk.X, pady=2)
-        if ToolTip is not None:
-            ToolTip(save_btn, "Save current analysis results (Ctrl+S)")
+        ToolTip(save_btn, "Save current analysis results (Ctrl+S)")
         
         export_btn = ttk.Button(action_frame, text="📊 Export All to CSV",
                               command=self._export_all)
         export_btn.pack(fill=tk.X, pady=2)
-        if ToolTip is not None:
-            ToolTip(export_btn, "Export all images' statistics to CSV (Ctrl+E)")
+        ToolTip(export_btn, "Export all images' statistics to CSV (Ctrl+E)")
         
         # Pack scrollable components
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
         # Mousewheel scrolling
-        if PlatformHelper is not None:
-            def on_mousewheel(event):
-                delta = PlatformHelper.get_mousewheel_delta(event)
-                canvas.yview_scroll(delta, "units")
-            
-            def bind_mousewheel(event):
-                canvas.bind_all("<MouseWheel>", on_mousewheel)
-                canvas.bind_all("<Button-4>", on_mousewheel)
-                canvas.bind_all("<Button-5>", on_mousewheel)
-            
-            def unbind_mousewheel(event):
-                canvas.unbind_all("<MouseWheel>")
-                canvas.unbind_all("<Button-4>")
-                canvas.unbind_all("<Button-5>")
-            
-            PlatformHelper.bind_mousewheel(canvas, bind_mousewheel, unbind_mousewheel)
+        def on_mousewheel(event):
+            delta = PlatformHelper.get_mousewheel_delta(event)
+            canvas.yview_scroll(delta, "units")
         
+        def bind_mousewheel(event):
+            canvas.bind_all("<MouseWheel>", on_mousewheel)
+            canvas.bind_all("<Button-4>", on_mousewheel)
+            canvas.bind_all("<Button-5>", on_mousewheel)
+        
+        def unbind_mousewheel(event):
+            canvas.unbind_all("<MouseWheel>")
+            canvas.unbind_all("<Button-4>")
+            canvas.unbind_all("<Button-5>")
+        
+        PlatformHelper.bind_mousewheel(canvas, on_mousewheel)
+
         return panel
     
     def _create_right_panel(self) -> ttk.Frame:
@@ -392,12 +304,11 @@ class MainWindow:
         stats_frame = ttk.Frame(notebook)
         notebook.add(stats_frame, text="Statistics")
         
-        if StatisticsPanel is not None:
-            self.stats_panel = StatisticsPanel(
-                stats_frame,
-                self._on_bacteria_select,
-                self.dark_mode_var
-            )
+        self.stats_panel = StatisticsPanel(
+            stats_frame,
+            self._on_bacteria_select,
+            self.dark_mode_var
+        )
         
         return panel
     
@@ -484,7 +395,7 @@ class MainWindow:
     
     def _process_current_image(self):
         """Process current image with current parameters."""
-        if self.bf_image is None or ImageProcessor is None or BacteriaSegmenter is None or BacteriaStatistics is None:
+        if self.bf_image is None:
             return
         
         try:
@@ -540,8 +451,7 @@ class MainWindow:
             self._update_displays()
             
             # Update statistics panel
-            if hasattr(self, 'stats_panel'):
-                self.stats_panel.update_data(self.stats)
+            self.stats_panel.update_data(self.stats)
             
         except Exception as e:
             messagebox.showerror("Processing Error", str(e))
@@ -550,7 +460,7 @@ class MainWindow:
     
     def _update_displays(self):
         """Update all canvas displays."""
-        if self.bf_image is None or ResultVisualizer is None:
+        if self.bf_image is None:
             return
         
         params = self.param_manager.get_values()
@@ -642,7 +552,7 @@ class MainWindow:
         Args:
             index: Selected bacteria index
         """
-        if not self.stats or index >= len(self.stats) or ResultVisualizer is None:
+        if not self.stats or index >= len(self.stats):
             return
         
         # Highlight selected bacterium in overlay
@@ -668,14 +578,14 @@ class MainWindow:
     
     def _save_results(self):
         """Save current analysis results."""
-        if not self.current_file or not self.stats or ResultVisualizer is None or BacteriaStatistics is None:
+        if not self.current_file or not self.stats:
             messagebox.showinfo("No Data", "No results to save. Process an image first.")
             return
         
         if self.current_folder is None:
-            messagebox.showerror("Error", "No folder selected")
+            messagebox.showerror("Error", "No folder selected.")
             return
-        
+
         output_dir = self.current_folder / "analysis_output"
         output_dir.mkdir(exist_ok=True)
         
@@ -701,11 +611,9 @@ class MainWindow:
         overlay_path = output_dir / f"{base_name}_overlay.png"
         cv2.imwrite(str(overlay_path), cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR))
         
-        # Save statistics CSV - assuming export_to_csv is a static method
+        # Save statistics CSV
         csv_path = output_dir / f"{base_name}_stats.csv"
-        BacteriaStatistics.export_to_csv(
-            self.stats, base_name, csv_path
-        )
+        BacteriaStatistics.export_to_csv([self.stats], [base_name], csv_path)
         
         messagebox.showinfo(
             "Success",
@@ -716,7 +624,7 @@ class MainWindow:
     
     def _export_all(self):
         """Export all images' statistics to single CSV."""
-        if not self.image_files or ImageProcessor is None or BacteriaSegmenter is None or BacteriaStatistics is None:
+        if not self.image_files:
             messagebox.showinfo("No Data", "No images loaded. Open a folder first.")
             return
         
@@ -731,8 +639,8 @@ class MainWindow:
             return
         
         try:
-            all_stats: List[List[Dict[str, Any]]] = []
-            all_names: List[str] = []
+            all_stats = []
+            all_names = []
             
             # Progress tracking
             total = len(self.image_files)
@@ -783,14 +691,13 @@ class MainWindow:
                 )
                 
                 all_stats.append(stats)
-                image_name = img_path.stem.replace('_ch00', '')
-                all_names.append(image_name)
+                all_names.append(img_path.stem.replace('_ch00', ''))
                 
                 # Update progress
                 print(f"Processed {i}/{total}: {img_path.name}")
             
-            # Export - call method that accepts list of stats lists and names
-            BacteriaStatistics.export_all_to_csv(
+            # Export
+            BacteriaStatistics.export_to_csv(
                 all_stats, all_names, Path(output_file)
             )
             
@@ -815,12 +722,11 @@ class MainWindow:
             return
         
         try:
-            self.param_manager.load_from_file(Path(filepath))
+            self.param_manager.load_from_file(str(filepath))
             
             # Update UI
             params = self.param_manager.get_values()
-            if hasattr(self, 'param_controls'):
-                self.param_controls.reset_to_defaults(params)
+            self.param_controls.reset_to_defaults(params)
             
             # Reprocess
             if self.bf_image is not None:
@@ -844,7 +750,7 @@ class MainWindow:
             return
         
         try:
-            self.param_manager.save_to_file(Path(filepath))
+            self.param_manager.save_to_file(str(filepath))
             messagebox.showinfo("Success", f"Parameters saved to:\n{filepath}")
         except Exception as e:
             messagebox.showerror("Save Error", str(e))
@@ -858,8 +764,7 @@ class MainWindow:
         
         if result:
             defaults = self.param_manager.get_defaults()
-            if hasattr(self, 'param_controls'):
-                self.param_controls.reset_to_defaults(defaults)
+            self.param_controls.reset_to_defaults(defaults)
             self.param_manager.reset_to_defaults()
             
             if self.bf_image is not None:

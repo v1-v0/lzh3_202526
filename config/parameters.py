@@ -1,6 +1,65 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import tkinter as tk
+from typing import Dict, Any
+
+class ParameterManager:
+    """Manages application parameters and settings."""
+    
+    def __init__(self):
+        self._tk_vars = {}
+        self._values = self._get_default_values()
+    
+    def _get_default_values(self) -> Dict[str, Any]:
+        """Return default parameter values."""
+        return {
+            'use_otsu': True,
+            'manual_threshold': 128,
+            'enable_clahe': True,
+            'clahe_clip': 2.0,
+            'clahe_tile': 8,
+            'min_area': 50,
+            'pixel_size_um': 0.065,
+            # Add other defaults as needed
+        }
+    
+    def get_tk_variables(self) -> Dict[str, tk.Variable]:
+        """Get Tkinter variables for UI binding."""
+        if not self._tk_vars:
+            for key, value in self._values.items():
+                if isinstance(value, bool):
+                    self._tk_vars[key] = tk.BooleanVar(value=value)
+                elif isinstance(value, (int, float)):
+                    self._tk_vars[key] = tk.DoubleVar(value=value)
+                else:
+                    self._tk_vars[key] = tk.StringVar(value=str(value))
+        return self._tk_vars
+    
+    def get_values(self) -> Dict[str, Any]:
+        """Get current parameter values."""
+        return self._values.copy()
+    
+    def get_defaults(self) -> Dict[str, Any]:
+        """Get default parameter values."""
+        return self._get_default_values()
+    
+    def reset_to_defaults(self):
+        """Reset parameters to defaults."""
+        self._values = self._get_default_values()
+    
+    def load_from_file(self, filepath: str):
+        """Load parameters from file."""
+        import json
+        with open(filepath, 'r') as f:
+            self._values.update(json.load(f))
+    
+    def save_to_file(self, filepath: str):
+        """Save parameters to file."""
+        import json
+        with open(filepath, 'w') as f:
+            json.dump(self._values, f, indent=2)
+
 """
 Default parameters and constants for bacteria segmentation.
 """
