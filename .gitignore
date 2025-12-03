@@ -11,3 +11,12 @@ feedbacks/
 dist/
 build/
 *DS_Store
+config/__pycache__/
+analysis/__pycache__/
+ui/__pycache__/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.pyclass
