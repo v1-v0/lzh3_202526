@@ -21,10 +21,10 @@ from analysis.statistics import BacteriaStatistics
 from analysis.visualization import ResultVisualizer
 from utils.file_utils import ImageFileManager
 from utils.platform_utils import PlatformHelper
-from controls import ParameterControls
-from canvas_manager import CanvasManager
-from statistics_panel import StatisticsPanel
-from widgets import ToolTip
+from .controls import ParameterControls
+from .canvas_manager import CanvasManager
+from .statistics_panel import StatisticsPanel
+from .widgets import ToolTip
 
 
 class MainWindow:
@@ -382,10 +382,19 @@ class MainWindow:
         
         # Load fluorescence
         fluor_path = self.file_manager.get_fluorescence_path(filepath)
+        print(f"DEBUG - BF path: {filepath}, Fluor path: {fluor_path}")
+        
         if fluor_path:
             self.fluor_image = cv2.imread(str(fluor_path), cv2.IMREAD_GRAYSCALE)
+            print(f"DEBUG - Loaded fluorescence image: {self.fluor_image is not None}")
+            if self.fluor_image is None:
+                messagebox.showwarning(
+                    "Warning",
+                    f"Failed to load fluorescence image:\n{fluor_path}"
+                )
         else:
             self.fluor_image = None
+            print("DEBUG - No fluorescence image found")
         
         # Update info
         self._update_image_info()

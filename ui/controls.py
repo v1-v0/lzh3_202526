@@ -9,7 +9,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Dict, Callable
 from .widgets import ToolTip, ProgressEntry
-from ..config.parameters import PARAMETER_RANGES
+from config.parameters import PARAMETER_RANGES
 
 
 class ParameterControls:
