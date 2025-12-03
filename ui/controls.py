@@ -42,11 +42,12 @@ class ParameterControls:
         cb.pack(anchor=tk.W, pady=2)
         ToolTip(cb, "Automatically calculate threshold using Otsu's method")
         
+        mn, mx = PARAMETER_RANGES['manual_threshold']
         entry = ProgressEntry(
-            lf, "Manual Threshold:", 0, 255, 
+            lf, "Manual Threshold:", mn, mx, 
             self.params['manual_threshold'].get(),
             lambda v: self._update_param('manual_threshold', v),
-            tooltip="Threshold value (0-255)"
+            tooltip=f"Threshold value ({mn}-{mx})"
         )
         entry.pack(fill=tk.X, pady=1)
         self.entries['manual_threshold'] = entry
@@ -66,21 +67,23 @@ class ParameterControls:
         cb.pack(anchor=tk.W, pady=2)
         ToolTip(cb, "Apply Contrast Limited Adaptive Histogram Equalization")
         
+        mn, mx = PARAMETER_RANGES['clahe_clip']
         entry = ProgressEntry(
-            lf, "Clip Limit:", 1, 10,
+            lf, "Clip Limit:", mn, mx,
             self.params['clahe_clip'].get(),
             lambda v: self._update_param('clahe_clip', v),
             resolution=0.1, is_float=True,
-            tooltip="CLAHE clip limit (1-10)"
+            tooltip=f"CLAHE clip limit ({mn}-{mx})"
         )
         entry.pack(fill=tk.X, pady=1)
         self.entries['clahe_clip'] = entry
         
+        mn, mx = PARAMETER_RANGES['clahe_tile']
         entry = ProgressEntry(
-            lf, "Tile Size:", 4, 32,
+            lf, "Tile Size:", mn, mx,
             self.params['clahe_tile'].get(),
             lambda v: self._update_param('clahe_tile', v),
-            tooltip="CLAHE tile grid size (4-32)"
+            tooltip=f"CLAHE tile grid size ({mn}-{mx})"
         )
         entry.pack(fill=tk.X, pady=1)
         self.entries['clahe_tile'] = entry
@@ -93,19 +96,19 @@ class ParameterControls:
         lf.pack(fill=tk.X, pady=(0, 5))
         
         params = [
-            ("open_kernel", "Open Kernel:", "Opening kernel size (odd, 1-15)"),
-            ("open_iter", "Open Iterations:", "Opening iterations (1-5)"),
-            ("close_kernel", "Close Kernel:", "Closing kernel size (odd, 1-15)"),
-            ("close_iter", "Close Iterations:", "Closing iterations (1-5)"),
+            ("open_kernel", "Open Kernel:", "Opening kernel size (odd)"),
+            ("open_iter", "Open Iterations:", "Opening iterations"),
+            ("close_kernel", "Close Kernel:", "Closing kernel size (odd)"),
+            ("close_iter", "Close Iterations:", "Closing iterations"),
         ]
         
-        for param_name, label, tooltip in params:
+        for param_name, label, tooltip_base in params:
             mn, mx = PARAMETER_RANGES[param_name]
             entry = ProgressEntry(
                 lf, label, mn, mx,
                 self.params[param_name].get(),
                 lambda v, p=param_name: self._update_param(p, v),
-                tooltip=tooltip
+                tooltip=f"{tooltip_base} ({mn}-{mx})"
             )
             entry.pack(fill=tk.X, pady=1)
             self.entries[param_name] = entry
@@ -117,20 +120,23 @@ class ParameterControls:
         lf = ttk.LabelFrame(self.parent, text=" Watershed & Filtering ", padding=8)
         lf.pack(fill=tk.X, pady=(0, 5))
         
+        # Get range from PARAMETER_RANGES (now 15-45)
+        mn, mx = PARAMETER_RANGES['watershed_dilate']
         entry = ProgressEntry(
-            lf, "Watershed Dilate:", 1, 20,
+            lf, "Watershed Dilate:", mn, mx,
             self.params['watershed_dilate'].get(),
             lambda v: self._update_param('watershed_dilate', v),
-            tooltip="Watershed marker dilation (1-20)"
+            tooltip=f"Watershed marker threshold percentage ({mn}-{mx})"
         )
         entry.pack(fill=tk.X, pady=1)
         self.entries['watershed_dilate'] = entry
         
+        mn, mx = PARAMETER_RANGES['min_area']
         entry = ProgressEntry(
-            lf, "Min Area (px²):", 10, 500,
+            lf, "Min Area (px²):", mn, mx,
             self.params['min_area'].get(),
             lambda v: self._update_param('min_area', v),
-            tooltip="Minimum bacteria area in pixels (10-500)"
+            tooltip=f"Minimum bacteria area in pixels ({mn}-{mx})"
         )
         entry.pack(fill=tk.X, pady=1)
         self.entries['min_area'] = entry
@@ -142,32 +148,35 @@ class ParameterControls:
         lf = ttk.LabelFrame(self.parent, text=" Fluorescence ", padding=8)
         lf.pack(fill=tk.X, pady=(0, 5))
         
+        mn, mx = PARAMETER_RANGES['fluor_brightness']
         entry = ProgressEntry(
-            lf, "Brightness:", 0.5, 5,
+            lf, "Brightness:", mn, mx,
             self.params['fluor_brightness'].get(),
             lambda v: self._update_param('fluor_brightness', v),
             resolution=0.1, is_float=True,
-            tooltip="Fluorescence brightness multiplier (0.5-5)"
+            tooltip=f"Fluorescence brightness multiplier ({mn}-{mx})"
         )
         entry.pack(fill=tk.X, pady=1)
         self.entries['fluor_brightness'] = entry
         
+        mn, mx = PARAMETER_RANGES['fluor_gamma']
         entry = ProgressEntry(
-            lf, "Gamma:", 0.2, 2,
+            lf, "Gamma:", mn, mx,
             self.params['fluor_gamma'].get(),
             lambda v: self._update_param('fluor_gamma', v),
             resolution=0.1, is_float=True,
-            tooltip="Fluorescence gamma correction (0.2-2)"
+            tooltip=f"Fluorescence gamma correction ({mn}-{mx})"
         )
         entry.pack(fill=tk.X, pady=1)
         self.entries['fluor_gamma'] = entry
         
+        mn, mx = PARAMETER_RANGES['min_fluor_per_area']
         entry = ProgressEntry(
-            lf, "Min Fluor/Area:", 0, 255,
+            lf, "Min Fluor/Area:", mn, mx,
             self.params['min_fluor_per_area'].get(),
             lambda v: self._update_param('min_fluor_per_area', v),
             resolution=0.1, is_float=True,
-            tooltip="Minimum fluorescence per area ratio (0-255)"
+            tooltip=f"Minimum fluorescence per area ratio ({mn}-{mx})"
         )
         entry.pack(fill=tk.X, pady=1)
         self.entries['min_fluor_per_area'] = entry
@@ -196,18 +205,18 @@ class ParameterControls:
         ToolTip(cb_scale, "Display scale bar with physical units (µm)")
         
         params = [
-            ("label_font_size", "Font Size:", "Label font size (10-60)"),
-            ("arrow_length", "Arrow Length:", "Arrow length in pixels (20-100)"),
-            ("label_offset", "Label Offset:", "Label offset from arrow (5-50)"),
+            ("label_font_size", "Font Size:", "Label font size"),
+            ("arrow_length", "Arrow Length:", "Arrow length in pixels"),
+            ("label_offset", "Label Offset:", "Label offset from arrow"),
         ]
         
-        for param_name, label, tooltip in params:
+        for param_name, label, tooltip_base in params:
             mn, mx = PARAMETER_RANGES[param_name]
             entry = ProgressEntry(
                 lf, label, mn, mx,
                 self.params[param_name].get(),
                 lambda v, p=param_name: self._update_param(p, v),
-                tooltip=tooltip
+                tooltip=f"{tooltip_base} ({mn}-{mx})"
             )
             entry.pack(fill=tk.X, pady=1)
             self.entries[param_name] = entry

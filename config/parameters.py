@@ -9,17 +9,17 @@ import tkinter as tk
 from typing import Dict, Any
 
 DEFAULT_PARAMS = {
-    'use_otsu': False,
-    'manual_threshold': 110,
+    'use_otsu': True,  # Otsu generally more robust
+    'manual_threshold': 130,
     'enable_clahe': True,
-    'clahe_clip': 5.0,
-    'clahe_tile': 32,
+    'clahe_clip': 3.0,
+    'clahe_tile': 16,
     'open_kernel': 3,
     'close_kernel': 5,
-    'open_iter': 3,
-    'close_iter': 2,
-    'min_area': 67,
-    'watershed_dilate': 15,
+    'open_iter': 2,
+    'close_iter': 3,
+    'min_area': 50,
+    'watershed_dilate': 25,  # Key parameter for separation
     'fluor_brightness': 2.0,
     'fluor_gamma': 0.5,
     'show_labels': True,
@@ -32,15 +32,15 @@ DEFAULT_PARAMS = {
 }
 
 PARAMETER_RANGES = {
-    'manual_threshold': (0, 255),
+    'manual_threshold': (50, 200),
     'clahe_clip': (1, 10),
-    'clahe_tile': (4, 32),
+    'clahe_tile': (4, 64),
     'open_kernel': (1, 15),
     'close_kernel': (1, 15),
     'open_iter': (1, 5),
     'close_iter': (1, 5),
-    'min_area': (10, 500),
-    'watershed_dilate': (1, 20),
+    'min_area': (10, 1000),
+    'watershed_dilate': (5, 60),  # Expanded for better bacteria separation
     'fluor_brightness': (0.5, 5),
     'fluor_gamma': (0.2, 2),
     'label_font_size': (10, 60),

@@ -141,7 +141,9 @@ class BacteriaStatistics:
             
             stats.append({
                 'index': i + 1,
+                'bf_area_px': area_px,
                 'area_um2': area_um2,
+                'bf_area_um2': area_um2,
                 'perimeter_um': perimeter_um,
                 'centroid_x': cx,
                 'centroid_y': cy,

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional, List, Dict
 import json
 
-from config.parameters import ParameterManager
+from config.parameters import ParameterManager, PARAMETER_RANGES
 from config.themes import ThemeManager
 from core.image_processing import ImageProcessor
 from core.segmentation import BacteriaSegmenter
@@ -198,10 +198,10 @@ class MainWindow:
         next_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
         ToolTip(next_btn, "Next image (Right Arrow)")
         
-        # Parameter controls
+        # Parameter controls - Pass PARAMETER_RANGES to controls
         params = self.param_manager.get_tk_variables()
         self.param_controls = ParameterControls(
-            scrollable_frame, params, self._on_parameter_change
+            scrollable_frame, params, self._on_parameter_change,
         )
         
         self.param_controls.create_threshold_controls()
@@ -382,11 +382,9 @@ class MainWindow:
         
         # Load fluorescence
         fluor_path = self.file_manager.get_fluorescence_path(filepath)
-        print(f"DEBUG - BF path: {filepath}, Fluor path: {fluor_path}")
         
         if fluor_path:
             self.fluor_image = cv2.imread(str(fluor_path), cv2.IMREAD_GRAYSCALE)
-            print(f"DEBUG - Loaded fluorescence image: {self.fluor_image is not None}")
             if self.fluor_image is None:
                 messagebox.showwarning(
                     "Warning",
@@ -394,7 +392,6 @@ class MainWindow:
                 )
         else:
             self.fluor_image = None
-            print("DEBUG - No fluorescence image found")
         
         # Update info
         self._update_image_info()
@@ -410,6 +407,8 @@ class MainWindow:
         try:
             # Get parameters
             params = self.param_manager.get_values()
+            
+            print(f"DEBUG: Processing with watershed_dilate={params['watershed_dilate']}")
             
             # Preprocess
             processed = ImageProcessor.preprocess_brightfield(
@@ -436,16 +435,22 @@ class MainWindow:
                 close_iter=params['close_iter']
             )
             
+            print(f"DEBUG: Binary sum before watershed: {morphed.sum()}")
+            
             # Segment
             self.labeled_image, self.contours = BacteriaSegmenter.watershed_segmentation(
                 morphed,
                 watershed_dilate=params['watershed_dilate']
             )
             
+            print(f"DEBUG: Found {len(self.contours)} contours before filtering")
+            
             # Filter
             self.contours = BacteriaSegmenter.filter_bacteria(
                 self.contours, min_area=params['min_area']
             )
+            
+            print(f"DEBUG: {len(self.contours)} contours after filtering (min_area={params['min_area']})")
             
             # Calculate statistics
             self.stats = BacteriaStatistics.calculate_stats(

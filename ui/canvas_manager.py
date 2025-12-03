@@ -74,7 +74,7 @@ class CanvasManager:
             brightness: Brightness multiplier
             gamma: Gamma correction value
         """
-        from ..core.image_processing import ImageProcessor
+        from core.image_processing import ImageProcessor
         
         # Apply adjustments and create red channel display
         rgb = ImageProcessor.create_fluorescence_display(img, brightness, gamma)
