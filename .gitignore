@@ -20,3 +20,4 @@ ui/__pycache__/
 *.pyd
 *.log
 *.pyclass
+source_no_meta/
