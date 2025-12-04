@@ -142,7 +142,7 @@ The fluorescence channel specifically identifies **live, actively metabolizing b
 ### Step 1: Clone Repository
 
 ```bash
-git clone https://github.com/v1-v0/pd.git
+git clone https://github.com/v1-v0/particle-scout.git
 cd pd
 ```
 
