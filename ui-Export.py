@@ -426,6 +426,7 @@ class BFFluoViewer(tk.Tk):
 
         stats_tab.rowconfigure(0, weight=1)
         stats_tab.rowconfigure(1, weight=1)
+        stats_tab.rowconfigure(2, weight=0)
         stats_tab.columnconfigure(0, weight=1)
 
         table_frame = ttk.Frame(stats_tab)
@@ -457,6 +458,7 @@ class BFFluoViewer(tk.Tk):
 
         self.stats_tree.tag_configure("highlight_middle", background="#ffffcc")
 
+        # Histograms frame
         histo_frame = ttk.LabelFrame(stats_tab, text="Distributions (PDF)")
         histo_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
         histo_frame.rowconfigure(0, weight=1)
@@ -469,6 +471,33 @@ class BFFluoViewer(tk.Tk):
 
         self.histo_canvas = FigureCanvasTkAgg(self.histo_fig, master=histo_frame)
         self.histo_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Brief explanatory text for clinicians / users
+        expl_frame = ttk.LabelFrame(
+            stats_tab, text="How to read these histograms"
+        )
+        expl_frame.grid(row=2, column=0, sticky="ew", padx=5, pady=(0, 5))
+        expl_label = ttk.Label(
+            expl_frame,
+            justify="left",
+            wraplength=800,
+            text=(
+                "Each bar chart summarizes the particulate population in this PD fluid sample:\n"
+                " • Fluo / Area: fluorescence signal per particle area. Particles on the right are more "
+                "strongly stained per unit size (e.g. dense aggregates). The yellow 'middle range' contours "
+                "in the images correspond roughly to the central band of this distribution.\n"
+                " • Total Fluo (log scale): total fluorescence per particle. This reflects overall signal "
+                "load (e.g. larger or brighter structures). The x-axis is logarithmic to separate rare very "
+                "bright particles from many faint ones.\n"
+                " • Area (px, log scale): projected size of each detected particle in pixels. A shift toward "
+                "larger areas suggests more or larger aggregates (e.g. fibrin clumps), while many very small "
+                "areas indicate fine background debris.\n\n"
+                "These plots are intended for research and quality control. They do not by themselves make a "
+                "clinical diagnosis but can be compared across time or between patients to track changes in "
+                "particulate and fluorescence patterns."
+            ),
+        )
+        expl_label.pack(fill=tk.X, padx=5, pady=3)
 
     def _populate_listbox(self) -> None:
         self.listbox.delete(0, tk.END)
@@ -792,6 +821,15 @@ class BFFluoViewer(tk.Tk):
         return rows
 
     def _update_histograms(self, stats_rows: list[dict]) -> None:
+        """
+        Update the three histograms for clinical/research interpretation:
+
+          1. Intensity / Area (linear x-scale, with median & 'middle range' markers)
+          2. Total fluorescence intensity (log x-scale)
+          3. Area (px) (log x-scale)
+
+        Shows counts (not probability density), with median and IQR annotated in titles.
+        """
         if (
             self.histo_fig is None
             or self.ax_pdf_intensity_per_area is None
@@ -801,17 +839,19 @@ class BFFluoViewer(tk.Tk):
         ):
             return
 
+        # Clear previous contents
         self.ax_pdf_intensity_per_area.clear()
         self.ax_pdf_total_intensity.clear()
         self.ax_pdf_area.clear()
 
         if not stats_rows:
-            self.ax_pdf_intensity_per_area.set_title("Fluo / Area")
-            self.ax_pdf_total_intensity.set_title("Total Fluo")
-            self.ax_pdf_area.set_title("Area (px)")
+            self.ax_pdf_intensity_per_area.set_title("Fluo / Area (no particles)")
+            self.ax_pdf_total_intensity.set_title("Total Fluo (no particles)")
+            self.ax_pdf_area.set_title("Area (px) (no particles)")
             self.histo_canvas.draw_idle()
             return
 
+        # Collect data
         intensity_per_area = np.array(
             [r["intensity_per_area"] for r in stats_rows], dtype=float
         )
@@ -820,26 +860,116 @@ class BFFluoViewer(tk.Tk):
         )
         area_px = np.array([r["area_px"] for r in stats_rows], dtype=float)
 
-        self.ax_pdf_intensity_per_area.hist(
-            intensity_per_area, bins=30, density=True, color="tab:blue", alpha=0.7
-        )
-        self.ax_pdf_intensity_per_area.set_title("Fluo / Area")
-        self.ax_pdf_intensity_per_area.set_xlabel("Intensity / Area")
-        self.ax_pdf_intensity_per_area.set_ylabel("PDF")
+        # Guard against NaNs / infs
+        intensity_per_area = intensity_per_area[np.isfinite(intensity_per_area)]
+        total_intensity = total_intensity[np.isfinite(total_intensity)]
+        area_px = area_px[np.isfinite(area_px)]
 
-        self.ax_pdf_total_intensity.hist(
-            total_intensity, bins=30, density=True, color="tab:green", alpha=0.7
-        )
-        self.ax_pdf_total_intensity.set_title("Total Fluo")
-        self.ax_pdf_total_intensity.set_xlabel("Total intensity")
-        self.ax_pdf_total_intensity.set_ylabel("PDF")
+        n = len(intensity_per_area)
 
-        self.ax_pdf_area.hist(
-            area_px, bins=30, density=True, color="tab:purple", alpha=0.7
-        )
-        self.ax_pdf_area.set_title("Area (px)")
-        self.ax_pdf_area.set_xlabel("Area (px)")
-        self.ax_pdf_area.set_ylabel("PDF")
+        def _median_iqr(x: np.ndarray) -> tuple[float, float, float]:
+            if x.size == 0:
+                return (np.nan, np.nan, np.nan)
+            med = float(np.median(x))
+            q1 = float(np.percentile(x, 25.0))
+            q3 = float(np.percentile(x, 75.0))
+            return med, q1, q3
+
+        # ----------------- 1) Intensity / Area (linear scale) -----------------
+        if intensity_per_area.size > 0:
+            self.ax_pdf_intensity_per_area.hist(
+                intensity_per_area, bins=30, density=False,
+                color="tab:blue", alpha=0.7, edgecolor="black"
+            )
+            self.ax_pdf_intensity_per_area.set_xlabel("Fluo / Area")
+            self.ax_pdf_intensity_per_area.set_ylabel("Count")
+
+            med, q1, q3 = _median_iqr(intensity_per_area)
+
+            # Use UI-configured middle range percentiles
+            low_pct = float(self.middle_low_pct_var.get())
+            high_pct = float(self.middle_high_pct_var.get())
+            low_pct = max(0.0, min(low_pct, 100.0))
+            high_pct = max(0.0, min(high_pct, 100.0))
+            if high_pct < low_pct:
+                low_pct, high_pct = high_pct, low_pct
+
+            p_low = float(np.percentile(intensity_per_area, low_pct))
+            p_high = float(np.percentile(intensity_per_area, high_pct))
+
+            y_min, y_max = self.ax_pdf_intensity_per_area.get_ylim()
+            self.ax_pdf_intensity_per_area.vlines(
+                [p_low, p_high],
+                ymin=0,
+                ymax=y_max,
+                colors=["orange", "orange"],
+                linestyles="dashed",
+                linewidth=1.2,
+                label=f"Middle range (~{low_pct:.0f}–{high_pct:.0f} percentile)",
+            )
+
+            # Add median line
+            self.ax_pdf_intensity_per_area.vlines(
+                [med],
+                ymin=0,
+                ymax=y_max,
+                colors="red",
+                linestyles="dotted",
+                linewidth=1.2,
+                label="Median",
+            )
+
+            self.ax_pdf_intensity_per_area.set_title(
+                f"Fluo / Area (n={n}, median={med:.3g}, IQR={q1:.3g}–{q3:.3g})"
+            )
+
+            self.ax_pdf_intensity_per_area.legend(fontsize=7, loc="upper right")
+        else:
+            self.ax_pdf_intensity_per_area.set_title("Fluo / Area (no valid data)")
+
+        # ----------------- 2) Total Fluorescence (log x-scale) -----------------
+        if total_intensity.size > 0:
+            total_pos = total_intensity[total_intensity > 0]
+            if total_pos.size == 0:
+                self.ax_pdf_total_intensity.set_title("Total Fluo (no >0 values)")
+            else:
+                med_t, q1_t, q3_t = _median_iqr(total_pos)
+
+                self.ax_pdf_total_intensity.hist(
+                    total_pos, bins=30, density=False,
+                    color="tab:green", alpha=0.7, edgecolor="black"
+                )
+                self.ax_pdf_total_intensity.set_xscale("log")
+                self.ax_pdf_total_intensity.set_xlabel("Total intensity (log scale)")
+                self.ax_pdf_total_intensity.set_ylabel("Count")
+                self.ax_pdf_total_intensity.set_title(
+                    f"Total Fluo (n={total_pos.size}, median={med_t:.3g}, "
+                    f"IQR={q1_t:.3g}–{q3_t:.3g})"
+                )
+        else:
+            self.ax_pdf_total_intensity.set_title("Total Fluo (no valid data)")
+
+        # ----------------- 3) Area (px) (log x-scale) -----------------
+        if area_px.size > 0:
+            area_pos = area_px[area_px > 0]
+            if area_pos.size == 0:
+                self.ax_pdf_area.set_title("Area (px) (no >0 values)")
+            else:
+                med_a, q1_a, q3_a = _median_iqr(area_pos)
+
+                self.ax_pdf_area.hist(
+                    area_pos, bins=30, density=False,
+                    color="tab:purple", alpha=0.7, edgecolor="black"
+                )
+                self.ax_pdf_area.set_xscale("log")
+                self.ax_pdf_area.set_xlabel("Area (px, log scale)")
+                self.ax_pdf_area.set_ylabel("Count")
+                self.ax_pdf_area.set_title(
+                    f"Area (px) (n={area_pos.size}, median={med_a:.3g}, "
+                    f"IQR={q1_a:.3g}–{q3_a:.3g})"
+                )
+        else:
+            self.ax_pdf_area.set_title("Area (px) (no valid data)")
 
         self.histo_fig.tight_layout()
         self.histo_canvas.draw_idle()
