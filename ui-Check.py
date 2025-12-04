@@ -31,6 +31,11 @@ except AttributeError:
     )
     RESAMPLE = resampling if resampling is not None else 0  # 0 ~ NEAREST
 
+# ---------------------------------------------------------------------------
+# Matplotlib for histograms
+# ---------------------------------------------------------------------------
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 
 CONFIG_FILE = "contours_config.json"
 
@@ -76,18 +81,33 @@ class BFFluoViewer(tk.Tk):
         self._seg_contour_cache: dict[tuple[str, str], list[np.ndarray]] = {}
 
         # Cache for statistics per image pair
-        # key -> list of dict rows (already sorted)
-        self._stats_cache: dict[tuple[str, str], list[dict]] = {}
+        # key -> (list of dict rows (already sorted), highlighted_idx_set)
+        self._stats_cache: dict[tuple[str, str], tuple[list[dict], set[int]]] = {}
 
         # Contour config (tk variables)
         self.min_area_px_var = tk.IntVar(value=20)
         self.min_contour_len_var = tk.IntVar(value=10)
         self.contour_width_var = tk.IntVar(value=1)
-        self.contour_color_hex = tk.StringVar(value="#ff0000")  # red by default
+        self.contour_color_hex = tk.StringVar(value="#ff0000")  # main contour color
+
+        # For middle-range highlighting:
+        self.middle_low_pct_var = tk.IntVar(value=30)   # default 30%
+        self.middle_high_pct_var = tk.IntVar(value=70)  # default 70%
+        self.middle_contour_color_hex = tk.StringVar(value="#ffff00")  # yellow
+
+        # Arrow configuration
+        self.arrow_length_var = tk.IntVar(value=25)  # default arrow length in px
 
         # Progress bar state
         self._refresh_thread: threading.Thread | None = None
         self._refresh_running = False
+
+        # Matplotlib figure/axes for histograms
+        self.histo_fig: Figure | None = None
+        self.ax_pdf_intensity_per_area = None
+        self.ax_pdf_total_intensity = None
+        self.ax_pdf_area = None
+        self.histo_canvas: FigureCanvasTkAgg | None = None
 
         # Try to load saved config (if present)
         self._load_contour_config_from_file()
@@ -123,6 +143,14 @@ class BFFluoViewer(tk.Tk):
                 self.contour_width_var.set(int(data["contour_width"]))
             if "contour_color" in data:
                 self.contour_color_hex.set(str(data["contour_color"]))
+            if "middle_low_pct" in data:
+                self.middle_low_pct_var.set(int(data["middle_low_pct"]))
+            if "middle_high_pct" in data:
+                self.middle_high_pct_var.set(int(data["middle_high_pct"]))
+            if "middle_contour_color" in data:
+                self.middle_contour_color_hex.set(str(data["middle_contour_color"]))
+            if "arrow_length_px" in data:
+                self.arrow_length_var.set(int(data["arrow_length_px"]))
         except Exception as e:
             print(f"[WARN] Invalid values in {CONFIG_FILE}: {e}")
 
@@ -132,6 +160,10 @@ class BFFluoViewer(tk.Tk):
             "min_contour_len": int(self.min_contour_len_var.get()),
             "contour_width": int(self.contour_width_var.get()),
             "contour_color": self.contour_color_hex.get(),
+            "middle_low_pct": int(self.middle_low_pct_var.get()),
+            "middle_high_pct": int(self.middle_high_pct_var.get()),
+            "middle_contour_color": self.middle_contour_color_hex.get(),
+            "arrow_length_px": int(self.arrow_length_var.get()),
         }
         try:
             with Path(CONFIG_FILE).open("w", encoding="utf-8") as f:
@@ -156,26 +188,26 @@ class BFFluoViewer(tk.Tk):
         self.listbox.pack(fill=tk.BOTH, expand=False, padx=5, pady=5)
         self.listbox.bind("<<ListboxSelect>>", self.on_select_pair)
 
-        # ------------------ General controls -------------------
-        controls = ttk.Frame(left_frame)
-        controls.pack(fill=tk.X, padx=5, pady=5)
+        # ------------------ Display options -------------------
+        display_frame = ttk.LabelFrame(left_frame, text="Display options")
+        display_frame.pack(fill=tk.X, padx=5, pady=5)
 
         ttk.Checkbutton(
-            controls,
+            display_frame,
             text="Show scale bar",
             variable=self.show_scaled,
             command=self.update_images,
         ).pack(anchor=tk.W)
 
-        bar_frame = ttk.Frame(controls)
+        bar_frame = ttk.Frame(display_frame)
         bar_frame.pack(anchor=tk.W, pady=2)
         ttk.Label(bar_frame, text="Bar length (µm):").pack(side=tk.LEFT)
         ttk.Entry(bar_frame, width=6, textvariable=self.bar_length_um).pack(
             side=tk.LEFT
         )
 
-        ttk.Label(controls, text="Mode:").pack(anchor=tk.W, pady=(6, 0))
-        rb_frame = ttk.Frame(controls)
+        ttk.Label(display_frame, text="Mode:").pack(anchor=tk.W, pady=(6, 0))
+        rb_frame = ttk.Frame(display_frame)
         rb_frame.pack(anchor=tk.W, pady=2)
 
         ttk.Radiobutton(
@@ -194,17 +226,15 @@ class BFFluoViewer(tk.Tk):
             command=self.update_images,
         ).pack(anchor=tk.W)
 
+        # ------------------ Actions -------------------
+        actions_frame = ttk.LabelFrame(left_frame, text="Actions")
+        actions_frame.pack(fill=tk.X, padx=5, pady=5)
+
         ttk.Button(
-            controls,
+            actions_frame,
             text="Refresh",
             command=self.update_images,
         ).pack(anchor=tk.W, pady=4)
-
-        ttk.Button(
-            controls,
-            text="Exit",
-            command=self.on_exit,
-        ).pack(anchor=tk.W, pady=8)
 
         # ------------------ Progress bar -------------------
         progress_frame = ttk.Frame(left_frame)
@@ -265,10 +295,10 @@ class BFFluoViewer(tk.Tk):
             command=self._on_contour_config_changed,
         ).pack(side=tk.LEFT, padx=4)
 
-        # Color picker
+        # Main contour color picker
         row4 = ttk.Frame(contour_frame)
         row4.pack(fill=tk.X, pady=2)
-        ttk.Label(row4, text="Color:").pack(side=tk.LEFT)
+        ttk.Label(row4, text="Main color:").pack(side=tk.LEFT)
 
         self.color_preview = tk.Label(
             row4, width=3, relief=tk.SUNKEN, bg=self.contour_color_hex.get()
@@ -281,12 +311,82 @@ class BFFluoViewer(tk.Tk):
             command=self._choose_contour_color,
         ).pack(side=tk.LEFT)
 
+        # Middle range percent configuration (improved text)
+        row5 = ttk.Frame(contour_frame)
+        row5.pack(fill=tk.X, pady=2)
+        ttk.Label(
+            row5,
+            text="Middle range from (% of rank):",
+        ).pack(side=tk.LEFT)
+        ttk.Spinbox(
+            row5,
+            from_=0,
+            to=100,
+            width=4,
+            textvariable=self.middle_low_pct_var,
+            command=self._on_middle_range_changed,
+        ).pack(side=tk.LEFT, padx=4)
+
+        row6 = ttk.Frame(contour_frame)
+        row6.pack(fill=tk.X, pady=2)
+        ttk.Label(
+            row6,
+            text="Middle range to   (% of rank):",
+        ).pack(side=tk.LEFT)
+        ttk.Spinbox(
+            row6,
+            from_=0,
+            to=100,
+            width=4,
+            textvariable=self.middle_high_pct_var,
+            command=self._on_middle_range_changed,
+        ).pack(side=tk.LEFT, padx=4)
+
+        # Middle-range contour color picker (clarified label)
+        row7 = ttk.Frame(contour_frame)
+        row7.pack(fill=tk.X, pady=2)
+        ttk.Label(
+            row7,
+            text="Middle-range color:",
+        ).pack(side=tk.LEFT)
+
+        self.middle_color_preview = tk.Label(
+            row7, width=3, relief=tk.SUNKEN, bg=self.middle_contour_color_hex.get()
+        )
+        self.middle_color_preview.pack(side=tk.LEFT, padx=4)
+
+        ttk.Button(
+            row7,
+            text="Pick...",
+            command=self._choose_middle_contour_color,
+        ).pack(side=tk.LEFT)
+
+        # Arrow length
+        row8 = ttk.Frame(contour_frame)
+        row8.pack(fill=tk.X, pady=2)
+        ttk.Label(row8, text="Arrow length (px):").pack(side=tk.LEFT)
+        ttk.Spinbox(
+            row8,
+            from_=5,
+            to=200,
+            width=4,
+            textvariable=self.arrow_length_var,
+            command=self._on_contour_config_changed,
+        ).pack(side=tk.LEFT, padx=4)
+
         # Save config button
         ttk.Button(
             contour_frame,
             text="Save contours config",
             command=self._save_contour_config_to_file,
         ).pack(anchor=tk.W, pady=(6, 2))
+
+        # ------------------ Exit button at bottom -------------------
+        ttk.Button(
+            left_frame,
+            text="Exit",
+            command=self.on_exit,
+        ).pack(anchor=tk.W, padx=5, pady=8)
 
         # ------------------ Right side: Notebook with two tabs -------------------
         right_notebook = ttk.Notebook(root_pane)
@@ -358,7 +458,14 @@ class BFFluoViewer(tk.Tk):
         right_notebook.add(stats_tab, text="Statistics")
 
         stats_tab.rowconfigure(0, weight=1)
+        stats_tab.rowconfigure(1, weight=1)
         stats_tab.columnconfigure(0, weight=1)
+
+        # Upper part: table
+        table_frame = ttk.Frame(stats_tab)
+        table_frame.grid(row=0, column=0, sticky="nsew")
+        table_frame.rowconfigure(0, weight=1)
+        table_frame.columnconfigure(0, weight=1)
 
         columns = (
             "idx",
@@ -368,7 +475,7 @@ class BFFluoViewer(tk.Tk):
             "intensity_per_area",
         )
         self.stats_tree = ttk.Treeview(
-            stats_tab,
+            table_frame,
             columns=columns,
             show="headings",
             selectmode="browse",
@@ -376,13 +483,13 @@ class BFFluoViewer(tk.Tk):
         self.stats_tree.grid(row=0, column=0, sticky="nsew")
 
         vsb = ttk.Scrollbar(
-            stats_tab, orient="vertical", command=self.stats_tree.yview
+            table_frame, orient="vertical", command=self.stats_tree.yview
         )
         vsb.grid(row=0, column=1, sticky="ns")
         self.stats_tree.configure(yscrollcommand=vsb.set)
 
         # Headings
-        self.stats_tree.heading("idx", text="#")
+        self.stats_tree.heading("idx", text="# (rank by Intensity / Area)")
         self.stats_tree.heading("area_px", text="Area (px)")
         self.stats_tree.heading("eq_diam_px", text="Eq. diameter (px)")
         self.stats_tree.heading("total_intensity", text="Total Intensity (Fluo)")
@@ -390,12 +497,22 @@ class BFFluoViewer(tk.Tk):
             "intensity_per_area", text="Intensity / Area"
         )
 
-        # Column widths
-        self.stats_tree.column("idx", width=60, anchor=tk.E)
-        self.stats_tree.column("area_px", width=100, anchor=tk.E)
-        self.stats_tree.column("eq_diam_px", width=130, anchor=tk.E)
-        self.stats_tree.column("total_intensity", width=150, anchor=tk.E)
-        self.stats_tree.column("intensity_per_area", width=140, anchor=tk.E)
+        # Tag for highlighted middle range
+        self.stats_tree.tag_configure("highlight_middle", background="#ffffcc")
+
+        # Lower part: histograms
+        histo_frame = ttk.LabelFrame(stats_tab, text="Distributions (PDF)")
+        histo_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        histo_frame.rowconfigure(0, weight=1)
+        histo_frame.columnconfigure(0, weight=1)
+
+        self.histo_fig = Figure(figsize=(6, 2.4), dpi=100)
+        self.ax_pdf_intensity_per_area = self.histo_fig.add_subplot(1, 3, 1)
+        self.ax_pdf_total_intensity = self.histo_fig.add_subplot(1, 3, 2)
+        self.ax_pdf_area = self.histo_fig.add_subplot(1, 3, 3)
+
+        self.histo_canvas = FigureCanvasTkAgg(self.histo_fig, master=histo_frame)
+        self.histo_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
     def _populate_listbox(self):
         self.listbox.delete(0, tk.END)
@@ -433,12 +550,53 @@ class BFFluoViewer(tk.Tk):
         self._stats_cache.clear()
         self.update_images()
 
+    def _on_middle_range_changed(self):
+        """
+        Ensure middle_low_pct < middle_high_pct and both in [0,100].
+        Then trigger contour/stat recomputation.
+        """
+        try:
+            low = int(self.middle_low_pct_var.get())
+            high = int(self.middle_high_pct_var.get())
+        except Exception:
+            low, high = 30, 70
+
+        # Clamp to [0, 100]
+        low = max(0, min(low, 100))
+        high = max(0, min(high, 100))
+
+        # Ensure low < high
+        if low >= high:
+            # If user dragged low above high, move high up;
+            # otherwise move low down a bit.
+            if low == 100:
+                low = 90
+                high = 100
+            else:
+                low = max(0, high - 10)
+
+        self.middle_low_pct_var.set(low)
+        self.middle_high_pct_var.set(high)
+
+        # Now treat as a regular config change
+        self._on_contour_config_changed()
+
     def _choose_contour_color(self):
         initial = self.contour_color_hex.get()
         color = colorchooser.askcolor(color=initial, title="Choose contour color")
         if color[1] is not None:
             self.contour_color_hex.set(color[1])
             self.color_preview.configure(bg=color[1])
+            self._on_contour_config_changed()
+
+    def _choose_middle_contour_color(self):
+        initial = self.middle_contour_color_hex.get()
+        color = colorchooser.askcolor(
+            color=initial, title="Choose middle-range contour color"
+        )
+        if color[1] is not None:
+            self.middle_contour_color_hex.set(color[1])
+            self.middle_color_preview.configure(bg=color[1])
             self._on_contour_config_changed()
 
     # ------------------------------------------------------------------ Callbacks
@@ -464,17 +622,61 @@ class BFFluoViewer(tk.Tk):
             return
         self._fit_and_show_all_panes()
 
+    # ------------------------------------------------------------------ Middle-range computation
+
+    def _compute_highlighted_idxs(self, stats_rows: list[dict]) -> set[int]:
+        """
+        Uses configured middle_low_pct_var and middle_high_pct_var to pick
+        which sorted rows (by intensity_per_area) are "middle".
+        Returns a set of rank indices (1-based) to highlight.
+        """
+        if not stats_rows:
+            return set()
+
+        low_pct = int(self.middle_low_pct_var.get())
+        high_pct = int(self.middle_high_pct_var.get())
+
+        if low_pct < 0:
+            low_pct = 0
+        if high_pct > 100:
+            high_pct = 100
+        if high_pct < low_pct:
+            low_pct, high_pct = high_pct, low_pct
+
+        n = len(stats_rows)
+        start = int(np.floor(n * (low_pct / 100.0)))
+        end = int(np.ceil(n * (high_pct / 100.0))) - 1
+        start = max(0, min(start, n - 1))
+        end = max(start, min(end, n - 1))
+
+        # Here "idx" is the rank after sorting by intensity_per_area
+        middle_idxs = {stats_rows[i]["idx"] for i in range(start, end + 1)}
+        return middle_idxs
+
+    # ------------------------------------------------------------------ Overlay / arrow drawing
+
     def _overlay_contours_on_gray(
         self,
         img01: np.ndarray,
         contours: list[np.ndarray],
         color=(255, 0, 0),
+        middle_color=(255, 255, 0),
         line_width: int = 1,
+        label_indices: list[int] | None = None,
+        highlight_mask: np.ndarray | None = None,
     ) -> Image.Image:
         """
         img01: float [0,1] or uint8 2D array.
         contours: list of (N, 2) arrays, (row, col).
-        Returns a PIL RGB image with colored contour lines.
+        label_indices: list of rank-based indices (same length as contours)
+                       used for textual labels (1 = highest intensity/area).
+        highlight_mask: boolean array of shape (len(contours),) indicating which
+                        contours belong to a highlighted subset (e.g., middle range).
+        Returns a PIL RGB image with colored contour lines and optional labels.
+
+        Arrow direction is chosen to point towards the less crowded direction
+        (left/right/up/down) to reduce overlap with other objects.
+        Arrow length is taken from self.arrow_length_var.
         """
         if img01.dtype != np.uint8:
             base = (np.clip(img01, 0.0, 1.0) * 255.0).astype(np.uint8)
@@ -483,11 +685,132 @@ class BFFluoViewer(tk.Tk):
 
         pil = Image.fromarray(base).convert("RGB")
         draw = ImageDraw.Draw(pil)
+        w, h = pil.size
 
+        # Default highlight_mask: all False
+        if highlight_mask is None:
+            highlight_mask = np.zeros(len(contours), dtype=bool)
+        else:
+            highlight_mask = np.array(highlight_mask, dtype=bool)
+            if highlight_mask.size != len(contours):
+                highlight_mask = np.zeros(len(contours), dtype=bool)
+
+        # Precompute colors
+        main_color = color
+        middle_color_rgb = middle_color
+
+        def _brighten(rgb, factor=1.3):
+            r, g, b = rgb
+            return (
+                min(int(r * factor), 255),
+                min(int(g * factor), 255),
+                min(int(b * factor), 255),
+            )
+
+        # Brighter versions (if you want extra emphasis)
+        main_color_highlighted = _brighten(main_color)
+        middle_color_highlighted = _brighten(middle_color_rgb)
+
+        # Use same font for all labels
+        font = self._get_scaled_font(base_size=12)
+
+        # Precompute centroids for crowding-aware arrow directions
+        centroids = []
         for c in contours:
+            if c.shape[0] < 3:
+                centroids.append((None, None))
+                continue
+            poly_x = c[:, 1].astype(float)
+            poly_y = c[:, 0].astype(float)
+            cx = float(poly_x.mean())
+            cy = float(poly_y.mean())
+            centroids.append((cx, cy))
+
+        arrow_len = max(5, int(self.arrow_length_var.get()))
+
+        # For each contour, draw line + arrow/label
+        for i, c in enumerate(contours):
+            if c.shape[0] < 2:
+                continue
+
+            # Choose color based on highlight mask
+            if highlight_mask[i]:
+                contour_color = middle_color_highlighted
+            else:
+                contour_color = main_color_highlighted
+
             pts = [(float(col), float(row)) for row, col in c]
             if len(pts) > 1:
-                draw.line(pts, fill=color, width=line_width)
+                draw.line(pts, fill=contour_color, width=line_width)
+
+            # Optional arrow + label
+            if label_indices is not None and i < len(label_indices):
+                if c.shape[0] < 3:
+                    continue
+
+                cx, cy = centroids[i]
+                if cx is None:
+                    continue
+
+                # Decide arrow direction based on local crowding
+                left_count = 0
+                right_count = 0
+                up_count = 0
+                down_count = 0
+                for j, (ox, oy) in enumerate(centroids):
+                    if j == i or ox is None:
+                        continue
+                    if ox < cx:
+                        left_count += 1
+                    elif ox > cx:
+                        right_count += 1
+                    if oy < cy:
+                        up_count += 1
+                    elif oy > cy:
+                        down_count += 1
+
+                # Score each direction (lower is better)
+                scores: dict[str, int] = {}
+
+                def add_dir(dir_name: str, base_score: int, tx: float, ty: float) -> None:
+                    penalty = 0
+                    # check if arrow will exceed image bounds
+                    if tx < 10 or tx > w - 10 or ty < 10 or ty > h - 10:
+                        penalty = 1000
+                    scores[dir_name] = int(base_score + penalty)
+
+                # Candidate endpoints
+                add_dir("up", up_count, cx, cy - arrow_len)
+                add_dir("down", down_count, cx, cy + arrow_len)
+                add_dir("left", left_count, cx - arrow_len, cy)
+                add_dir("right", right_count, cx + arrow_len, cy)
+
+                # Pick best direction
+                best_dir = min(scores.keys(), key=lambda k: scores[k])
+
+                if best_dir == "up":
+                    start = (cx, cy)
+                    end = (cx, max(cy - arrow_len, 0))
+                    label_pos = (cx, max(end[1] - 5, 0))
+                elif best_dir == "down":
+                    start = (cx, cy)
+                    end = (cx, min(cy + arrow_len, h - 1))
+                    label_pos = (cx, min(end[1] + 10, h - 1))
+                elif best_dir == "left":
+                    start = (cx, cy)
+                    end = (max(cx - arrow_len, 0), cy)
+                    label_pos = (max(end[0] - 5, 0), cy)
+                else:  # "right"
+                    start = (cx, cy)
+                    end = (min(cx + arrow_len, w - 1), cy)
+                    label_pos = (min(end[0] + 5, w - 1), cy)
+
+                # Simple arrow line (directional)
+                draw.line([start, end], fill=contour_color, width=1)
+
+                # Label: rank index (1 = highest Intensity/Area)
+                text = str(label_indices[i])
+                draw.text(label_pos, text, fill=contour_color, font=font, anchor="ms")
 
         return pil
 
@@ -505,7 +828,10 @@ class BFFluoViewer(tk.Tk):
           - equivalent diameter (px)
           - total intensity (sum of enhanced fluo pixels)
           - intensity per area (total_intensity / area)
-        Returned list is sorted desc by intensity_per_area.
+
+        Returns a list sorted descending by intensity_per_area.
+        The field "idx" represents the rank after this sorting:
+          idx = 1 -> highest Intensity / Area, etc.
         """
         if bf_enh.ndim != 2:
             bf_enh_gray = bf_enh.mean(axis=-1)
@@ -521,7 +847,9 @@ class BFFluoViewer(tk.Tk):
         yy, xx = np.mgrid[0:h, 0:w]
 
         rows = []
-        for idx, c in enumerate(contours, start=1):
+        # First, compute raw measures indexed by local contour index
+        tmp_rows = []
+        for local_idx, c in enumerate(contours):
             if c.shape[0] < 3:
                 continue
 
@@ -572,9 +900,9 @@ class BFFluoViewer(tk.Tk):
 
             intensity_per_area = total_intensity / area if area > 0 else 0.0
 
-            rows.append(
+            tmp_rows.append(
                 {
-                    "idx": idx,
+                    "contour_local_idx": local_idx,  # position in 'contours' list
                     "area_px": area,
                     "eq_diam_px": eq_diam,
                     "total_intensity": total_intensity,
@@ -582,17 +910,110 @@ class BFFluoViewer(tk.Tk):
                 }
             )
 
-        # Sort by intensity/area descending
-        rows.sort(key=lambda r: r["intensity_per_area"], reverse=True)
+        # Sort by intensity/area descending, then assign rank-based idx
+        tmp_rows.sort(key=lambda r: r["intensity_per_area"], reverse=True)
+        for rank, r in enumerate(tmp_rows, start=1):
+            rows.append(
+                {
+                    "idx": rank,  # rank after sorting
+                    "contour_local_idx": r["contour_local_idx"],
+                    "area_px": r["area_px"],
+                    "eq_diam_px": r["eq_diam_px"],
+                    "total_intensity": r["total_intensity"],
+                    "intensity_per_area": r["intensity_per_area"],
+                }
+            )
+
         return rows
 
-    def _update_stats_view(self, rec: ImagePairRecord, stats_rows: list[dict]):
+    def _update_histograms(self, stats_rows: list[dict]):
+        # Guard for early construction issues: ensure figure, axes and canvas are initialized
+        if (
+            self.histo_fig is None
+            or self.ax_pdf_intensity_per_area is None
+            or self.ax_pdf_total_intensity is None
+            or self.ax_pdf_area is None
+            or self.histo_canvas is None
+        ):
+            return
+
+        self.ax_pdf_intensity_per_area.clear()
+        self.ax_pdf_total_intensity.clear()
+        self.ax_pdf_area.clear()
+
+        if not stats_rows:
+            self.ax_pdf_intensity_per_area.set_title("Fluo / Area")
+            self.ax_pdf_total_intensity.set_title("Total Fluo")
+            self.ax_pdf_area.set_title("Area (px)")
+            self.histo_canvas.draw_idle()
+            return
+
+        intensity_per_area = np.array(
+            [r["intensity_per_area"] for r in stats_rows], dtype=float
+        )
+        total_intensity = np.array(
+            [r["total_intensity"] for r in stats_rows], dtype=float
+        )
+        area_px = np.array([r["area_px"] for r in stats_rows], dtype=float)
+
+        # 1) PDF of intensity_per_area
+        self.ax_pdf_intensity_per_area.hist(
+            intensity_per_area,
+            bins=30,
+            density=True,
+            color="tab:blue",
+            alpha=0.7,
+        )
+        self.ax_pdf_intensity_per_area.set_title("Fluo / Area")
+        self.ax_pdf_intensity_per_area.set_xlabel("Intensity / Area")
+        self.ax_pdf_intensity_per_area.set_ylabel("PDF")
+
+        # 2) PDF of total intensity
+        self.ax_pdf_total_intensity.hist(
+            total_intensity,
+            bins=30,
+            density=True,
+            color="tab:green",
+            alpha=0.7,
+        )
+        self.ax_pdf_total_intensity.set_title("Total Fluo")
+        self.ax_pdf_total_intensity.set_xlabel("Total intensity")
+        self.ax_pdf_total_intensity.set_ylabel("PDF")
+
+        # 3) PDF of area (size in BF)
+        self.ax_pdf_area.hist(
+            area_px,
+            bins=30,
+            density=True,
+            color="tab:purple",
+            alpha=0.7,
+        )
+        self.ax_pdf_area.set_title("Area (px)")
+        self.ax_pdf_area.set_xlabel("Area (px)")
+        self.ax_pdf_area.set_ylabel("PDF")
+
+        self.histo_fig.tight_layout()
+        self.histo_canvas.draw_idle()
+
+    def _update_stats_view(
+        self,
+        rec: ImagePairRecord,
+        stats_rows: list[dict],
+        highlighted_idx_set: set[int] | None = None,
+    ):
+        if highlighted_idx_set is None:
+            highlighted_idx_set = set()
+
         # Clear tree
         for iid in self.stats_tree.get_children():
             self.stats_tree.delete(iid)
 
         # Insert sorted data
         for r in stats_rows:
+            tags = ()
+            if r["idx"] in highlighted_idx_set:
+                tags = ("highlight_middle",)
+
             self.stats_tree.insert(
                 "",
                 tk.END,
@@ -603,7 +1024,11 @@ class BFFluoViewer(tk.Tk):
                     f"{r['total_intensity']:.2f}",
                     f"{r['intensity_per_area']:.4f}",
                 ),
+                tags=tags,
             )
+
+        # Update histograms
+        self._update_histograms(stats_rows)
 
     # ------------------------------------------------------------------ Main refresh (threaded wrapper)
 
@@ -638,6 +1063,7 @@ class BFFluoViewer(tk.Tk):
                         label_text_bf,
                         label_text_fluo,
                         stats_rows,
+                        highlighted_idx_set,
                     ) = result
 
                     self._bf_top_pil = bf_top_img
@@ -651,7 +1077,7 @@ class BFFluoViewer(tk.Tk):
                     self.fluo_label.config(text=label_text_fluo)
 
                     # Update statistics tab
-                    self._update_stats_view(rec, stats_rows)
+                    self._update_stats_view(rec, stats_rows, highlighted_idx_set)
 
             self.after(0, finish)
 
@@ -693,6 +1119,7 @@ class BFFluoViewer(tk.Tk):
         - top row: raw BF/FLUO
         - bottom row: ENHANCED BF/FLUO + contours
         Also computes per-contour statistics (area, diameter, total intensity).
+        Highlights a user-configurable middle range (by intensity/area).
         """
         bf_raw = tiff.imread(rec.bf_path)
         fluo_raw = tiff.imread(rec.fluo_path)
@@ -708,6 +1135,7 @@ class BFFluoViewer(tk.Tk):
         fluo_bottom_img: Image.Image
 
         stats_rows: list[dict] = []
+        highlighted_idx_set: set[int] = set()
 
         if mode == "seg-preproc-contours":
             # --- segmentation preproc (fluorescence) ---
@@ -737,40 +1165,78 @@ class BFFluoViewer(tk.Tk):
             if fluo_enh_f.max() > 0:
                 fluo_enh_f /= fluo_enh_f.max()
 
-            # Drawing configuration
-            hex_color = self.contour_color_hex.get()
-            try:
-                rgb = tuple(int(hex_color[i: i + 2], 16) for i in (1, 3, 5))
-            except Exception:
-                rgb = (255, 0, 0)
-            line_w = int(self.contour_width_var.get())
-
-            bf_enh_pil = self._overlay_contours_on_gray(
-                bf_enh_f, contours, color=rgb, line_width=line_w
-            )
-            fluo_enh_pil = self._overlay_contours_on_gray(
-                fluo_enh_f, contours, color=rgb, line_width=line_w
-            )
-
-            bf_bottom_img = bf_enh_pil
-            fluo_bottom_img = fluo_enh_pil
-
-            # --- statistics on ENHANCED BF / FLUO (original enhanced arrays, not 0..1 normalized) ---
+            # Statistics (and cache)
             stats_key = self._rec_key(rec)
             if stats_key in self._stats_cache:
-                stats_rows = self._stats_cache[stats_key]
+                stats_rows, highlighted_idx_set = self._stats_cache[stats_key]
             else:
                 stats_rows = self._measure_contours(
                     contours=contours,
                     bf_enh=bf_enh,
                     fluo_enh=fluo_enh,
                 )
-                self._stats_cache[stats_key] = stats_rows
+
+                # Determine middle range by configured percent bounds
+                highlighted_idx_set = self._compute_highlighted_idxs(stats_rows)
+
+                self._stats_cache[stats_key] = (stats_rows, highlighted_idx_set)
+
+            # Build maps between local contour indices and rank idx
+            # local_idx -> rank_idx
+            local_to_rank = {
+                r["contour_local_idx"]: r["idx"] for r in stats_rows
+            }
+
+            # highlight_mask and label_indices follow contour order
+            highlight_mask = np.zeros(len(contours), dtype=bool)
+            label_indices = [0] * len(contours)
+            for local_idx, rank_idx in local_to_rank.items():
+                label_indices[local_idx] = rank_idx
+                if rank_idx in highlighted_idx_set:
+                    highlight_mask[local_idx] = True
+
+            # Drawing configuration
+            hex_color = self.contour_color_hex.get()
+            mid_hex_color = self.middle_contour_color_hex.get()
+            try:
+                rgb = tuple(int(hex_color[i: i + 2], 16) for i in (1, 3, 5))
+            except Exception:
+                rgb = (255, 0, 0)
+            try:
+                mid_rgb = tuple(int(mid_hex_color[i: i + 2], 16) for i in (1, 3, 5))
+            except Exception:
+                mid_rgb = (255, 255, 0)
+
+            line_w = int(self.contour_width_var.get())
+
+            bf_enh_pil = self._overlay_contours_on_gray(
+                bf_enh_f,
+                contours,
+                color=rgb,
+                middle_color=mid_rgb,
+                line_width=line_w,
+                label_indices=label_indices,
+                highlight_mask=highlight_mask,
+            )
+            fluo_enh_pil = self._overlay_contours_on_gray(
+                fluo_enh_f,
+                contours,
+                color=rgb,
+                middle_color=mid_rgb,
+                line_width=line_w,
+                label_indices=label_indices,
+                highlight_mask=highlight_mask,
+            )
+
+            bf_bottom_img = bf_enh_pil
+            fluo_bottom_img = fluo_enh_pil
+
         else:
             # Raw only mode: bottom = raw, no statistics (empty table)
             bf_bottom_img = self._to_pil(bf_raw)
             fluo_bottom_img = self._to_pil(fluo_raw)
             stats_rows = []
+            highlighted_idx_set = set()
 
         # Convert top arrays to PIL
         bf_top_img = self._to_pil(bf_top_arr)
@@ -800,6 +1266,7 @@ class BFFluoViewer(tk.Tk):
             label_text_bf,
             label_text_fluo,
             stats_rows,
+            highlighted_idx_set,
         )
 
     def on_exit(self):
@@ -897,7 +1364,7 @@ class BFFluoViewer(tk.Tk):
     def _get_scaled_font(self, base_size: int = 12):
         """
         Try to get a truetype font; fall back to default bitmap font.
-        Scales the font size by factor ~2 as requested.
+        Scales the font size by factor ~2 as requested previously.
         """
         size = max(1, int(base_size * 2))  # double size
         try:

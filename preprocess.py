@@ -408,3 +408,41 @@ def measure_particles(
         df["minor_axis_length_um"] = df["minor_axis_length_px"] * px_size
 
     return df, labeled
+
+
+# ---------------------------------------------------------------------------
+# Optional helper for GUI statistics (not strictly required today)
+# ---------------------------------------------------------------------------
+
+def compute_intensity_per_area(
+    rec: ImagePairRecord,
+    min_area_px: int = 20,
+) -> pd.DataFrame:
+    """
+    Convenience wrapper around measure_particles for GUI/statistics use.
+
+    Returns a DataFrame with at least:
+      - label
+      - area_px
+      - fluo_total_intensity  (sum over mask; approximated here as mean*area)
+      - intensity_per_area    (fluo_total_intensity / area_px)
+
+    Note:
+      ui-Check.py currently has its own _measure_contours implementation which
+      works directly from contour geometry; this helper can be used instead
+      if you later refactor statistics into this module.
+    """
+    df, _ = measure_particles(rec, min_area_px=min_area_px)
+    if df.empty:
+        return df
+
+    # Approximate total intensity from mean_intensity * area in preprocessed FLUO
+    if "fluo_mean_intensity" in df.columns:
+        df["fluo_total_intensity"] = df["fluo_mean_intensity"].astype(float) * df["area_px"].astype(float)
+        df["intensity_per_area"] = df["fluo_total_intensity"] / df["area_px"].replace(0, np.nan)
+        df["intensity_per_area"] = df["intensity_per_area"].fillna(0.0)
+    else:
+        df["fluo_total_intensity"] = 0.0
+        df["intensity_per_area"] = 0.0
+
+    return df
