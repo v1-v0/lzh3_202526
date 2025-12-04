@@ -1,209 +1,285 @@
-# preprocess.py
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Tuple
 
 import numpy as np
-import cv2
 import tifffile as tiff
-import json
+from scipy.ndimage import gaussian_filter
+from skimage import exposure
+from skimage.filters import threshold_otsu
+from skimage.morphology import binary_opening, remove_small_objects, disk
+from skimage.measure import find_contours
 
-from config import (
-    BIT_DEPTH,
-    GLOBAL_PERCENTILE_MIN,
-    GLOBAL_PERCENTILE_MAX,
-    OUTPUT_IMAGES_DIR,
-    OUTPUT_META_DIR,
-)
-from metadata import ImageMeta, image_meta_to_dict
+from register_dataset import ImagePairRecord
 
+# ---------------------------------------------------------------------------
+# Utility: µm <-> pixel
+# ---------------------------------------------------------------------------
 
-# ---------- I/O ----------
-def load_single_channel_tiff(img_path: Path, bit_depth: int = BIT_DEPTH) -> np.ndarray:
+def um_to_px(length_um: float, rec: ImagePairRecord) -> float:
     """
-    Load a TIFF and return a single-channel float32 image in [0,1].
-
-    Handles:
-      - 2D grayscale (H, W)
-      - 3D with leading singleton (1, H, W)
-      - 3-channel RGB (H, W, 3) -> converted to grayscale
+    Convert a physical length in micrometers to pixels, using metadata.
+    Raises if pixel_size_um is not available.
     """
-    arr = tiff.imread(str(img_path))
-    arr = np.asarray(arr)
-
-    # 2D grayscale
-    if arr.ndim == 2:
-        raw = arr
-
-    # (1, H, W)
-    elif arr.ndim == 3 and arr.shape[0] == 1:
-        raw = arr[0]
-
-    # (H, W, 3) RGB
-    elif arr.ndim == 3 and arr.shape[2] == 3:
-        rgb = arr.astype(np.float32)
-        r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
-        # Standard luminance weights
-        raw = 0.299 * r + 0.587 * g + 0.114 * b
-
-    else:
+    if rec.pixel_size_um is None:
         raise ValueError(
-            f"Unexpected shape for image {img_path}: {arr.shape}. "
-            "Expected (H,W), (1,H,W), or (H,W,3)."
+            f"No pixel_size_um in metadata for pair '{rec.pair_name}'. "
+            "Cannot convert µm to pixels."
         )
+    return length_um / rec.pixel_size_um
 
-    # Choose normalization max
-    if np.issubdtype(raw.dtype, np.integer):
-        # Use the string name to satisfy NumPy typing stubs
-        max_val = float(np.iinfo(raw.dtype.name).max)
+
+def um_to_px_safe(length_um: float, rec: ImagePairRecord, fallback_px: float) -> float:
+    """
+    Convert µm to pixels if pixel_size_um is available; otherwise return
+    a fixed fallback in pixels. This is useful for viewing / troubleshooting
+    when metadata is missing.
+    """
+    if rec.pixel_size_um is None:
+        return fallback_px
+    return length_um / rec.pixel_size_um
+
+
+# ---------------------------------------------------------------------------
+# Fluorescence preprocessing (primary segmentation channel)
+# ---------------------------------------------------------------------------
+
+def fluo_to_float01(raw: np.ndarray, rec: ImagePairRecord) -> np.ndarray:
+    """
+    Convert raw FLUO image to float32 in [0,1], using bit depth and (optionally)
+    exposure time to standardize intensities across acquisitions.
+    """
+    arr = raw.astype(np.float32)
+
+    # Bit depth normalization
+    if rec.bit_depth is not None:
+        max_val = float(2**rec.bit_depth - 1)
     else:
-        max_val = float((1 << bit_depth) - 1)
+        max_val = float(arr.max() or 1.0)
 
-    img = raw.astype(np.float32) / max_val
-    img = np.clip(img, 0.0, 1.0)
-    return img
+    arr /= max_val
+
+    # Optional: exposure normalization
+    if rec.exposure_fluo_s is not None and rec.exposure_fluo_s > 0:
+        ref_exp = 1.0  # arbitrary reference
+        arr *= (ref_exp / rec.exposure_fluo_s)
+
+    arr = np.clip(arr, 0.0, 1.0)
+    return arr
 
 
-# ---------- Channel-specific preprocessing ----------
-
-def preprocess_brightfield(bf: np.ndarray) -> np.ndarray:
+def subtract_background_fluo(
+    img01: np.ndarray,
+    rec: ImagePairRecord,
+    sigma_bg_um: float = 30.0,
+    fallback_sigma_bg_px: float = 50.0,
+) -> np.ndarray:
     """
-    Brightfield preprocessing:
-    - Smooth background estimate and subtraction
-    - Contrast enhancement (CLAHE)
-    - Mild denoising
+    Subtract low-frequency background from FLUO image using Gaussian blur.
 
-    This is analogous in spirit to the background subtraction and intensity
-    normalization applied to holographic images before DIH reconstruction
-    and YOLO detection on PD fluids [[1]][doc_1][[3]][doc_3][[6]][doc_6].
+    sigma_bg_um: physical scale of background variations (e.g. 20–50 µm).
+    If rec.pixel_size_um is missing, uses fallback_sigma_bg_px directly.
     """
-    # Large Gaussian to estimate slow background
-    background = cv2.GaussianBlur(bf, (0, 0), sigmaX=50, sigmaY=50)
-    bf_corr = bf - background
-    bf_corr = np.clip(bf_corr, 0, None)
-
-    # CLAHE on 8-bit representation
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(16, 16))
-    bf_uint8 = np.clip(bf_corr * 255.0, 0, 255).astype(np.uint8)
-    bf_eq = clahe.apply(bf_uint8).astype(np.float32) / 255.0
-
-    # Mild edge-preserving denoising
-    bf_denoised = cv2.bilateralFilter(bf_eq, d=5, sigmaColor=0.1, sigmaSpace=5)
-    return bf_denoised
+    sigma_bg_px = um_to_px_safe(sigma_bg_um, rec, fallback_px=fallback_sigma_bg_px)
+    bg = gaussian_filter(img01, sigma=sigma_bg_px)
+    corrected = img01 - bg
+    corrected[corrected < 0] = 0.0
+    max_val = float(corrected.max() or 1.0)
+    corrected /= max_val
+    return corrected
 
 
-def preprocess_fluorescence(fl: np.ndarray) -> np.ndarray:
+def denoise_fluo(
+    img01: np.ndarray,
+    rec: ImagePairRecord,
+    sigma_um: float = 0.5,
+    fallback_sigma_px: float = 1.0,
+) -> np.ndarray:
     """
-    Fluorescence preprocessing:
-    - Percentile-based background subtraction
-    - Mild Gaussian denoising
+    Mild Gaussian denoising tuned to bacterial size (~1–2 µm).
 
-    Designed to emphasize labeled bacteria/particles while suppressing
-    camera noise and uniform background, analogous to DIH intensity
-    enhancement before feeding data to a deep learning model [[2]][doc_2][[4]][doc_4][[6]][doc_6].
+    If rec.pixel_size_um is missing, uses fallback_sigma_px directly.
     """
-    # Simple background estimate: low percentile
-    bg = np.percentile(fl, 10)
-    fl_corr = fl - bg
-    fl_corr = np.clip(fl_corr, 0, None)
-
-    # Mild Gaussian blur to reduce shot noise
-    fl_denoised = cv2.GaussianBlur(fl_corr, (3, 3), 0.5)
-
-    return fl_denoised
+    sigma_px = um_to_px_safe(sigma_um, rec, fallback_px=fallback_sigma_px)
+    return gaussian_filter(img01, sigma=sigma_px)
 
 
-# ---------- Global normalization across all images ----------
-
-def compute_global_percentiles(
-    all_bf: List[np.ndarray],
-    all_fl: List[np.ndarray],
-    p_min: float = GLOBAL_PERCENTILE_MIN,
-    p_max: float = GLOBAL_PERCENTILE_MAX,
-) -> Dict[str, Tuple[float, float]]:
+def normalize_contrast_percentile(
+    img: np.ndarray,
+    low_pct: float = 1.0,
+    high_pct: float = 99.0,
+) -> np.ndarray:
     """
-    Compute global normalization parameters across all preprocessed BF/FL images.
-
-    This is analogous to using a consistent intensity normalization scheme
-    across all holograms in the DIH PD-fluid workflow, stabilizing the
-    YOLO-based detection across different experimental batches [[3]][doc_3][[5]][doc_5][[6]][doc_6].
+    Percentile-based contrast normalization to [0,1].
     """
-    if not all_bf or not all_fl:
-        raise RuntimeError(
-            "No preprocessed images passed to compute_global_percentiles. "
-            "Check that your first pass actually processed some images."
-        )
+    img_f = img.astype(np.float32)
+    finite = np.isfinite(img_f)
+    if not np.any(finite):
+        return np.zeros_like(img_f, dtype=np.float32)
 
-    bf_concat = np.concatenate([im.flatten() for im in all_bf])
-    fl_concat = np.concatenate([im.flatten() for im in all_fl])
+    low = np.percentile(img_f[finite], low_pct)
+    high = np.percentile(img_f[finite], high_pct)
 
-    bf_lo, bf_hi = np.percentile(bf_concat, [p_min, p_max])
-    fl_lo, fl_hi = np.percentile(fl_concat, [p_min, p_max])
+    if high <= low:
+        low = float(img_f[finite].min())
+        high = float(img_f[finite].max())
+        if high <= low:
+            return np.zeros_like(img_f, dtype=np.float32)
 
-    return {
-        "brightfield": (float(bf_lo), float(bf_hi)),
-        "fluorescence": (float(fl_lo), float(fl_hi)),
-    }
+    out = (img_f - low) / (high - low)
+    out = np.clip(out, 0.0, 1.0)
+    return out
 
 
-def normalize_image(img: np.ndarray, lo: float, hi: float) -> np.ndarray:
+def preprocess_fluo_for_seg(
+    rec: ImagePairRecord,
+    sigma_bg_um: float = 30.0,
+    sigma_denoise_um: float = 0.5,
+    low_pct: float = 1.0,
+    high_pct: float = 99.0,
+) -> np.ndarray:
     """
-    Normalize image to [0,1] based on fixed lo/hi.
+    Full FLUO preprocessing pipeline for segmentation:
 
-    Anything below lo maps to 0, above hi to 1.
+      1. Load raw FLUO image
+      2. Normalize to [0,1] using bit depth and exposure
+      3. Subtract low-frequency background (sigma_bg_um or fallback in px)
+      4. Denoise with Gaussian (sigma_denoise_um or fallback in px)
+      5. Percentile-based contrast normalization
+
+    Returns float32 image in [0,1].
     """
-    img_n = (img - lo) / (hi - lo)
-    img_n = np.clip(img_n, 0.0, 1.0)
-    return img_n
+    raw = tiff.imread(rec.fluo_path)
+
+    img = fluo_to_float01(raw, rec)
+    img = subtract_background_fluo(img, rec, sigma_bg_um=sigma_bg_um)
+    img = denoise_fluo(img, rec, sigma_um=sigma_denoise_um)
+    img = normalize_contrast_percentile(img, low_pct=low_pct, high_pct=high_pct)
+
+    return img.astype(np.float32)
 
 
-# ---------- Quality control ----------
+# ---------------------------------------------------------------------------
+# Brightfield preprocessing (for morphology/texture)
+# ---------------------------------------------------------------------------
 
-def focus_measure(image: np.ndarray) -> float:
+def bf_to_float01(raw: np.ndarray, rec: ImagePairRecord) -> np.ndarray:
     """
-    Simple focus metric: variance of Laplacian.
-    Typically used on brightfield to detect out-of-focus frames.
+    Convert raw BF image to float32 in [0,1] using bit depth.
     """
-    lap = cv2.Laplacian(image, cv2.CV_32F)
-    return float(lap.var())
+    arr = raw.astype(np.float32)
+    if rec.bit_depth is not None:
+        max_val = float(2**rec.bit_depth - 1)
+    else:
+        max_val = float(arr.max() or 1.0)
+    arr /= max_val
+    arr = np.clip(arr, 0.0, 1.0)
+    return arr
 
 
-def illumination_stats(image: np.ndarray) -> Dict[str, float]:
-    return {
-        "mean": float(image.mean()),
-        "median": float(np.median(image)),
-        "std": float(image.std()),
-    }
-
-
-# ---------- Channel registration & fusion ----------
-
-def stack_channels(bf: np.ndarray, fl: np.ndarray) -> np.ndarray:
+def correct_illumination_bf(
+    img01: np.ndarray,
+    rec: ImagePairRecord,
+    sigma_bg_um: float = 50.0,
+    fallback_sigma_bg_px: float = 80.0,
+) -> np.ndarray:
     """
-    Stack BF and FL into a 2-channel array (C,H,W).
-    Assumes channels are already spatially aligned (same field of view).
+    Correct non-uniform illumination / vignetting in BF using division by a
+    blurred background.
+
+    sigma_bg_um: scale of illumination variations (tens of µm).
+    If rec.pixel_size_um is missing, uses fallback_sigma_bg_px directly.
     """
-    assert bf.shape == fl.shape, "Brightfield and fluorescence shapes must match"
-    return np.stack([bf, fl], axis=0)
+    sigma_bg_px = um_to_px_safe(sigma_bg_um, rec, fallback_px=fallback_sigma_bg_px)
+    bg = gaussian_filter(img01, sigma=sigma_bg_px)
+    bg[bg == 0] = 1.0
+    corrected = img01 / bg
+    max_val = float(corrected.max() or 1.0)
+    corrected /= max_val
+    return corrected
 
 
-# ---------- Saving utilities ----------
+def enhance_bf_clahe(
+    img01: np.ndarray,
+    clip_limit: float = 0.01,
+    nbins: int = 256,
+) -> np.ndarray:
+    """
+    Apply CLAHE (adaptive histogram equalization) to enhance local contrast
+    in BF images while limiting noise amplification.
+    """
+    enhanced = exposure.equalize_adapthist(img01, clip_limit=clip_limit, nbins=nbins)
+    return enhanced.astype(np.float32)
 
-def save_processed_image(out_path: Path, img_2ch: np.ndarray) -> None:
+
+def preprocess_bf_for_seg(
+    rec: ImagePairRecord,
+    sigma_bg_um: float = 50.0,
+    clip_limit: float = 0.01,
+) -> np.ndarray:
     """
-    Save (C,H,W) float32 image as TIFF.
+    Full BF preprocessing pipeline for segmentation:
+
+      1. Load raw BF image
+      2. Normalize to [0,1] using bit depth
+      3. Correct illumination (divide by blurred background, µm or fallback px)
+      4. Apply CLAHE for local contrast enhancement
+
+    Returns float32 image in [0,1].
     """
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    tiff.imwrite(str(out_path), img_2ch.astype(np.float32))
+    raw = tiff.imread(rec.bf_path)
+
+    img = bf_to_float01(raw, rec)
+    img = correct_illumination_bf(img, rec, sigma_bg_um=sigma_bg_um)
+    img = enhance_bf_clahe(img, clip_limit=clip_limit)
+
+    return img.astype(np.float32)
 
 
-def save_metadata_json(out_path: Path, meta: ImageMeta, extra: Dict[str, Any]) -> None:
+# ---------------------------------------------------------------------------
+# Simple particulate-matter segmentation and contours
+# ---------------------------------------------------------------------------
+
+def segment_particles_from_fluo(
+    seg_fluo01: np.ndarray,
+    min_area_px: int = 20,
+) -> np.ndarray:
     """
-    Save JSON with parsed metadata + additional info (QC, normalization, etc.).
+    Very simple particulate-matter segmentation from preprocessed FLUO image.
+
+    seg_fluo01 can be 2D (H, W) or 3D (H, W, C).
+    If 3D, we convert to a single grayscale channel before thresholding.
+
+    Returns a 2D boolean mask (True = particle).
     """
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    base = image_meta_to_dict(meta)
-    base.update(extra)
-    with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(base, f, indent=2)
+    img = seg_fluo01.astype(np.float32)
+
+    # Ensure grayscale 2D
+    if img.ndim == 3:
+        img = img.mean(axis=-1)
+
+    thr = threshold_otsu(img)
+    mask = img > thr
+
+    mask = mask.astype(bool)
+    mask = binary_opening(mask, footprint=disk(1))
+    mask = remove_small_objects(mask, min_size=min_area_px)
+
+    return mask
+
+
+def extract_contours(
+    mask: np.ndarray,
+    level: float = 0.5,
+    min_length: int = 10,
+) -> list[np.ndarray]:
+    """
+    Extract contours from a boolean mask (True = foreground).
+    Each contour is an (N, 2) array of (row, col) points.
+
+    min_length filters out very short contours.
+    """
+    contours = find_contours(mask.astype(float), level=level)
+    contours = [c for c in contours if len(c) >= min_length]
+    return contours

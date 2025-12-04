@@ -1,0 +1,6 @@
+{
+  "min_area_px": 5,
+  "min_contour_len": 5,
+  "contour_width": 3,
+  "contour_color": "#80ff00"
+}
