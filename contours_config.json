@@ -2,5 +2,9 @@
   "min_area_px": 5,
   "min_contour_len": 5,
   "contour_width": 3,
-  "contour_color": "#ff0000"
+  "contour_color": "#0000ff",
+  "middle_low_pct": 30,
+  "middle_high_pct": 70,
+  "middle_contour_color": "#ffff00",
+  "arrow_length_px": 25
 }
