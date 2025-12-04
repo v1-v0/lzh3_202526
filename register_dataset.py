@@ -46,15 +46,29 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, TypedDict
 
 import re
 import xml.etree.ElementTree as ET
+
+from phase2 import core
 
 
 # ---------------------------------------------------------------------------
 # Data structure
 # ---------------------------------------------------------------------------
+
+class CoreMeta(TypedDict):
+    pixel_size_um: float
+    field_length_um_x: float
+    field_length_um_y: float
+
+class PropertiesMeta(TypedDict, total=False):
+    objective_name: str | None
+    numerical_aperture: float | None
+    optical_res_xy_um: float | None
+    exposure_bf_s: float | None
+    exposure_fluo_s: float | None
 
 @dataclass
 class ImagePairRecord:
@@ -84,7 +98,7 @@ class ImagePairRecord:
 # XML parsers
 # ---------------------------------------------------------------------------
 
-def parse_core_xml(path: Path) -> Optional[dict]:
+def parse_core_xml(path: Path) -> Optional[CoreMeta]:
     """
     Parse Leica '<name>.xml' to get pixel size and field lengths.
 
@@ -131,14 +145,16 @@ def parse_core_xml(path: Path) -> Optional[dict]:
     pixel_size_x_um = (length_x_m * 1e6) / n_x
     pixel_size_y_um = (length_y_m * 1e6) / n_y
 
-    return {
+    core_info: CoreMeta = {
         "pixel_size_um": (pixel_size_x_um + pixel_size_y_um) / 2.0,
         "field_length_um_x": length_x_m * 1e6,
         "field_length_um_y": length_y_m * 1e6,
     }
+    
+    return core_info
 
 
-def parse_properties_xml(path: Path) -> dict:
+def parse_properties_xml(path: Path) -> PropertiesMeta:
     """
     Parse '<name>_Properties.xml' for:
       - objective name
@@ -308,7 +324,7 @@ def register_dataset(folder: str | Path) -> List[ImagePairRecord]:
         # Geometry from core XML
         if meta_core is not None:
             core_info = parse_core_xml(meta_core)
-            if core_info:
+            if core_info is not None:
                 pixel_size_um = core_info["pixel_size_um"]
                 field_len_x_um = core_info["field_length_um_x"]
                 field_len_y_um = core_info["field_length_um_y"]
@@ -400,8 +416,6 @@ def register_all_datasets(source_root: str | Path) -> List[ImagePairRecord]:
     all_records: List[ImagePairRecord] = []
 
     for ds_dir in sorted(p for p in source_root.iterdir() if p.is_dir()):
-        if not ds_dir.name.isdigit():      # only numeric datasets like "10"
-            continue
         all_records.extend(register_dataset(ds_dir))
 
     return all_records
