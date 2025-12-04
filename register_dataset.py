@@ -6,9 +6,7 @@ register_dataset.py
 Register brightfield (BF) and fluorescence (FLUO) image pairs together with
 Leica XML metadata for each dataset.
 
-Assumptions
------------
-Project layout (works on Windows / Linux / macOS):
+Assumed project layout (works on Windows / Linux / macOS):
 
   project_root/
     register_dataset.py      <-- this file
@@ -28,12 +26,13 @@ Project layout (works on Windows / Linux / macOS):
 
 Usage
 -----
-In Python:
+
+From Python:
 
     from pathlib import Path
     from register_dataset import register_all_datasets
 
-    root = Path.cwd() / "source"   # if script is in project root
+    root = Path.cwd() / "source"
     records = register_all_datasets(root)
 
 From command line:
@@ -48,6 +47,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
+
 import re
 import xml.etree.ElementTree as ET
 
@@ -103,7 +103,8 @@ def parse_core_xml(path: Path) -> Optional[dict]:
       pixel_size_um
       field_length_um_x
       field_length_um_y
-    or None on error.
+
+    Returns None on error or missing information.
     """
     try:
         root = ET.parse(path).getroot()
@@ -123,8 +124,8 @@ def parse_core_xml(path: Path) -> Optional[dict]:
         n_y = int(dim_y.attrib["NumberOfElements"])
         length_x_m = float(dim_x.attrib["Length"])
         length_y_m = float(dim_y.attrib["Length"])
-    except KeyError as e:
-        print(f"[WARN] Missing attribute in {path}: {e}")
+    except (KeyError, ValueError) as e:
+        print(f"[WARN] Problem with dimension attributes in {path}: {e}")
         return None
 
     pixel_size_x_um = (length_x_m * 1e6) / n_x
@@ -148,7 +149,8 @@ def parse_properties_xml(path: Path) -> dict:
     Returns a dict with keys:
       objective_name, numerical_aperture,
       optical_res_xy_um, exposure_bf_s, exposure_fluo_s
-    (missing values are returned as None).
+
+    Missing values are returned as None.
     """
     try:
         root = ET.parse(path).getroot()
@@ -160,35 +162,34 @@ def parse_properties_xml(path: Path) -> dict:
     if img is None:
         return {}
 
-    # Objective and NA
+    # Objective / NA
     atld = img.find(".//ATLCameraSettingDefinition")
     objective_name: Optional[str] = None
-    na: Optional[float] = None
+    numerical_aperture: Optional[float] = None
 
     if atld is not None:
         objective_name = atld.attrib.get("ObjectiveName")
         na_raw = atld.attrib.get("NumericalAperture")
         try:
-            na = float(na_raw) if na_raw is not None else None
+            numerical_aperture = float(na_raw) if na_raw is not None else None
         except ValueError:
-            na = None
+            numerical_aperture = None
 
-    # Optical resolution from first channel
-    opt_xy_um: Optional[float] = None
+    # Optical resolution XY (first channel)
+    optical_res_xy_um: Optional[float] = None
     ch = img.find(".//ImageDescription/Channels/ChannelDescription")
     if ch is not None:
         xy_str = ch.attrib.get("OpticalResolutionXY")
         if xy_str:
-            # e.g. "0.268 µm"
             token = xy_str.split()[0]
             try:
-                opt_xy_um = float(token)
+                optical_res_xy_um = float(token)
             except ValueError:
-                opt_xy_um = None
+                optical_res_xy_um = None
 
     # Exposure times from WideFieldChannelInfo
-    exposure_bf: Optional[float] = None
-    exposure_fluo: Optional[float] = None
+    exposure_bf_s: Optional[float] = None
+    exposure_fluo_s: Optional[float] = None
 
     for wfi in img.findall(".//WideFieldChannelConfigurator/WideFieldChannelInfo"):
         method = wfi.attrib.get("ContrastingMethodName", "")
@@ -196,7 +197,6 @@ def parse_properties_xml(path: Path) -> dict:
         if not exp:
             continue
 
-        # In Properties XML usually like "138 ms"
         token = exp.split()[0]
         try:
             exp_s = float(token) / 1000.0  # ms -> s
@@ -204,16 +204,16 @@ def parse_properties_xml(path: Path) -> dict:
             exp_s = None
 
         if method == "TL-BF":
-            exposure_bf = exp_s
-        elif method == "FLUO" and exposure_fluo is None:
-            exposure_fluo = exp_s
+            exposure_bf_s = exp_s
+        elif method == "FLUO" and exposure_fluo_s is None:
+            exposure_fluo_s = exp_s
 
     return {
         "objective_name": objective_name,
-        "numerical_aperture": na,
-        "optical_res_xy_um": opt_xy_um,
-        "exposure_bf_s": exposure_bf,
-        "exposure_fluo_s": exposure_fluo,
+        "numerical_aperture": numerical_aperture,
+        "optical_res_xy_um": optical_res_xy_um,
+        "exposure_bf_s": exposure_bf_s,
+        "exposure_fluo_s": exposure_fluo_s,
     }
 
 
@@ -226,18 +226,20 @@ def register_dataset(folder: str | Path) -> List[ImagePairRecord]:
     Scan a single dataset folder (e.g. 'source/10', 'source/11', 'source/16', 'source/19')
     and register BF, FLUO and metadata files.
 
-    Rule:
+    Rules:
       - Dataset id = folder name (e.g. '10', '11', '16', '19').
       - BF files are all files ending with '_ch00.tif'.
-      - For each BF filename:
-          '<anything...> <last_number>_ch00.tif'
+      - For each BF filename of the form:
+
+            '<anything...> <last_number>_ch00.tif'
+
         we:
           - use <last_number> as index
-          - use '<anything...> <last_number>' (i.e. the base name without '_ch00.tif')
-            as pair_name.
+          - use '<anything...> <last_number>' (i.e. the base name without
+            '_ch00.tif') as pair_name.
 
     Examples:
-      '10 P 1_ch00.tif'          -> pair_name: '10 P 1'          
+      '10 P 1_ch00.tif'          -> pair_name: '10 P 1'
       '11 N NO 3_ch00.tif'       -> pair_name: '11 N NO 3'
       '16 P DAY0 5_ch00.tif'     -> pair_name: '16 P DAY0 5'
       'Day 1 19 N NO 1_ch00.tif' -> pair_name: 'Day 1 19 N NO 1'
@@ -252,7 +254,6 @@ def register_dataset(folder: str | Path) -> List[ImagePairRecord]:
     # All BF files end with _ch00.tif
     bf_files = sorted(folder.glob("*_ch00.tif"))
 
-    import re
     # Pattern:
     #   ^(.*)\s(\d+)_ch00\.tif$
     #   group(1): "anything..." before the last space+number
@@ -270,7 +271,7 @@ def register_dataset(folder: str | Path) -> List[ImagePairRecord]:
         prefix = m.group(1)             # e.g. '10 P', '11 N NO', 'Day 1 19 N NO'
         pair_index = int(m.group(2))    # e.g. 1, 2, 3, ...
 
-        # pair_name is simply "<prefix> <index>" i.e. filename without _ch00.tif
+        # pair_name is simply "<prefix> <index>" i.e. base name without _ch00.tif
         pair_name = f"{prefix} {pair_index}"
 
         # Find FLUO file for this pair_name (e.g. '<pair_name>_ch01.tif')
@@ -295,14 +296,14 @@ def register_dataset(folder: str | Path) -> List[ImagePairRecord]:
             print(f"[WARN] No metadata XML for '{pair_name}' in {meta_dir}")
 
         # Defaults
-        pixel_size_um = None
-        field_len_x_um = None
-        field_len_y_um = None
-        objective_name = None
-        numerical_aperture = None
-        optical_res_xy_um = None
-        exposure_bf_s = None
-        exposure_fluo_s = None
+        pixel_size_um: Optional[float] = None
+        field_len_x_um: Optional[float] = None
+        field_len_y_um: Optional[float] = None
+        objective_name: Optional[str] = None
+        numerical_aperture: Optional[float] = None
+        optical_res_xy_um: Optional[float] = None
+        exposure_bf_s: Optional[float] = None
+        exposure_fluo_s: Optional[float] = None
 
         # Geometry from core XML
         if meta_core is not None:
@@ -344,13 +345,12 @@ def register_dataset(folder: str | Path) -> List[ImagePairRecord]:
     return records
 
 
-
-
 def _find_fluo_file(folder: Path, pair_name: str) -> Optional[Path]:
     """
     Try to locate the FLUO image for a given pair_name in 'folder'.
 
     Primary pattern: '<pair_name>_ch01.tif'
+
     Fallback patterns can be extended if your naming varies.
     """
     # Primary expected name
@@ -372,12 +372,11 @@ def _find_fluo_file(folder: Path, pair_name: str) -> Optional[Path]:
     return None
 
 
-
-def register_single_dataset(source_root: str | Path, dataset_id: str | int):
+def register_single_dataset(source_root: str | Path, dataset_id: str | int) -> List[ImagePairRecord]:
     """
     Convenience wrapper: register exactly one dataset folder under source_root.
 
-    It behaves exactly like calling:
+    Equivalent to:
         register_dataset(source_root / <dataset_id>)
 
     Metadata handling is the same as register_dataset:
@@ -388,16 +387,17 @@ def register_single_dataset(source_root: str | Path, dataset_id: str | int):
     ds_folder = source_root / str(dataset_id)
     return register_dataset(ds_folder)
 
+
 def register_all_datasets(source_root: str | Path) -> List[ImagePairRecord]:
     """
     Scan all numeric subfolders under 'source_root' and return a flat list
     of ImagePairRecord.
     """
     source_root = Path(source_root)
-    all_records: List[ImagePairRecord] = []
-
     if not source_root.is_dir():
         raise FileNotFoundError(f"Source folder not found: {source_root}")
+
+    all_records: List[ImagePairRecord] = []
 
     for ds_dir in sorted(p for p in source_root.iterdir() if p.is_dir()):
         if not ds_dir.name.isdigit():      # only numeric datasets like "10"
