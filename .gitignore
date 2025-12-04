@@ -3,6 +3,8 @@
 source/
 source_no_meta/
 
+processed/
+
 config/__pycache__/
 analysis/__pycache__/
 ui/__pycache__/
