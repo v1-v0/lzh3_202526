@@ -1,16 +1,8 @@
-*.DS_Store
-venv/
-.venv/
-output/beta6/
-output/beta5/
-outputs/v3/
-outputs/
-source/
-results/
-feedbacks/
-dist/
-build/
 *DS_Store
+.venv/
+source/
+source_no_meta/
+
 config/__pycache__/
 analysis/__pycache__/
 ui/__pycache__/
@@ -20,4 +12,3 @@ ui/__pycache__/
 *.pyd
 *.log
 *.pyclass
-source_no_meta/
