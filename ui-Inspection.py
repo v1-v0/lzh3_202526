@@ -6,12 +6,12 @@ from tkinter import ttk, messagebox, colorchooser
 
 import numpy as np
 import tifffile as tiff
-from PIL import Image, ImageTk, ImageDraw
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 
 from register_dataset import register_all_datasets, ImagePairRecord
 from preprocess import (
     preprocess_fluo_for_seg,
-    preprocess_bf_for_seg,  # kept for completeness
+    preprocess_bf_for_seg,
     segment_particles_from_fluo,
     extract_contours,
 )
@@ -52,11 +52,12 @@ class BFFluoViewer(tk.Tk):
         # State
         self.current_record: ImagePairRecord | None = None
         self.show_scaled = tk.BooleanVar(value=True)
-        self.bar_length_um = tk.DoubleVar(value=20.0)
+        # Default bar length = 5 µm
+        self.bar_length_um = tk.DoubleVar(value=5.0)
 
         # Mode:
         # "auto": raw only (top and bottom identical)
-        # "seg-preproc-contours": raw on top, raw+contours on bottom
+        # "seg-preproc-contours": raw on top, enhanced+contours on bottom
         self.contrast_mode = tk.StringVar(value="seg-preproc-contours")
 
         # Tk image refs (four panes)
@@ -64,6 +65,12 @@ class BFFluoViewer(tk.Tk):
         self._fluo_raw_tkimg: ImageTk.PhotoImage | None = None
         self._bf_seg_tkimg: ImageTk.PhotoImage | None = None
         self._fluo_seg_tkimg: ImageTk.PhotoImage | None = None
+
+        # Last PIL images (before pane-specific scaling)
+        self._bf_top_pil: Image.Image | None = None
+        self._fluo_top_pil: Image.Image | None = None
+        self._bf_bottom_pil: Image.Image | None = None
+        self._fluo_bottom_pil: Image.Image | None = None
 
         # Cache for contours per image pair
         self._seg_contour_cache: dict[tuple[str, str], list[np.ndarray]] = {}
@@ -84,6 +91,9 @@ class BFFluoViewer(tk.Tk):
         # UI layout
         self._build_ui()
         self._populate_listbox()
+
+        # Resize handling
+        self.bind("<Configure>", self._on_root_configure)
 
         self.protocol("WM_DELETE_WINDOW", self.on_exit)
 
@@ -286,42 +296,54 @@ class BFFluoViewer(tk.Tk):
         # Top-left: BF original
         bf_raw_frame = ttk.Frame(right_frame)
         bf_raw_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        bf_raw_frame.rowconfigure(1, weight=1)
+        bf_raw_frame.columnconfigure(0, weight=1)
 
         self.bf_label = ttk.Label(bf_raw_frame, text="Brightfield (raw)")
-        self.bf_label.pack(anchor=tk.CENTER, pady=(5, 0))
+        self.bf_label.grid(row=0, column=0, pady=(5, 0))
 
-        self.bf_raw_canvas = tk.Label(bf_raw_frame, bg="black")
-        self.bf_raw_canvas.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.bf_raw_canvas = tk.Label(bf_raw_frame, bg="white")
+        self.bf_raw_canvas.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
 
         # Top-right: FLUO original
         fluo_raw_frame = ttk.Frame(right_frame)
         fluo_raw_frame.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
+        fluo_raw_frame.rowconfigure(1, weight=1)
+        fluo_raw_frame.columnconfigure(0, weight=1)
 
         self.fluo_label = ttk.Label(fluo_raw_frame, text="Fluorescence (raw)")
-        self.fluo_label.pack(anchor=tk.CENTER, pady=(5, 0))
+        self.fluo_label.grid(row=0, column=0, pady=(5, 0))
 
-        self.fluo_raw_canvas = tk.Label(fluo_raw_frame, bg="black")
-        self.fluo_raw_canvas.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.fluo_raw_canvas = tk.Label(fluo_raw_frame, bg="white")
+        self.fluo_raw_canvas.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
 
-        # Bottom-left: BF with particulate outlines
+        # Bottom-left: BF enhanced + contours
         bf_seg_frame = ttk.Frame(right_frame)
         bf_seg_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
+        bf_seg_frame.rowconfigure(1, weight=1)
+        bf_seg_frame.columnconfigure(0, weight=1)
 
-        self.bf_seg_label = ttk.Label(bf_seg_frame, text="Brightfield + contours")
-        self.bf_seg_label.pack(anchor=tk.CENTER, pady=(5, 0))
+        self.bf_seg_label = ttk.Label(
+            bf_seg_frame, text="Brightfield (enhanced + contours)"
+        )
+        self.bf_seg_label.grid(row=0, column=0, pady=(5, 0))
 
-        self.bf_seg_canvas = tk.Label(bf_seg_frame, bg="black")
-        self.bf_seg_canvas.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.bf_seg_canvas = tk.Label(bf_seg_frame, bg="white")
+        self.bf_seg_canvas.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
 
-        # Bottom-right: FLUO with particulate outlines
+        # Bottom-right: FLUO enhanced + contours
         fluo_seg_frame = ttk.Frame(right_frame)
         fluo_seg_frame.grid(row=1, column=1, sticky="nsew", padx=5, pady=5)
+        fluo_seg_frame.rowconfigure(1, weight=1)
+        fluo_seg_frame.columnconfigure(0, weight=1)
 
-        self.fluo_seg_label = ttk.Label(fluo_seg_frame, text="Fluorescence + contours")
-        self.fluo_seg_label.pack(anchor=tk.CENTER, pady=(5, 0))
+        self.fluo_seg_label = ttk.Label(
+            fluo_seg_frame, text="Fluorescence (enhanced + contours)"
+        )
+        self.fluo_seg_label.grid(row=0, column=0, pady=(5, 0))
 
-        self.fluo_seg_canvas = tk.Label(fluo_seg_frame, bg="black")
-        self.fluo_seg_canvas.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.fluo_seg_canvas = tk.Label(fluo_seg_frame, bg="white")
+        self.fluo_seg_canvas.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
 
     def _populate_listbox(self):
         self.listbox.delete(0, tk.END)
@@ -334,7 +356,6 @@ class BFFluoViewer(tk.Tk):
             else:
                 self.listbox.itemconfig(idx, foreground="black")
 
-        # Do NOT auto-select anything; wait for user click
         self.current_record = None
 
     # ------------------------------------------------------------------ Progress helpers
@@ -345,7 +366,7 @@ class BFFluoViewer(tk.Tk):
         self._refresh_running = True
         self.progress_label.config(text=text)
         self.progress_bar.pack(fill=tk.X, pady=(2, 0))
-        self.progress_bar.start(50)  # ms per step
+        self.progress_bar.start(50)
 
     def _stop_progress(self):
         self._refresh_running = False
@@ -356,14 +377,12 @@ class BFFluoViewer(tk.Tk):
     # ------------------------------------------------------------------ Contour config callbacks
 
     def _on_contour_config_changed(self):
-        # Clear cached contours so new settings take effect
         self._seg_contour_cache.clear()
         self.update_images()
 
     def _choose_contour_color(self):
         initial = self.contour_color_hex.get()
         color = colorchooser.askcolor(color=initial, title="Choose contour color")
-        # color = ((r,g,b), "#rrggbb") or (None, None) if canceled
         if color[1] is not None:
             self.contour_color_hex.set(color[1])
             self.color_preview.configure(bg=color[1])
@@ -382,6 +401,16 @@ class BFFluoViewer(tk.Tk):
         self.current_record = self.records[idx]
         self.update_images()
 
+    def _on_root_configure(self, event=None):
+        if (
+            self._bf_top_pil is None
+            or self._fluo_top_pil is None
+            or self._bf_bottom_pil is None
+            or self._fluo_bottom_pil is None
+        ):
+            return
+        self._fit_and_show_all_panes()
+
     def _overlay_contours_on_gray(
         self,
         img01: np.ndarray,
@@ -399,7 +428,8 @@ class BFFluoViewer(tk.Tk):
         else:
             base = img01
 
-        pil = Image.fromarray(base, mode="L").convert("RGB")
+        # Avoid deprecated 'mode' parameter usage.
+        pil = Image.fromarray(base).convert("RGB")
         draw = ImageDraw.Draw(pil)
 
         for c in contours:
@@ -412,29 +442,23 @@ class BFFluoViewer(tk.Tk):
     # ------------------------------------------------------------------ Main refresh (threaded wrapper)
 
     def update_images(self):
-        """Public entry: start threaded refresh with progress bar."""
         if self.current_record is None:
             return
-
-        # If a refresh is already running, ignore new requests
         if self._refresh_running:
             return
 
-        # Local non-optional copy, fixes Pylance reportArgumentType
         rec: ImagePairRecord = self.current_record
-
-        self._start_progress("Refreshing images…")
+        self._start_progress("Refreshing…")
 
         def worker():
             try:
                 result = self._update_images_worker(rec)
             except Exception as e:
-                # report error back on main thread
+                # Build message here and capture into lambda, to avoid free-var issue
+                err_msg = f"Error during refresh:\n{e}"
                 self.after(
                     0,
-                    lambda: messagebox.showerror(
-                        "Error", f"Error during refresh:\n{e}"
-                    ),
+                    lambda msg=err_msg: messagebox.showerror("Error", msg),
                 )
                 result = None
 
@@ -450,15 +474,12 @@ class BFFluoViewer(tk.Tk):
                         label_text_fluo,
                     ) = result
 
-                    self._bf_raw_tkimg = ImageTk.PhotoImage(bf_top_img)
-                    self._fluo_raw_tkimg = ImageTk.PhotoImage(fluo_top_img)
-                    self._bf_seg_tkimg = ImageTk.PhotoImage(bf_bottom_img)
-                    self._fluo_seg_tkimg = ImageTk.PhotoImage(fluo_bottom_img)
+                    self._bf_top_pil = bf_top_img
+                    self._fluo_top_pil = fluo_top_img
+                    self._bf_bottom_pil = bf_bottom_img
+                    self._fluo_bottom_pil = fluo_bottom_img
 
-                    self.bf_raw_canvas.configure(image=self._bf_raw_tkimg)
-                    self.fluo_raw_canvas.configure(image=self._fluo_raw_tkimg)
-                    self.bf_seg_canvas.configure(image=self._bf_seg_tkimg)
-                    self.fluo_seg_canvas.configure(image=self._fluo_seg_tkimg)
+                    self._fit_and_show_all_panes()
 
                     self.bf_label.config(text=label_text_bf)
                     self.fluo_label.config(text=label_text_fluo)
@@ -468,9 +489,41 @@ class BFFluoViewer(tk.Tk):
         self._refresh_thread = threading.Thread(target=worker, daemon=True)
         self._refresh_thread.start()
 
+    def _fit_and_show_all_panes(self):
+        if self._bf_top_pil is not None:
+            tw = max(self.bf_raw_canvas.winfo_width(), 1)
+            th = max(self.bf_raw_canvas.winfo_height(), 1)
+            img_fit = self._resize_to_box(self._bf_top_pil, tw, th)
+            self._bf_raw_tkimg = ImageTk.PhotoImage(img_fit)
+            self.bf_raw_canvas.configure(image=self._bf_raw_tkimg)
+
+        if self._fluo_top_pil is not None:
+            tw = max(self.fluo_raw_canvas.winfo_width(), 1)
+            th = max(self.fluo_raw_canvas.winfo_height(), 1)
+            img_fit = self._resize_to_box(self._fluo_top_pil, tw, th)
+            self._fluo_raw_tkimg = ImageTk.PhotoImage(img_fit)
+            self.fluo_raw_canvas.configure(image=self._fluo_raw_tkimg)
+
+        if self._bf_bottom_pil is not None:
+            tw = max(self.bf_seg_canvas.winfo_width(), 1)
+            th = max(self.bf_seg_canvas.winfo_height(), 1)
+            img_fit = self._resize_to_box(self._bf_bottom_pil, tw, th)
+            self._bf_seg_tkimg = ImageTk.PhotoImage(img_fit)
+            self.bf_seg_canvas.configure(image=self._bf_seg_tkimg)
+
+        if self._fluo_bottom_pil is not None:
+            tw = max(self.fluo_seg_canvas.winfo_width(), 1)
+            th = max(self.fluo_seg_canvas.winfo_height(), 1)
+            img_fit = self._resize_to_box(self._fluo_bottom_pil, tw, th)
+            self._fluo_seg_tkimg = ImageTk.PhotoImage(img_fit)
+            self.fluo_seg_canvas.configure(image=self._fluo_seg_tkimg)
+
     def _update_images_worker(self, rec: ImagePairRecord):
-        """Heavy part of update_images, runs in worker thread; returns PIL images."""
-        # Load images
+        """
+        In 'seg-preproc-contours' mode:
+        - top row: raw BF/FLUO
+        - bottom row: ENHANCED BF/FLUO + contours
+        """
         bf_raw = tiff.imread(rec.bf_path)
         fluo_raw = tiff.imread(rec.fluo_path)
 
@@ -480,12 +533,12 @@ class BFFluoViewer(tk.Tk):
         bf_top_arr = bf_raw
         fluo_top_arr = fluo_raw
 
-        # BOTTOM ROW: start as raw
-        bf_bottom_arr = bf_raw.copy()
-        fluo_bottom_arr = fluo_raw.copy()
+        # BOTTOM ROW: default to raw, may be replaced with enhanced + contours
+        bf_bottom_img: Image.Image
+        fluo_bottom_img: Image.Image
 
-        # Segmentation + contours for bottom row
         if mode == "seg-preproc-contours":
+            # --- segmentation preproc (fluorescence) ---
             fluo_proc = preprocess_fluo_for_seg(rec)
 
             key = self._rec_key(rec)
@@ -500,41 +553,43 @@ class BFFluoViewer(tk.Tk):
                 contours = extract_contours(mask, min_length=min_len)
                 self._seg_contour_cache[key] = contours
 
-            # Overlay on raw images (float [0,1] grayscale)
-            bf_raw_pil = self._to_pil(bf_raw)
-            fluo_raw_pil = self._to_pil(fluo_raw)
+            # --- display ENHANCED images (BF + FLUO), with contours overlay ---
+            bf_enh = preprocess_bf_for_seg(rec)      # BF enhancement
+            fluo_enh = fluo_proc                     # already computed above
 
-            bf_raw01 = np.array(bf_raw_pil.convert("L"), dtype=np.float32)
-            fluo_raw01 = np.array(fluo_raw_pil.convert("L"), dtype=np.float32)
-
-            if bf_raw01.max() > 0:
-                bf_raw01 /= bf_raw01.max()
-            if fluo_raw01.max() > 0:
-                fluo_raw01 /= fluo_raw01.max()
+            # Normalize to [0,1] float for overlay helper
+            bf_enh = bf_enh.astype(np.float32)
+            fluo_enh = fluo_enh.astype(np.float32)
+            if bf_enh.max() > 0:
+                bf_enh /= bf_enh.max()
+            if fluo_enh.max() > 0:
+                fluo_enh /= fluo_enh.max()
 
             # Drawing configuration
             hex_color = self.contour_color_hex.get()
             try:
-                rgb = tuple(int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
+                rgb = tuple(int(hex_color[i: i + 2], 16) for i in (1, 3, 5))
             except Exception:
                 rgb = (255, 0, 0)
             line_w = int(self.contour_width_var.get())
 
-            bf_annot_pil = self._overlay_contours_on_gray(
-                bf_raw01, contours, color=rgb, line_width=line_w
+            bf_enh_pil = self._overlay_contours_on_gray(
+                bf_enh, contours, color=rgb, line_width=line_w
             )
-            fluo_annot_pil = self._overlay_contours_on_gray(
-                fluo_raw01, contours, color=rgb, line_width=line_w
+            fluo_enh_pil = self._overlay_contours_on_gray(
+                fluo_enh, contours, color=rgb, line_width=line_w
             )
 
-            bf_bottom_arr = np.array(bf_annot_pil)
-            fluo_bottom_arr = np.array(fluo_annot_pil)
+            bf_bottom_img = bf_enh_pil
+            fluo_bottom_img = fluo_enh_pil
+        else:
+            # Raw only mode: bottom = raw
+            bf_bottom_img = self._to_pil(bf_raw)
+            fluo_bottom_img = self._to_pil(fluo_raw)
 
-        # Convert arrays to PIL
+        # Convert top arrays to PIL
         bf_top_img = self._to_pil(bf_top_arr)
         fluo_top_img = self._to_pil(fluo_top_arr)
-        bf_bottom_img = self._to_pil(bf_bottom_arr)
-        fluo_bottom_img = self._to_pil(fluo_bottom_arr)
 
         # Optional scale bar
         if self.show_scaled.get():
@@ -543,14 +598,7 @@ class BFFluoViewer(tk.Tk):
             bf_bottom_img = self._add_scale_bar(bf_bottom_img, rec)
             fluo_bottom_img = self._add_scale_bar(fluo_bottom_img, rec)
 
-        # Resize for display
-        target_width = 780
-        bf_top_img = self._resize_to_width(bf_top_img, target_width)
-        fluo_top_img = self._resize_to_width(fluo_top_img, target_width)
-        bf_bottom_img = self._resize_to_width(bf_bottom_img, target_width)
-        fluo_bottom_img = self._resize_to_width(fluo_bottom_img, target_width)
-
-        # Labels with pixel size info
+        # Labels
         if rec.pixel_size_um is not None:
             px_text = f" (px: {rec.pixel_size_um:.3f} µm/pixel)"
         else:
@@ -577,7 +625,9 @@ class BFFluoViewer(tk.Tk):
 
     # ------------------------------------------------------------------ Contrast helpers
 
-    def _percentiles(self, arr: np.ndarray, low_pct: float = 1.0, high_pct: float = 99.0):
+    def _percentiles(
+        self, arr: np.ndarray, low_pct: float = 1.0, high_pct: float = 99.0
+    ):
         arr_f = arr.astype(np.float32)
         finite = np.isfinite(arr_f)
         if not np.any(finite):
@@ -599,86 +649,9 @@ class BFFluoViewer(tk.Tk):
         arr_f *= 255.0
         return arr_f.astype(np.uint8)
 
-    def _apply_safe_leica_scaling(
-        self, arr: np.ndarray, rec: ImagePairRecord, channel_idx: int
-    ) -> np.ndarray:
-        cs_list = getattr(rec, "channel_scaling", None)
-        bit_depth = getattr(rec, "bit_depth", None)
-
-        if not cs_list or bit_depth is None:
-            return self._auto_normalize(arr)
-        if channel_idx >= len(cs_list):
-            return self._auto_normalize(arr)
-
-        cs = cs_list[channel_idx]
-        try:
-            black_norm = float(cs.get("black_norm", 0.0))
-            white_norm = float(cs.get("white_norm", 1.0))
-            gamma = float(cs.get("gamma", 1.0))
-        except (TypeError, ValueError):
-            return self._auto_normalize(arr)
-
-        if white_norm <= black_norm:
-            return self._auto_normalize(arr)
-
-        max_val = float(2**bit_depth - 1)
-        leica_low = black_norm * max_val
-        leica_high = white_norm * max_val
-
-        data_low, data_high = self._percentiles(arr, 1.0, 99.0)
-        if leica_low > data_low or leica_high < data_high:
-            return self._auto_normalize(arr)
-
-        arr_f = arr.astype(np.float32)
-        arr_f = (arr_f - leica_low) / (leica_high - leica_low)
-        arr_f = np.clip(arr_f, 0.0, 1.0)
-
-        if gamma != 1.0:
-            arr_f = np.power(arr_f, 1.0 / gamma)
-
-        arr_f *= 255.0
-        return arr_f.astype(np.uint8)
-
-    def _apply_leica_scaling(
-        self, arr: np.ndarray, rec: ImagePairRecord, channel_idx: int
-    ) -> np.ndarray:
-        cs_list = getattr(rec, "channel_scaling", None)
-        bit_depth = getattr(rec, "bit_depth", None)
-
-        if not cs_list or bit_depth is None:
-            return arr
-        if channel_idx >= len(cs_list):
-            return arr
-
-        cs = cs_list[channel_idx]
-        try:
-            black_norm = float(cs.get("black_norm", 0.0))
-            white_norm = float(cs.get("white_norm", 1.0))
-            gamma = float(cs.get("gamma", 1.0))
-        except (TypeError, ValueError):
-            return arr
-
-        if white_norm <= black_norm:
-            return arr
-
-        max_val = float(2**bit_depth - 1)
-        black_raw = black_norm * max_val
-        white_raw = white_norm * max_val
-
-        arr_f = arr.astype(np.float32)
-        arr_f = (arr_f - black_raw) / (white_raw - black_raw)
-        arr_f = np.clip(arr_f, 0.0, 1.0)
-
-        if gamma != 1.0:
-            arr_f = np.power(arr_f, 1.0 / gamma)
-
-        arr_f *= 255.0
-        return arr_f.astype(np.uint8)
-
     # ------------------------------------------------------------------ Image helpers
 
     def _to_pil(self, arr: np.ndarray) -> Image.Image:
-        """Convert a 2D or 3D numpy array to a PIL image, normalizing to 8-bit."""
         if arr.ndim == 2:
             arr = arr.astype(np.float32)
             if arr.max() > 0:
@@ -704,6 +677,16 @@ class BFFluoViewer(tk.Tk):
 
         raise ValueError(f"Unsupported image shape: {arr.shape}")
 
+    def _resize_to_box(self, img: Image.Image, box_w: int, box_h: int) -> Image.Image:
+        if box_w <= 0 or box_h <= 0:
+            return img
+        w, h = img.size
+        scale = min(box_w / w, box_h / h)
+        if scale <= 0:
+            return img
+        new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+        return img.resize(new_size, RESAMPLE)
+
     def _resize_to_width(self, img: Image.Image, target_w: int) -> Image.Image:
         w, h = img.size
         if w <= target_w:
@@ -712,6 +695,32 @@ class BFFluoViewer(tk.Tk):
         new_size = (target_w, int(h * scale))
         return img.resize(new_size, RESAMPLE)
 
+    # ------------------------------------------------------------------ Scale bar helpers
+
+    def _pick_contrasting_colors(self, bg_gray: float):
+        """
+        Given a background gray level (0..255), choose bar color.
+        Text will use the same color.
+        """
+        # If background is bright -> dark bar; if dark -> bright bar.
+        if bg_gray > 128:
+            bar = "black"
+        else:
+            bar = "white"
+        return bar
+
+    def _get_scaled_font(self, base_size: int = 12):
+        """
+        Try to get a truetype font; fall back to default bitmap font.
+        Scales the font size by factor ~2 as requested.
+        """
+        size = max(1, int(base_size * 2))  # double size
+        try:
+            # Change to a concrete TTF path if needed
+            return ImageFont.truetype("arial.ttf", size=size)
+        except Exception:
+            return ImageFont.load_default()
+
     def _add_scale_bar(self, img: Image.Image, rec: ImagePairRecord) -> Image.Image:
         if rec.pixel_size_um is None:
             return img
@@ -719,17 +728,27 @@ class BFFluoViewer(tk.Tk):
         try:
             bar_len_um = float(self.bar_length_um.get())
         except Exception:
-            bar_len_um = 20.0
+            bar_len_um = 5.0
 
         px_size = rec.pixel_size_um
         bar_len_px = int(round(bar_len_um / px_size))
-
         if bar_len_px <= 0:
             return img
 
-        draw = ImageDraw.Draw(img)
         w, h = img.size
 
+        # Sample a thin band at the bottom to estimate local background brightness.
+        sample_height = max(5, h // 20)
+        y_start = max(0, h - sample_height)
+        bottom_band = img.crop((0, y_start, w, h))
+        gray_band = bottom_band.convert("L")
+        bg_gray = float(np.array(gray_band, dtype=np.uint8).mean())
+
+        bar_color = self._pick_contrasting_colors(bg_gray)
+        outline_color = bar_color
+        text_color = bar_color  # text color matches bar color
+
+        draw = ImageDraw.Draw(img)
         margin = 20
         bar_height = max(3, h // 200)
 
@@ -743,14 +762,15 @@ class BFFluoViewer(tk.Tk):
             bar_len_um = bar_len_px * px_size
             x1 = x0 + bar_len_px
 
-        draw.rectangle([x0, y0, x1, y1], fill="white")
-        draw.rectangle([x0, y0, x1, y1], outline="black")
+        draw.rectangle([x0, y0, x1, y1], fill=bar_color, outline=outline_color)
 
-        label = f"{bar_len_um:.0f} µm"
+        # ASCII unit label to avoid µ font issues
+        label = f"{bar_len_um:.0f} um"
         text_x = x0 + bar_len_px / 2
-        text_y = y0 - 4
+        text_y = y0 - 8  # a little distance above bar for larger font
 
-        draw.text((text_x, text_y), label, fill="white", anchor="ms")
+        font = self._get_scaled_font(base_size=12)
+        draw.text((text_x, text_y), label, fill=text_color, font=font, anchor="ms")
 
         return img
 
