@@ -164,7 +164,7 @@ class SegmentationViewer:
         self.default_params = {
             'use_otsu': False, 'manual_threshold': 110, 'enable_clahe': True,
             'clahe_clip': 5.0, 'clahe_tile': 32, 'open_kernel': 3, 'close_kernel': 5,
-            'open_iter': 3, 'close_iter': 2, 'min_area': 67, 'watershed_dilate': 15,
+            'open_iter': 3, 'close_iter': 2, 'min_area': 67, 'watershed_dilate': 20,
             'fluor_brightness': 2.0, 'fluor_gamma': 0.5, 'show_labels': True,
             'label_font_size': 20, 'arrow_length': 60, 'label_offset': 15,
             'min_fluor_per_area': 10, 'show_scale_bar': True,
@@ -1701,7 +1701,7 @@ class SegmentationViewer:
                 self.params['use_otsu'].set(False)
                 self.params['manual_threshold'].set(max(5, val - 18))
                 self.params['min_area'].set(int(area * 0.75))
-                self.params['watershed_dilate'].set(14)
+                self.params['watershed_dilate'].set(20)
                 for k in ['use_otsu', 'manual_threshold', 'min_area', 'watershed_dilate']:
                     if k in self.entries:
                         self.entries[k].delete(0, tk.END)
@@ -1765,7 +1765,7 @@ class SegmentationViewer:
         rng = {
             'manual_threshold': (0, 255), 'clahe_clip': (1, 10), 'clahe_tile': (4, 32),
             'open_kernel': (1, 15), 'close_kernel': (1, 15), 'open_iter': (1, 5),
-            'close_iter': (1, 5), 'min_area': (10, 500), 'watershed_dilate': (20, 60),
+            'close_iter': (1, 5), 'min_area': (10, 500), 'watershed_dilate': (15, 60),
             'fluor_brightness': (0.5, 5), 'fluor_gamma': (0.2, 2),
             'label_font_size': (10, 60), 'arrow_length': (20, 100),
             'label_offset': (5, 50), 'min_fluor_per_area': (0, 255),
@@ -1828,8 +1828,8 @@ class SegmentationViewer:
         lf.pack(fill=tk.X, pady=(0, 5))
         
         self.add_entry_with_progress(lf, "Watershed Dilate:", 
-                                     "Watershed marker dilation (20-60)",
-                                     self.params['watershed_dilate'], 20, 60)
+                                     "Watershed marker dilation (15-60)",
+                                     self.params['watershed_dilate'], 15, 60)
         self.add_entry_with_progress(lf, "Min Area (px²):", 
                                      "Minimum bacteria area in pixels (10-500)",
                                      self.params['min_area'], 10, 500)
