@@ -9,7 +9,8 @@ from scipy.ndimage import gaussian_filter
 from skimage import exposure
 from skimage.filters import threshold_otsu
 from skimage.morphology import binary_opening, remove_small_objects, disk
-from skimage.measure import find_contours
+from skimage.measure import find_contours, label, regionprops_table
+import pandas as pd
 
 from register_dataset import ImagePairRecord
 
@@ -283,3 +284,127 @@ def extract_contours(
     contours = find_contours(mask.astype(float), level=level)
     contours = [c for c in contours if len(c) >= min_length]
     return contours
+
+
+# ---------------------------------------------------------------------------
+# Particle measurement: count, size in BF, intensity in BF & FLUO
+# ---------------------------------------------------------------------------
+
+def measure_particles(
+    rec: ImagePairRecord,
+    min_area_px: int = 20,
+) -> Tuple[pd.DataFrame, np.ndarray]:
+    """
+    Segment particles from the FLUO channel and measure their geometric properties
+    (size/shape) and intensity in both BF and FLUO.
+
+    Returns
+    -------
+    df : pd.DataFrame
+        One row per particle with columns including:
+          - label
+          - area_px, area_um2
+          - equivalent_diameter_px, equivalent_diameter_um
+          - major_axis_length_px, major_axis_length_um
+          - minor_axis_length_px, minor_axis_length_um
+          - eccentricity
+          - bf_mean_intensity, bf_max_intensity
+          - fluo_mean_intensity, fluo_max_intensity
+
+    labeled_mask : np.ndarray
+        2D integer array where 0 = background, 1..N = particles.
+    """
+    # 1) Load raw images
+    bf_raw = tiff.imread(rec.bf_path)
+    fluo_raw = tiff.imread(rec.fluo_path)
+
+    # 2) Preprocess FLUO for segmentation
+    fluo_proc = preprocess_fluo_for_seg(rec)
+
+    # 3) Binary mask from FLUO (primary segmentation)
+    mask = segment_particles_from_fluo(fluo_proc, min_area_px=min_area_px)
+
+    # 4) Label connected components; ignore num_features to keep type clear
+    labeled_raw = label(mask, return_num=True)
+    if isinstance(labeled_raw, tuple):
+        labeled, _ = labeled_raw
+    else:
+        labeled = labeled_raw
+    # hint for Pylance
+    assert isinstance(labeled, np.ndarray)
+
+    # 5) BF and FLUO intensity images aligned with mask, in [0,1]
+    bf_img = bf_to_float01(bf_raw, rec)
+    if bf_img.ndim == 3:
+        bf_img = bf_img.mean(axis=-1)
+
+    fluo_img = fluo_proc
+    if fluo_img.ndim == 3:
+        fluo_img = fluo_img.mean(axis=-1)
+
+    # 6) Geometric features
+    props_geom = regionprops_table(
+        labeled,
+        intensity_image=None,
+        properties=(
+            "label",
+            "area",
+            "equivalent_diameter",
+            "major_axis_length",
+            "minor_axis_length",
+            "eccentricity",
+        ),
+    )
+    df_geom = pd.DataFrame(props_geom)
+
+    if df_geom.empty:
+        # Return an empty DataFrame and the labeled mask
+        return df_geom, labeled
+
+    # 7) BF intensity features
+    props_bf = regionprops_table(
+        labeled,
+        intensity_image=bf_img.astype(np.float32),
+        properties=("label", "mean_intensity", "max_intensity"),
+    )
+    df_bf = pd.DataFrame(props_bf).rename(
+        columns={
+            "mean_intensity": "bf_mean_intensity",
+            "max_intensity": "bf_max_intensity",
+        }
+    )
+
+    # 8) FLUO intensity features
+    props_fluo = regionprops_table(
+        labeled,
+        intensity_image=fluo_img.astype(np.float32),
+        properties=("label", "mean_intensity", "max_intensity"),
+    )
+    df_fluo = pd.DataFrame(props_fluo).rename(
+        columns={
+            "mean_intensity": "fluo_mean_intensity",
+            "max_intensity": "fluo_max_intensity",
+        }
+    )
+
+    # 9) Merge
+    df = (
+        df_geom
+        .merge(df_bf, on="label", how="left")
+        .merge(df_fluo, on="label", how="left")
+    )
+
+    # 10) Convert to physical units if pixel_size_um is known
+    px_size = rec.pixel_size_um
+    df["area_px"] = df["area"].astype(float)
+    df["equivalent_diameter_px"] = df["equivalent_diameter"].astype(float)
+    df["major_axis_length_px"] = df["major_axis_length"].astype(float)
+    df["minor_axis_length_px"] = df["minor_axis_length"].astype(float)
+
+    if px_size is not None:
+        df["area_um2"] = df["area_px"] * (px_size ** 2)
+        df["equivalent_diameter_um"] = df["equivalent_diameter_px"] * px_size
+        df["major_axis_length_um"] = df["major_axis_length_px"] * px_size
+        df["minor_axis_length_um"] = df["minor_axis_length_px"] * px_size
+
+    return df, labeled
