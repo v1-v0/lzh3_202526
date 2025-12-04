@@ -51,8 +51,6 @@ from typing import List, Optional, TypedDict
 import re
 import xml.etree.ElementTree as ET
 
-from phase2 import core
-
 
 # ---------------------------------------------------------------------------
 # Data structure
@@ -63,12 +61,17 @@ class CoreMeta(TypedDict):
     field_length_um_x: float
     field_length_um_y: float
 
+
 class PropertiesMeta(TypedDict, total=False):
     objective_name: str | None
     numerical_aperture: float | None
     optical_res_xy_um: float | None
     exposure_bf_s: float | None
     exposure_fluo_s: float | None
+    # Leica viewer scaling
+    bit_depth: int | None
+    channel_scaling: list[dict]  # [{'black_norm': float, 'white_norm': float, 'gamma': float}, ...]
+
 
 @dataclass
 class ImagePairRecord:
@@ -93,6 +96,10 @@ class ImagePairRecord:
     exposure_bf_s: Optional[float]
     exposure_fluo_s: Optional[float]
 
+    # Leica viewer scaling metadata
+    bit_depth: Optional[int] = None
+    channel_scaling: Optional[list[dict]] = None
+
 
 # ---------------------------------------------------------------------------
 # XML parsers
@@ -102,7 +109,8 @@ def parse_core_xml(path: Path) -> Optional[CoreMeta]:
     """
     Parse Leica '<name>.xml' to get pixel size and field lengths.
 
-    The compact XML encodes:
+    The compact XML encodes e.g.:
+
       <Dimensions>
         <DimensionDescription DimID="1"
                               NumberOfElements="1200"
@@ -150,7 +158,7 @@ def parse_core_xml(path: Path) -> Optional[CoreMeta]:
         "field_length_um_x": length_x_m * 1e6,
         "field_length_um_y": length_y_m * 1e6,
     }
-    
+
     return core_info
 
 
@@ -161,12 +169,15 @@ def parse_properties_xml(path: Path) -> PropertiesMeta:
       - numerical aperture
       - optical resolution XY
       - exposure times for BF and FLUO
+      - bit depth
+      - Leica viewer scaling (per-channel black/white/gamma in normalized units)
 
     Returns a dict with keys:
       objective_name, numerical_aperture,
-      optical_res_xy_um, exposure_bf_s, exposure_fluo_s
+      optical_res_xy_um, exposure_bf_s, exposure_fluo_s,
+      bit_depth, channel_scaling
 
-    Missing values are returned as None.
+    Missing values are returned as None or empty list.
     """
     try:
         root = ET.parse(path).getroot()
@@ -178,7 +189,7 @@ def parse_properties_xml(path: Path) -> PropertiesMeta:
     if img is None:
         return {}
 
-    # Objective / NA
+    # Objective / NA ---------------------------------------------------------
     atld = img.find(".//ATLCameraSettingDefinition")
     objective_name: Optional[str] = None
     numerical_aperture: Optional[float] = None
@@ -191,7 +202,7 @@ def parse_properties_xml(path: Path) -> PropertiesMeta:
         except ValueError:
             numerical_aperture = None
 
-    # Optical resolution XY (first channel)
+    # Optical resolution XY (first channel) ----------------------------------
     optical_res_xy_um: Optional[float] = None
     ch = img.find(".//ImageDescription/Channels/ChannelDescription")
     if ch is not None:
@@ -203,7 +214,17 @@ def parse_properties_xml(path: Path) -> PropertiesMeta:
             except ValueError:
                 optical_res_xy_um = None
 
-    # Exposure times from WideFieldChannelInfo
+    # Bit depth from ChannelDescription Resolution ---------------------------
+    bit_depth: Optional[int] = None
+    if ch is not None:
+        res = ch.attrib.get("Resolution")
+        if res is not None:
+            try:
+                bit_depth = int(res)
+            except ValueError:
+                bit_depth = None
+
+    # Exposure times from WideFieldChannelInfo -------------------------------
     exposure_bf_s: Optional[float] = None
     exposure_fluo_s: Optional[float] = None
 
@@ -215,7 +236,12 @@ def parse_properties_xml(path: Path) -> PropertiesMeta:
 
         token = exp.split()[0]
         try:
-            exp_s = float(token) / 1000.0  # ms -> s
+            val = float(token)
+            # Heuristic: values > 10 are probably in ms, otherwise seconds
+            if val > 10:
+                exp_s = val / 1000.0
+            else:
+                exp_s = val
         except ValueError:
             exp_s = None
 
@@ -224,12 +250,32 @@ def parse_properties_xml(path: Path) -> PropertiesMeta:
         elif method == "FLUO" and exposure_fluo_s is None:
             exposure_fluo_s = exp_s
 
+    # Leica viewer scaling (ChannelScalingInfo) ------------------------------
+    channel_scaling: list[dict] = []
+    for csi in img.findall(".//Attachment[@Name='ViewerScaling']//ChannelScalingInfo"):
+        try:
+            white = float(csi.attrib.get("WhiteValue", ""))
+            black = float(csi.attrib.get("BlackValue", ""))
+            gamma = float(csi.attrib.get("GammaValue", "1"))
+        except (TypeError, ValueError):
+            continue
+
+        channel_scaling.append(
+            {
+                "black_norm": black,
+                "white_norm": white,
+                "gamma": gamma,
+            }
+        )
+
     return {
         "objective_name": objective_name,
         "numerical_aperture": numerical_aperture,
         "optical_res_xy_um": optical_res_xy_um,
         "exposure_bf_s": exposure_bf_s,
         "exposure_fluo_s": exposure_fluo_s,
+        "bit_depth": bit_depth,
+        "channel_scaling": channel_scaling,
     }
 
 
@@ -241,24 +287,6 @@ def register_dataset(folder: str | Path) -> List[ImagePairRecord]:
     """
     Scan a single dataset folder (e.g. 'source/10', 'source/11', 'source/16', 'source/19')
     and register BF, FLUO and metadata files.
-
-    Rules:
-      - Dataset id = folder name (e.g. '10', '11', '16', '19').
-      - BF files are all files ending with '_ch00.tif'.
-      - For each BF filename of the form:
-
-            '<anything...> <last_number>_ch00.tif'
-
-        we:
-          - use <last_number> as index
-          - use '<anything...> <last_number>' (i.e. the base name without
-            '_ch00.tif') as pair_name.
-
-    Examples:
-      '10 P 1_ch00.tif'          -> pair_name: '10 P 1'
-      '11 N NO 3_ch00.tif'       -> pair_name: '11 N NO 3'
-      '16 P DAY0 5_ch00.tif'     -> pair_name: '16 P DAY0 5'
-      'Day 1 19 N NO 1_ch00.tif' -> pair_name: 'Day 1 19 N NO 1'
     """
     folder = Path(folder)
     dataset_name = folder.name
@@ -272,8 +300,6 @@ def register_dataset(folder: str | Path) -> List[ImagePairRecord]:
 
     # Pattern:
     #   ^(.*)\s(\d+)_ch00\.tif$
-    #   group(1): "anything..." before the last space+number
-    #   group(2): last number before _ch00.tif  (index)
     pattern = re.compile(r"^(.*)\s(\d+)_ch00\.tif$")
 
     records: List[ImagePairRecord] = []
@@ -284,8 +310,8 @@ def register_dataset(folder: str | Path) -> List[ImagePairRecord]:
             # Not a recognized BF naming pattern; skip it
             continue
 
-        prefix = m.group(1)             # e.g. '10 P', '11 N NO', 'Day 1 19 N NO'
-        pair_index = int(m.group(2))    # e.g. 1, 2, 3, ...
+        prefix = m.group(1)
+        pair_index = int(m.group(2))
 
         # pair_name is simply "<prefix> <index>" i.e. base name without _ch00.tif
         pair_name = f"{prefix} {pair_index}"
@@ -320,6 +346,8 @@ def register_dataset(folder: str | Path) -> List[ImagePairRecord]:
         optical_res_xy_um: Optional[float] = None
         exposure_bf_s: Optional[float] = None
         exposure_fluo_s: Optional[float] = None
+        bit_depth: Optional[int] = None
+        channel_scaling: Optional[list[dict]] = None
 
         # Geometry from core XML
         if meta_core is not None:
@@ -337,6 +365,8 @@ def register_dataset(folder: str | Path) -> List[ImagePairRecord]:
             optical_res_xy_um = props_info.get("optical_res_xy_um")
             exposure_bf_s = props_info.get("exposure_bf_s")
             exposure_fluo_s = props_info.get("exposure_fluo_s")
+            bit_depth = props_info.get("bit_depth")
+            channel_scaling = props_info.get("channel_scaling")
 
         records.append(
             ImagePairRecord(
@@ -355,6 +385,8 @@ def register_dataset(folder: str | Path) -> List[ImagePairRecord]:
                 optical_res_xy_um=optical_res_xy_um,
                 exposure_bf_s=exposure_bf_s,
                 exposure_fluo_s=exposure_fluo_s,
+                bit_depth=bit_depth,
+                channel_scaling=channel_scaling,
             )
         )
 
@@ -369,7 +401,6 @@ def _find_fluo_file(folder: Path, pair_name: str) -> Optional[Path]:
 
     Fallback patterns can be extended if your naming varies.
     """
-    # Primary expected name
     fluo = folder / f"{pair_name}_ch01.tif"
     if fluo.exists():
         return fluo
@@ -391,13 +422,6 @@ def _find_fluo_file(folder: Path, pair_name: str) -> Optional[Path]:
 def register_single_dataset(source_root: str | Path, dataset_id: str | int) -> List[ImagePairRecord]:
     """
     Convenience wrapper: register exactly one dataset folder under source_root.
-
-    Equivalent to:
-        register_dataset(source_root / <dataset_id>)
-
-    Metadata handling is the same as register_dataset:
-    - expects MetaData/<pair_name>.xml
-    - expects MetaData/<pair_name>_Properties.xml
     """
     source_root = Path(source_root)
     ds_folder = source_root / str(dataset_id)
@@ -406,7 +430,7 @@ def register_single_dataset(source_root: str | Path, dataset_id: str | int) -> L
 
 def register_all_datasets(source_root: str | Path) -> List[ImagePairRecord]:
     """
-    Scan all numeric subfolders under 'source_root' and return a flat list
+    Scan all subfolders under 'source_root' and return a flat list
     of ImagePairRecord.
     """
     source_root = Path(source_root)
@@ -446,7 +470,6 @@ def _check_registered_files(records: List[ImagePairRecord]) -> None:
 
 
 if __name__ == "__main__":
-    # Assume script is in project root: project_root / "source"
     project_root = Path.cwd()
     source_root = project_root / "source"
 
@@ -465,6 +488,8 @@ if __name__ == "__main__":
         print("  objective    :", r.objective_name)
         print("  NA           :", r.numerical_aperture)
         print("  exposure BF/FLUO (s):", r.exposure_bf_s, r.exposure_fluo_s)
+        print("  bit_depth    :", r.bit_depth)
+        print("  channel_scaling:", r.channel_scaling)
 
     print()
     _check_registered_files(records)
