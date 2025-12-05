@@ -296,8 +296,12 @@ def register_dataset(folder: str | Path) -> List[ImagePairRecord]:
         raise FileNotFoundError(f"Dataset folder not found: {folder}")
 
     # All BF files end with _ch00.tif
-    bf_files = sorted(folder.glob("*_ch00.tif"))
-
+    bf_files = sorted(
+        
+        f for f in folder.glob("*_ch00.tif")
+        if not f.name.startswith("._")
+    )
+    
     # Pattern:
     #   ^(.*)\s(\d+)_ch00\.tif$
     pattern = re.compile(r"^(.*)\s(\d+)_ch00\.tif$")

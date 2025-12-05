@@ -174,6 +174,12 @@ pip install opencv-python pillow numpy scipy pandas openpyxl
 # Optional: Histogram visualization (recommended)
 pip install matplotlib
 
+pip install scikit-image
+pip install tifffile
+pip install imagecodecs
+
+
+
 # Tkinter usually bundled with Python
 # If missing: sudo apt-get install python3-tk (Linux)
 ```

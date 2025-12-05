@@ -8,7 +8,7 @@ from tkinter import messagebox
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
-from openpyxl.drawing.image import Image as XLImage
+import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from PIL import Image
@@ -51,6 +51,9 @@ def _get_stats_as_dataframe(viewer: Any) -> pd.DataFrame:
 def _get_histogram_png_bytes(viewer: Any) -> bytes | None:
     """
     Render viewer.histo_fig into PNG bytes, or None if figure is missing.
+
+    This captures the 3-panel histogram (Intensity/Area, Total Fluo,
+    Eq. diameter) exactly as shown in the GUI.
     """
     fig = getattr(viewer, "histo_fig", None)
     if fig is None:
@@ -64,6 +67,10 @@ def _get_histogram_png_bytes(viewer: Any) -> bytes | None:
 def _get_display_images(viewer: Any) -> dict[str, Image.Image]:
     """
     Get the four main display PIL images from viewer for export.
+
+    These are exactly the images currently displayed in the GUI panes,
+    including contours, rank labels, arrows, and scale bar
+    (if enabled when update_images was last called).
 
     Keys:
       - 'BF_raw_top'
@@ -290,6 +297,10 @@ def export_current_view(viewer: Any) -> None:
       - 'BF Images' : brightfield images (A1, Q1; at most two images)
       - 'FLUO Images': fluorescence images (A1, Q1; at most two images)
       - 'Spec'      : metadata/spec summary
+
+    The images exported are exactly those shown in the GUI (including
+    scale bar and contour labels). The histogram is the same 3-panel
+    figure (Fluo/Area, Total Fluo, Eq. diameter) displayed in the GUI.
     """
     if viewer.current_record is None:
         messagebox.showwarning("Export", "No image pair selected.")
@@ -306,6 +317,8 @@ def export_current_view(viewer: Any) -> None:
     ws_stats = cast(Worksheet, _active)
     ws_stats.title = "Statistics"
 
+    from openpyxl.drawing.image import Image as XLImage  # import here for clarity
+
     # ----------------- Statistics sheet -----------------
     if not df_stats.empty:
         # Write headers
@@ -319,7 +332,7 @@ def export_current_view(viewer: Any) -> None:
                 except Exception:
                     ws_stats.cell(row=r_idx, column=c_idx, value=str(val))
 
-        # Histogram to the right
+        # Histogram to the right (3-panel, including eq_diam_px distribution)
         if hist_png_bytes is not None:
             last_col = len(df_stats.columns)
             hist_col = last_col + 2  # one empty col, then histogram
@@ -365,6 +378,9 @@ def export_current_view(viewer: Any) -> None:
         Place up to two images on the sheet:
           - first at A1 (col 1)
           - second at Q1 (col 17)
+
+        The images are taken directly from the viewer's cached PIL images,
+        which already include contours, labels and scale bar.
         """
         for i in range(1, 50):
             sheet.row_dimensions[i].height = 20.0
@@ -375,6 +391,8 @@ def export_current_view(viewer: Any) -> None:
             ("A1", 1),   # first image
             ("Q1", 17),  # second image
         ]
+
+        from openpyxl.drawing.image import Image as XLImage  # local import
 
         for idx, name in enumerate(keys):
             if idx >= len(positions):
