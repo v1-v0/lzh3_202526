@@ -1,6 +1,10 @@
+from typing import Any
+import re
+from openpyxl.utils import get_column_letter
 from pathlib import Path
 import json
 import threading
+import os
 import tkinter as tk
 from tkinter import ttk, messagebox, colorchooser
 
@@ -15,6 +19,28 @@ from preprocess import (
     segment_particles_from_fluo,
     extract_contours,
 )
+
+def safe_column_letter(cell: Any) -> str:
+    """
+    Return the column letter for any openpyxl cell-like object (Cell or MergedCell).
+    Uses numeric .column when available, otherwise parses .coordinate.
+    """
+    col = getattr(cell, "column", None)
+    if isinstance(col, int):
+        return get_column_letter(col)
+
+    coord = getattr(cell, "coordinate", None)
+    if isinstance(coord, str):
+        m = re.match(r"([A-Za-z]+)", coord)
+        if m:
+            return m.group(1)
+
+    col_letter = getattr(cell, "column_letter", None)
+    if isinstance(col_letter, str):
+        return col_letter
+
+    raise ValueError("Cannot determine column letter for cell: %r" % (cell,))
+
 
 # ---------------------------------------------------------------------------
 # Pillow resampling compatibility
@@ -57,12 +83,7 @@ class BFFluoViewer(tk.Tk):
         # State
         self.current_record: ImagePairRecord | None = None
         self.show_scaled = tk.BooleanVar(value=True)
-        # Default bar length = 5 µm
         self.bar_length_um = tk.DoubleVar(value=5.0)
-
-        # Mode:
-        # "auto": raw only (top and bottom identical)
-        # "seg-preproc-contours": raw on top, enhanced+contours on bottom
         self.contrast_mode = tk.StringVar(value="seg-preproc-contours")
 
         # Tk image refs (four panes)
@@ -77,10 +98,8 @@ class BFFluoViewer(tk.Tk):
         self._bf_bottom_pil: Image.Image | None = None
         self._fluo_bottom_pil: Image.Image | None = None
 
-        # Cache for contours per image pair
+        # Cache for contours and statistics per image pair
         self._seg_contour_cache: dict[tuple[str, str], list[np.ndarray]] = {}
-
-        # Cache for statistics per image pair
         self._stats_cache: dict[tuple[str, str], tuple[list[dict], set[int]]] = {}
 
         # Contour config
@@ -101,7 +120,7 @@ class BFFluoViewer(tk.Tk):
         self._refresh_thread: threading.Thread | None = None
         self._refresh_running = False
 
-        # Matplotlib figure/axes for histograms
+        # Matplotlib figure/axes for histograms (GUI)
         self.histo_fig: Figure | None = None
         self.ax_pdf_intensity_per_area = None
         self.ax_pdf_total_intensity = None
@@ -110,6 +129,10 @@ class BFFluoViewer(tk.Tk):
 
         # Metadata widgets for Metadata tab
         self._meta_widgets: dict[str, ttk.Label] = {}
+
+        # Cache of latest stats for current record (for export)
+        self._current_stats_rows: list[dict] = []
+        self._current_highlighted_idxs: set[int] = set()
 
         # Load saved contour config
         self._load_contour_config_from_file()
@@ -120,7 +143,6 @@ class BFFluoViewer(tk.Tk):
 
         # Resize handling
         self.bind("<Configure>", self._on_root_configure)
-
         self.protocol("WM_DELETE_WINDOW", self.on_exit)
 
     # ------------------------------------------------------------------ Config I/O
@@ -183,34 +205,62 @@ class BFFluoViewer(tk.Tk):
         left_frame = ttk.Frame(root_pane, width=380)
         root_pane.add(left_frame, weight=0)
 
-        # ------------------ Image pairs list -------------------
-        ttk.Label(left_frame, text="Image pairs").pack(anchor=tk.W, padx=5, pady=(5, 0))
+        # ==========================================================
+        # LEFT PANEL
+        # ==========================================================
 
-        self.listbox = tk.Listbox(left_frame, height=18)
-        self.listbox.pack(fill=tk.BOTH, expand=False, padx=5, pady=5)
+        # 1) Dataset selection
+        dataset_frame = ttk.LabelFrame(left_frame, text="Dataset selection")
+        dataset_frame.pack(fill=tk.BOTH, padx=5, pady=(5, 5), expand=False)
+
+        ttk.Label(dataset_frame, text="Image pairs (multi‑select):").pack(
+            anchor=tk.W, padx=5, pady=(3, 0)
+        )
+
+        self.listbox = tk.Listbox(
+            dataset_frame,
+            height=18,
+            selectmode=tk.EXTENDED,  # multi-select
+        )
+        self.listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.listbox.bind("<<ListboxSelect>>", self.on_select_pair)
 
-        # ------------------ Display options -------------------
+        select_btn_frame = ttk.Frame(dataset_frame)
+        select_btn_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
+
+        ttk.Button(
+            select_btn_frame,
+            text="Select all",
+            command=self._select_all_pairs,
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        ttk.Button(
+            select_btn_frame,
+            text="Clear selection",
+            command=self._clear_selection,
+        ).pack(side=tk.LEFT, padx=(0, 5))
+
+        # 2) Display options
         display_frame = ttk.LabelFrame(left_frame, text="Display options")
-        display_frame.pack(fill=tk.X, padx=5, pady=5)
+        display_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
 
         ttk.Checkbutton(
             display_frame,
             text="Show scale bar",
             variable=self.show_scaled,
             command=self.update_images,
-        ).pack(anchor=tk.W)
+        ).pack(anchor=tk.W, padx=5, pady=(5, 0))
 
         bar_frame = ttk.Frame(display_frame)
-        bar_frame.pack(anchor=tk.W, pady=2)
+        bar_frame.pack(anchor=tk.W, pady=2, padx=5)
         ttk.Label(bar_frame, text="Bar length (µm):").pack(side=tk.LEFT)
         ttk.Entry(bar_frame, width=6, textvariable=self.bar_length_um).pack(
             side=tk.LEFT
         )
 
-        ttk.Label(display_frame, text="Mode:").pack(anchor=tk.W, pady=(6, 0))
+        ttk.Label(display_frame, text="Mode:").pack(anchor=tk.W, pady=(6, 0), padx=5)
         rb_frame = ttk.Frame(display_frame)
-        rb_frame.pack(anchor=tk.W, pady=2)
+        rb_frame.pack(anchor=tk.W, pady=2, padx=5)
 
         ttk.Radiobutton(
             rb_frame,
@@ -228,39 +278,12 @@ class BFFluoViewer(tk.Tk):
             command=self.update_images,
         ).pack(anchor=tk.W)
 
-        # ------------------ Actions -------------------
-        actions_frame = ttk.LabelFrame(left_frame, text="Actions")
-        actions_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        ttk.Button(
-            actions_frame,
-            text="Refresh",
-            command=self.update_images,
-        ).pack(anchor=tk.W, pady=4)
-
-        # ------------------ Progress bar -------------------
-        progress_frame = ttk.Frame(left_frame)
-        progress_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
-
-        self.progress_label = ttk.Label(progress_frame, text="", foreground="gray")
-        self.progress_label.pack(anchor=tk.W)
-
-        self.progress_bar = ttk.Progressbar(
-            progress_frame,
-            mode="indeterminate",
-            length=200,
-        )
-        self.progress_bar.pack(fill=tk.X, pady=(2, 0))
-        self.progress_bar.stop()
-        self.progress_bar.pack_forget()
-
-        # ------------------ Contours configuration panel -------------------
+        # 3) Contours configuration
         contour_frame = ttk.LabelFrame(left_frame, text="Contours configuration")
-        contour_frame.pack(fill=tk.X, padx=5, pady=5)
+        contour_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
 
-        # Min area
         row1 = ttk.Frame(contour_frame)
-        row1.pack(fill=tk.X, pady=2)
+        row1.pack(fill=tk.X, pady=2, padx=5)
         ttk.Label(row1, text="Min particle area (px):").pack(side=tk.LEFT)
         ttk.Spinbox(
             row1,
@@ -271,9 +294,8 @@ class BFFluoViewer(tk.Tk):
             command=self._on_contour_config_changed,
         ).pack(side=tk.LEFT, padx=4)
 
-        # Min length
         row2 = ttk.Frame(contour_frame)
-        row2.pack(fill=tk.X, pady=2)
+        row2.pack(fill=tk.X, pady=2, padx=5)
         ttk.Label(row2, text="Min contour length:").pack(side=tk.LEFT)
         ttk.Spinbox(
             row2,
@@ -284,9 +306,8 @@ class BFFluoViewer(tk.Tk):
             command=self._on_contour_config_changed,
         ).pack(side=tk.LEFT, padx=4)
 
-        # Line width
         row3 = ttk.Frame(contour_frame)
-        row3.pack(fill=tk.X, pady=2)
+        row3.pack(fill=tk.X, pady=2, padx=5)
         ttk.Label(row3, text="Line width (px):").pack(side=tk.LEFT)
         ttk.Spinbox(
             row3,
@@ -297,9 +318,8 @@ class BFFluoViewer(tk.Tk):
             command=self._on_contour_config_changed,
         ).pack(side=tk.LEFT, padx=4)
 
-        # Main contour color picker
         row4 = ttk.Frame(contour_frame)
-        row4.pack(fill=tk.X, pady=2)
+        row4.pack(fill=tk.X, pady=2, padx=5)
         ttk.Label(row4, text="Main color:").pack(side=tk.LEFT)
 
         self.color_preview = tk.Label(
@@ -313,9 +333,8 @@ class BFFluoViewer(tk.Tk):
             command=self._choose_contour_color,
         ).pack(side=tk.LEFT)
 
-        # Middle range percent configuration
         row5 = ttk.Frame(contour_frame)
-        row5.pack(fill=tk.X, pady=2)
+        row5.pack(fill=tk.X, pady=2, padx=5)
         ttk.Label(
             row5,
             text="Middle range from (% of rank):",
@@ -330,7 +349,7 @@ class BFFluoViewer(tk.Tk):
         ).pack(side=tk.LEFT, padx=4)
 
         row6 = ttk.Frame(contour_frame)
-        row6.pack(fill=tk.X, pady=2)
+        row6.pack(fill=tk.X, pady=2, padx=5)
         ttk.Label(
             row6,
             text="Middle range to   (% of rank):",
@@ -344,9 +363,8 @@ class BFFluoViewer(tk.Tk):
             command=self._on_middle_range_changed,
         ).pack(side=tk.LEFT, padx=4)
 
-        # Middle‑range contour color picker
         row7 = ttk.Frame(contour_frame)
-        row7.pack(fill=tk.X, pady=2)
+        row7.pack(fill=tk.X, pady=2, padx=5)
         ttk.Label(
             row7,
             text="Middle-range color:",
@@ -363,9 +381,8 @@ class BFFluoViewer(tk.Tk):
             command=self._choose_middle_contour_color,
         ).pack(side=tk.LEFT)
 
-        # Arrow length
         row8 = ttk.Frame(contour_frame)
-        row8.pack(fill=tk.X, pady=2)
+        row8.pack(fill=tk.X, pady=2, padx=5)
         ttk.Label(row8, text="Arrow length (px):").pack(side=tk.LEFT)
         ttk.Spinbox(
             row8,
@@ -376,21 +393,49 @@ class BFFluoViewer(tk.Tk):
             command=self._on_contour_config_changed,
         ).pack(side=tk.LEFT, padx=4)
 
-        # Save config button
         ttk.Button(
             contour_frame,
             text="Save contours config",
             command=self._save_contour_config_to_file,
-        ).pack(anchor=tk.W, pady=(6, 2))
+        ).pack(anchor=tk.W, pady=(6, 2), padx=5)
 
-        # ------------------ Exit button at bottom -------------------
+        # 4) Export
+        export_frame = ttk.LabelFrame(left_frame, text="Export")
+        export_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
+
+        ttk.Button(
+            export_frame,
+            text="Export selected to Excel",
+            command=self.export_selected_to_excel,
+        ).pack(anchor=tk.W, padx=5, pady=5)
+
+        # 5) Progress bar
+        progress_frame = ttk.Frame(left_frame)
+        progress_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
+
+        self.progress_label = ttk.Label(progress_frame, text="", foreground="gray")
+        self.progress_label.pack(anchor=tk.W)
+
+        self.progress_bar = ttk.Progressbar(
+            progress_frame,
+            mode="indeterminate",
+            length=200,
+        )
+        self.progress_bar.pack(fill=tk.X, pady=(2, 0))
+        self.progress_bar.stop()
+        self.progress_bar.pack_forget()
+
+        # 6) Exit
         ttk.Button(
             left_frame,
             text="Exit",
             command=self.on_exit,
-        ).pack(anchor=tk.W, padx=5, pady=8)
+        ).pack(anchor=tk.W, padx=10, pady=8)
 
-        # ------------------ Right side: Notebook with three tabs -------------------
+        # ==========================================================
+        # RIGHT NOTEBOOK
+        # ==========================================================
+
         right_notebook = ttk.Notebook(root_pane)
         root_pane.add(right_notebook, weight=1)
         self._right_notebook = right_notebook
@@ -404,7 +449,6 @@ class BFFluoViewer(tk.Tk):
         images_tab.columnconfigure(0, weight=1)
         images_tab.columnconfigure(1, weight=1)
 
-        # Top-left: BF original
         bf_raw_frame = ttk.Frame(images_tab)
         bf_raw_frame.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
         bf_raw_frame.rowconfigure(1, weight=1)
@@ -416,7 +460,6 @@ class BFFluoViewer(tk.Tk):
         self.bf_raw_canvas = tk.Label(bf_raw_frame, bg="white")
         self.bf_raw_canvas.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
 
-        # Top-right: FLUO original
         fluo_raw_frame = ttk.Frame(images_tab)
         fluo_raw_frame.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
         fluo_raw_frame.rowconfigure(1, weight=1)
@@ -428,7 +471,6 @@ class BFFluoViewer(tk.Tk):
         self.fluo_raw_canvas = tk.Label(fluo_raw_frame, bg="white")
         self.fluo_raw_canvas.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
 
-        # Bottom-left: BF enhanced + contours
         bf_seg_frame = ttk.Frame(images_tab)
         bf_seg_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
         bf_seg_frame.rowconfigure(1, weight=1)
@@ -442,7 +484,6 @@ class BFFluoViewer(tk.Tk):
         self.bf_seg_canvas = tk.Label(bf_seg_frame, bg="white")
         self.bf_seg_canvas.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
 
-        # Bottom-right: FLUO enhanced + contours
         fluo_seg_frame = ttk.Frame(images_tab)
         fluo_seg_frame.grid(row=1, column=1, sticky="nsew", padx=5, pady=5)
         fluo_seg_frame.rowconfigure(1, weight=1)
@@ -464,7 +505,6 @@ class BFFluoViewer(tk.Tk):
         stats_tab.rowconfigure(1, weight=1)
         stats_tab.columnconfigure(0, weight=1)
 
-        # Upper part: table
         table_frame = ttk.Frame(stats_tab)
         table_frame.grid(row=0, column=0, sticky="nsew")
         table_frame.rowconfigure(0, weight=1)
@@ -491,19 +531,18 @@ class BFFluoViewer(tk.Tk):
         vsb.grid(row=0, column=1, sticky="ns")
         self.stats_tree.configure(yscrollcommand=vsb.set)
 
-        # Headings
-        self.stats_tree.heading("idx", text="# (rank by Intensity / Area)")
-        self.stats_tree.heading("area_px", text="Area (px)")
-        self.stats_tree.heading("eq_diam_px", text="Eq. diameter (px)")
-        self.stats_tree.heading("total_intensity", text="Total Intensity (Fluo)")
+        self.stats_tree.heading("idx", text="Rank (by Intensity / Area)")
+        self.stats_tree.heading("area_px", text="Area [pixels]")
+        self.stats_tree.heading("eq_diam_px", text="Eq. diameter [pixels]")
         self.stats_tree.heading(
-            "intensity_per_area", text="Intensity / Area"
+            "total_intensity", text="Total fluo intensity [a.u.]"
+        )
+        self.stats_tree.heading(
+            "intensity_per_area", text="Fluo intensity / area [a.u./pixel]"
         )
 
-        # Tag for highlighted middle range
         self.stats_tree.tag_configure("highlight_middle", background="#ffffcc")
 
-        # Lower part: histograms (Counts)
         histo_frame = ttk.LabelFrame(stats_tab, text="Distributions (Counts)")
         histo_frame.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
         histo_frame.rowconfigure(0, weight=1)
@@ -522,10 +561,9 @@ class BFFluoViewer(tk.Tk):
         right_notebook.add(meta_tab, text="Metadata")
         self._build_metadata_tab(meta_tab)
 
-    # ------------------------------------------------------------------ Listbox population
+    # ------------------------------------------------------------------ Listbox helpers
 
     def _populate_listbox(self):
-        """Fill the left‑hand listbox with all registered image pairs."""
         self.listbox.delete(0, tk.END)
         for idx, rec in enumerate(self.records):
             label = f"{rec.dataset} :: {rec.pair_name}"
@@ -538,7 +576,15 @@ class BFFluoViewer(tk.Tk):
 
         self.current_record = None
 
-    # ------------------------------------------------------------------ Metadata tab UI
+    def _select_all_pairs(self):
+        self.listbox.select_set(0, tk.END)
+        self.on_select_pair()
+
+    def _clear_selection(self):
+        self.listbox.selection_clear(0, tk.END)
+        self.current_record = None
+
+    # ------------------------------------------------------------------ Metadata tab
 
     def _build_metadata_tab(self, parent: ttk.Frame):
         canvas = tk.Canvas(parent)
@@ -563,12 +609,10 @@ class BFFluoViewer(tk.Tk):
             row = ttk.Frame(scroll_frame)
             row.pack(fill="x", padx=16, pady=1)
             ttk.Label(row, text=label_text + ":").pack(side="left", anchor="w")
-            # NOTE: ttk.Label used consistently here
             val_lbl = ttk.Label(row, text="No metadata available", foreground="blue")
             val_lbl.pack(side="left", anchor="w", padx=(4, 0))
             self._meta_widgets[key] = val_lbl
 
-        # Image Dimensions & Resolution
         add_section("Image Dimensions & Resolution")
         add_row("img_size", "Image size (px)")
         add_row("phys_size", "Physical size (µm)")
@@ -576,7 +620,6 @@ class BFFluoViewer(tk.Tk):
         add_row("bit_depth", "Bit depth")
         add_row("n_channels", "Number of channels")
 
-        # Optical Configuration
         add_section("Optical Configuration")
         add_row("objective", "Objective")
         add_row("na", "Numerical Aperture (NA)")
@@ -584,7 +627,6 @@ class BFFluoViewer(tk.Tk):
         add_row("microscope", "Microscope")
         add_row("magnification", "Total magnification")
 
-        # Channel Information
         add_section("Channel 1 (Brightfield - \"New 1\")")
         add_row("ch1_contrast", "Contrast method")
         add_row("ch1_exposure", "Exposure (ms)")
@@ -601,92 +643,87 @@ class BFFluoViewer(tk.Tk):
         add_row("ch2_led", "LED wavelength / intensity")
         add_row("ch2_diaphragm", "Field/Aperture diaphragm")
 
-        # Stage & Focus
         add_section("Stage & Focus Information")
         add_row("stage_pos", "Stage position (X, Y) mm")
         add_row("z_pos", "Z position (mm)")
         add_row("z_mode", "Z-mode")
         add_row("autofocus", "Autofocus")
 
-        # Camera
         add_section("Camera Settings")
         add_row("camera", "Camera")
         add_row("gain", "Gain mode")
         add_row("temp", "Temperature (°C)")
         add_row("roi", "ROI")
 
-        # Display / Viewing
         add_section("Display / Viewing Settings")
         add_row("ch1_scaling", "Channel 1 scaling")
         add_row("ch2_scaling", "Channel 2 scaling")
 
     def _update_metadata_tab(self, rec: ImagePairRecord):
-        """
-        Fill metadata labels based on ImagePairRecord.
-        - If a concrete value is present in rec -> show it.
-        - Otherwise:
-            * where a reasonable range is known: show 'Typical: ...'
-            * else: 'No metadata available'
-        """
-
-        # --- Image size ---
-        w = getattr(rec, "img_width", None)
-        h = getattr(rec, "img_height", None)
-        if w is not None and h is not None:
-            self._meta_widgets["img_size"].config(text=f"{w} × {h}")
+        # Image size
+        if hasattr(rec, "img_width") and hasattr(rec, "img_height"):
+            w = getattr(rec, "img_width", None)
+            h = getattr(rec, "img_height", None)
+            if w is not None and h is not None:
+                self._meta_widgets["img_size"].config(text=f"{w} × {h}")
+            else:
+                self._meta_widgets["img_size"].config(
+                    text="No metadata available (typical: 1000–2000 px per side)"
+                )
         else:
             self._meta_widgets["img_size"].config(
                 text="No metadata available (typical: 1000–2000 px per side)"
             )
 
-        # --- Physical size ---
-        if getattr(rec, "field_length_um_x", None) is not None:
-            phys_x = rec.field_length_um_x
-            phys_y = rec.field_length_um_y
+        # Physical size
+        field_x = getattr(rec, "field_length_um_x", None)
+        field_y = getattr(rec, "field_length_um_y", None)
+        if field_x is not None and field_y is not None:
             self._meta_widgets["phys_size"].config(
-                text=f"{phys_x:.2f} × {phys_y:.2f}"
+                text=f"{field_x:.2f} × {field_y:.2f}"
             )
         else:
             self._meta_widgets["phys_size"].config(
                 text="No metadata available (example DMI8 field: 131–150 µm)"
             )
 
-        # --- Pixel size ---
-        if rec.pixel_size_um is not None:
-            px_nm = rec.pixel_size_um * 1000.0
+        # Pixel size
+        px_um = getattr(rec, "pixel_size_um", None)
+        if px_um is not None:
+            px_nm = px_um * 1000.0
             self._meta_widgets["pixel_size"].config(text=f"{px_nm:.1f}")
         else:
             self._meta_widgets["pixel_size"].config(
                 text="No metadata available (typical 60–120 nm/pixel at 100x)"
             )
 
-        # --- Bit depth ---
-        if rec.bit_depth is not None:
-            bd = rec.bit_depth
+        # Bit depth
+        bd = getattr(rec, "bit_depth", None)
+        if bd is not None:
+            max_val = 2**bd - 1
             self._meta_widgets["bit_depth"].config(
-                text=f"{bd}-bit (0–{2**bd-1})"
+                text=f"{bd}-bit (0–{max_val})"
             )
         else:
             self._meta_widgets["bit_depth"].config(
-                text="No metadata available (typical: 8–16‑bit; DMI8 example: 12‑bit)"
+                text="No metadata available (typical: 8–16-bit; example: 12-bit)"
             )
 
-        # --- Number of channels ---
-        # We do not rely on rec.n_channels (may not exist)
+        # Number of channels
         self._meta_widgets["n_channels"].config(
             text="No metadata available (this project typically uses 2 channels: BF & FLUO)"
         )
 
-        # --- Optical configuration ---
-        if rec.objective_name:
-            self._meta_widgets["objective"].config(text=rec.objective_name)
-        else:
-            self._meta_widgets["objective"].config(
-                text="No metadata available (typical: N PLAN 100x/1.25 Oil)"
-            )
+        # Optical configuration
+        objective_name = getattr(rec, "objective_name", None)
+        self._meta_widgets["objective"].config(
+            text=objective_name if objective_name else
+            "No metadata available (typical: N PLAN 100x/1.25 Oil)"
+        )
 
-        if rec.numerical_aperture is not None:
-            self._meta_widgets["na"].config(text=f"{rec.numerical_aperture:.2f}")
+        na_val = getattr(rec, "numerical_aperture", None)
+        if na_val is not None:
+            self._meta_widgets["na"].config(text=f"{na_val:.2f}")
         else:
             self._meta_widgets["na"].config(
                 text="No metadata available (typical NA for 100x oil: 1.25–1.4)"
@@ -704,19 +741,18 @@ class BFFluoViewer(tk.Tk):
             text="100x – assumed for this project"
         )
 
-        # --- Channel 1 (BF) ---
+        # Channel 1
         self._meta_widgets["ch1_contrast"].config(
             text="TL-BF (Transmitted Light BF) – assumed"
         )
-
-        if rec.exposure_bf_s is not None:
-            exp_bf_ms = rec.exposure_bf_s * 1000.0
+        exp_bf_s = getattr(rec, "exposure_bf_s", None)
+        if exp_bf_s is not None:
+            exp_bf_ms = exp_bf_s * 1000.0
             self._meta_widgets["ch1_exposure"].config(text=f"{exp_bf_ms:.0f}")
         else:
             self._meta_widgets["ch1_exposure"].config(
                 text="No metadata available (example: 138 ms)"
             )
-
         self._meta_widgets["ch1_tl_intensity"].config(
             text="No metadata available (example setting: 112)"
         )
@@ -727,17 +763,16 @@ class BFFluoViewer(tk.Tk):
             text="EMP_BF – typical brightfield cube (no explicit metadata)"
         )
 
-        # --- Channel 2 (FLUO) ---
+        # Channel 2
         self._meta_widgets["ch2_contrast"].config(text="FLUO – assumed")
-
-        if rec.exposure_fluo_s is not None:
-            exp_fl_ms = rec.exposure_fluo_s * 1000.0
+        exp_fl_s = getattr(rec, "exposure_fluo_s", None)
+        if exp_fl_s is not None:
+            exp_fl_ms = exp_fl_s * 1000.0
             self._meta_widgets["ch2_exposure"].config(text=f"{exp_fl_ms:.0f}")
         else:
             self._meta_widgets["ch2_exposure"].config(
                 text="No metadata available (example: 138 ms)"
             )
-
         self._meta_widgets["ch2_filter"].config(
             text="DFT51010 – typical for this project (no explicit metadata)"
         )
@@ -754,7 +789,7 @@ class BFFluoViewer(tk.Tk):
             text="No metadata available (field/aperture diaphragm not recorded)"
         )
 
-        # --- Stage & Focus ---
+        # Stage & Focus
         self._meta_widgets["stage_pos"].config(
             text="No metadata available (example: X = 61.62 mm, Y = 39.78 mm)"
         )
@@ -762,13 +797,13 @@ class BFFluoViewer(tk.Tk):
             text="No metadata available (example: 2.539 mm)"
         )
         self._meta_widgets["z_mode"].config(
-            text="No metadata available (example mode: z‑wide)"
+            text="No metadata available (example mode: z-wide)"
         )
         self._meta_widgets["autofocus"].config(
             text="No metadata available (example: Combined HSAF, channel 1, precision 2)"
         )
 
-        # --- Camera ---
+        # Camera
         self._meta_widgets["camera"].config(
             text="No metadata available (typical: Photometric Prime 95B)"
         )
@@ -782,10 +817,11 @@ class BFFluoViewer(tk.Tk):
             text="No metadata available (example: full frame, no cropping)"
         )
 
-        # --- Display / viewing scaling ---
-        if rec.channel_scaling and len(rec.channel_scaling) >= 2:
-            ch1 = rec.channel_scaling[0]
-            ch2 = rec.channel_scaling[1]
+        # Display / viewing: channel scaling
+        channel_scaling = getattr(rec, "channel_scaling", None)
+        if channel_scaling and len(channel_scaling) >= 2:
+            ch1 = channel_scaling[0]
+            ch2 = channel_scaling[1]
             self._meta_widgets["ch1_scaling"].config(
                 text=f"Black = {ch1.get('black_norm', 0):.2%}, "
                      f"White = {ch1.get('white_norm', 1):.2%}"
@@ -804,7 +840,7 @@ class BFFluoViewer(tk.Tk):
 
     # ------------------------------------------------------------------ Progress helpers
 
-    def _start_progress(self, text: str = "Refreshing…"):
+    def _start_progress(self, text: str = "Working…"):
         if self._refresh_running:
             return
         self._refresh_running = True
@@ -844,7 +880,6 @@ class BFFluoViewer(tk.Tk):
 
         self.middle_low_pct_var.set(low)
         self.middle_high_pct_var.set(high)
-
         self._on_contour_config_changed()
 
     def _choose_contour_color(self):
@@ -873,6 +908,7 @@ class BFFluoViewer(tk.Tk):
     def on_select_pair(self, event=None):
         sel = self.listbox.curselection()
         if not sel:
+            self.current_record = None
             return
         idx = sel[0]
         self.current_record = self.records[idx]
@@ -899,10 +935,8 @@ class BFFluoViewer(tk.Tk):
         low_pct = int(self.middle_low_pct_var.get())
         high_pct = int(self.middle_high_pct_var.get())
 
-        if low_pct < 0:
-            low_pct = 0
-        if high_pct > 100:
-            high_pct = 100
+        low_pct = max(0, min(low_pct, 100))
+        high_pct = max(0, min(high_pct, 100))
         if high_pct < low_pct:
             low_pct, high_pct = high_pct, low_pct
 
@@ -1056,6 +1090,8 @@ class BFFluoViewer(tk.Tk):
         bf_enh: np.ndarray,
         fluo_enh: np.ndarray,
     ) -> list[dict]:
+        """Measure features per contour and rank by intensity/area."""
+
         if bf_enh.ndim != 2:
             bf_enh_gray = bf_enh.mean(axis=-1)
         else:
@@ -1071,6 +1107,7 @@ class BFFluoViewer(tk.Tk):
 
         rows = []
         tmp_rows = []
+
         for local_idx, c in enumerate(contours):
             if c.shape[0] < 3:
                 continue
@@ -1173,7 +1210,6 @@ class BFFluoViewer(tk.Tk):
         mean_diam = float(eq_diam_px.mean()) if eq_diam_px.size > 0 else float("nan")
         std_diam = float(eq_diam_px.std(ddof=1)) if eq_diam_px.size > 1 else float("nan")
 
-        # 1) Histogram of intensity_per_area (counts)
         self.ax_pdf_intensity_per_area.hist(
             intensity_per_area,
             bins=30,
@@ -1185,7 +1221,6 @@ class BFFluoViewer(tk.Tk):
         self.ax_pdf_intensity_per_area.set_xlabel("Intensity / Area")
         self.ax_pdf_intensity_per_area.set_ylabel("Count")
 
-        # 2) Histogram of total intensity (counts)
         self.ax_pdf_total_intensity.hist(
             total_intensity,
             bins=30,
@@ -1197,7 +1232,6 @@ class BFFluoViewer(tk.Tk):
         self.ax_pdf_total_intensity.set_xlabel("Total intensity")
         self.ax_pdf_total_intensity.set_ylabel("Count")
 
-        # 3) Histogram of equivalent diameter (counts)
         self.ax_pdf_eq_diam.hist(
             eq_diam_px,
             bins=30,
@@ -1247,6 +1281,9 @@ class BFFluoViewer(tk.Tk):
         if highlighted_idx_set is None:
             highlighted_idx_set = set()
 
+        self._current_stats_rows = stats_rows[:]
+        self._current_highlighted_idxs = set(highlighted_idx_set)
+
         for iid in self.stats_tree.get_children():
             self.stats_tree.delete(iid)
 
@@ -1270,7 +1307,71 @@ class BFFluoViewer(tk.Tk):
 
         self._update_histograms(stats_rows)
 
-    # ------------------------------------------------------------------ Main refresh (threaded wrapper)
+    # ------------------------------------------------------------------ Histogram figure for export
+
+    def _create_histogram_figure_for_export(self, stats_rows: list[dict]) -> Figure:
+        """Create a matplotlib Figure with the 3 histograms for saving into Excel."""
+        fig = Figure(figsize=(6, 2.4), dpi=150)
+        ax1 = fig.add_subplot(1, 3, 1)
+        ax2 = fig.add_subplot(1, 3, 2)
+        ax3 = fig.add_subplot(1, 3, 3)
+
+        if not stats_rows:
+            ax1.set_title("Fluo / Area")
+            ax2.set_title("Total Fluo")
+            ax3.set_title("Eq. diameter (px)")
+            fig.tight_layout()
+            return fig
+
+        intensity_per_area = np.array(
+            [r["intensity_per_area"] for r in stats_rows], dtype=float
+        )
+        total_intensity = np.array(
+            [r["total_intensity"] for r in stats_rows], dtype=float
+        )
+        eq_diam_px = np.array([r["eq_diam_px"] for r in stats_rows], dtype=float)
+
+        mean_diam = float(eq_diam_px.mean()) if eq_diam_px.size > 0 else float("nan")
+        std_diam = float(eq_diam_px.std(ddof=1)) if eq_diam_px.size > 1 else float("nan")
+
+        ax1.hist(intensity_per_area, bins=30, color="tab:blue", alpha=0.7)
+        ax1.set_title("Fluo / Area")
+        ax1.set_xlabel("Intensity / Area")
+        ax1.set_ylabel("Count")
+
+        ax2.hist(total_intensity, bins=30, color="tab:green", alpha=0.7)
+        ax2.set_title("Total Fluo")
+        ax2.set_xlabel("Total intensity")
+        ax2.set_ylabel("Count")
+
+        ax3.hist(eq_diam_px, bins=30, color="tab:purple", alpha=0.7)
+        ax3.set_title("Eq. diameter (px)")
+        ax3.set_xlabel("Eq. diameter (px)")
+        ax3.set_ylabel("Count")
+
+        if np.isfinite(mean_diam):
+            ax3.axvline(mean_diam, color="red", linestyle="--", linewidth=1.5,
+                        label=f"Mean = {mean_diam:.2f} px")
+        if np.isfinite(mean_diam) and np.isfinite(std_diam):
+            txt = f"μ = {mean_diam:.2f} px\nσ = {std_diam:.2f} px"
+            ax3.text(
+                0.98,
+                0.95,
+                txt,
+                transform=ax3.transAxes,
+                ha="right",
+                va="top",
+                fontsize=8,
+                bbox=dict(facecolor="white", alpha=0.7, edgecolor="none"),
+            )
+
+        if np.isfinite(mean_diam):
+            ax3.legend(fontsize=8)
+
+        fig.tight_layout()
+        return fig
+
+    # ------------------------------------------------------------------ Main refresh
 
     def update_images(self):
         if self.current_record is None:
@@ -1279,7 +1380,7 @@ class BFFluoViewer(tk.Tk):
             return
 
         rec: ImagePairRecord = self.current_record
-        self._start_progress("Refreshing…")
+        self._start_progress("Refreshing view…")
 
         def worker():
             try:
@@ -1317,8 +1418,6 @@ class BFFluoViewer(tk.Tk):
                     self.fluo_label.config(text=label_text_fluo)
 
                     self._update_stats_view(rec, stats_rows, highlighted_idx_set)
-
-                    # also refresh metadata tab
                     self._update_metadata_tab(rec)
 
             self.after(0, finish)
@@ -1327,6 +1426,7 @@ class BFFluoViewer(tk.Tk):
         self._refresh_thread.start()
 
     def _fit_and_show_all_panes(self):
+        """Resize the four current PIL images to fit their Tk labels."""
         if self._bf_top_pil is not None:
             tw = max(self.bf_raw_canvas.winfo_width(), 1)
             th = max(self.bf_raw_canvas.winfo_height(), 1)
@@ -1356,6 +1456,8 @@ class BFFluoViewer(tk.Tk):
             self.fluo_seg_canvas.configure(image=self._fluo_seg_tkimg)
 
     def _update_images_worker(self, rec: ImagePairRecord):
+        """Worker that prepares images and statistics for a single record."""
+
         bf_raw = tiff.imread(rec.bf_path)
         fluo_raw = tiff.imread(rec.fluo_path)
 
@@ -1406,7 +1508,6 @@ class BFFluoViewer(tk.Tk):
                 )
 
                 highlighted_idx_set = self._compute_highlighted_idxs(stats_rows)
-
                 self._stats_cache[stats_key] = (stats_rows, highlighted_idx_set)
 
             local_to_rank = {
@@ -1470,8 +1571,9 @@ class BFFluoViewer(tk.Tk):
             bf_bottom_img = self._add_scale_bar(bf_bottom_img, rec)
             fluo_bottom_img = self._add_scale_bar(fluo_bottom_img, rec)
 
-        if rec.pixel_size_um is not None:
-            px_text = f" (px: {rec.pixel_size_um:.3f} µm/pixel)"
+        px_um = getattr(rec, "pixel_size_um", None)
+        if px_um is not None:
+            px_text = f" (px: {px_um:.3f} µm/pixel)"
         else:
             px_text = " (no metadata)"
 
@@ -1496,33 +1598,620 @@ class BFFluoViewer(tk.Tk):
         self._fluo_seg_tkimg = None
         self.destroy()
 
-    # ------------------------------------------------------------------ Contrast helpers
+    # ------------------------------------------------------------------ Export logic
 
-    def _percentiles(
-        self, arr: np.ndarray, low_pct: float = 1.0, high_pct: float = 99.0
-    ):
-        arr_f = arr.astype(np.float32)
-        finite = np.isfinite(arr_f)
-        if not np.any(finite):
-            return 0.0, 1.0
-        low = np.percentile(arr_f[finite], low_pct)
-        high = np.percentile(arr_f[finite], high_pct)
-        if high <= low:
-            low = float(arr_f[finite].min())
-            high = float(arr_f[finite].max())
-        return float(low), float(high)
+    def _get_downloads_folder(self) -> Path:
+        home = Path.home()
+        downloads = home / "Downloads"
+        if downloads.is_dir():
+            return downloads
+        return home
 
-    def _auto_normalize(self, arr: np.ndarray) -> np.ndarray:
-        low, high = self._percentiles(arr, 1.0, 99.0)
-        arr_f = arr.astype(np.float32)
-        if high <= low:
-            return arr_f
-        arr_f = (arr_f - low) / (high - low)
-        arr_f = np.clip(arr_f, 0.0, 1.0)
-        arr_f *= 255.0
-        return arr_f.astype(np.uint8)
+    def export_selected_to_excel(self):
+        sel = self.listbox.curselection()
+        if not sel:
+            messagebox.showwarning(
+                "Export",
+                "Please select one or more image pairs to export.",
+            )
+            return
 
-    # ------------------------------------------------------------------ Image helpers
+        try:
+            import pandas as pd
+        except ImportError:
+            messagebox.showerror(
+                "Export error",
+                "pandas is required for Excel export. Please install it:\n\npip install pandas openpyxl",
+            )
+            return
+
+        downloads_dir = self._get_downloads_folder()
+        self._start_progress("Exporting to Excel…")
+
+        def worker():
+            errors = []
+            for idx in sel:
+                rec = self.records[idx]
+                try:
+                    self._export_single_record(rec, downloads_dir)
+                except Exception as e:
+                    errors.append(f"{rec.pair_name}: {e}")
+
+            def finish():
+                self._stop_progress()
+                if errors:
+                    messagebox.showerror(
+                        "Export completed with errors",
+                        "Some exports failed:\n\n" + "\n".join(errors),
+                    )
+                else:
+                    messagebox.showinfo(
+                        "Export completed",
+                        f"Exported {len(sel)} file(s) to:\n{downloads_dir}",
+                    )
+
+            self.after(0, finish)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _generate_four_panel_images_for_export(self, rec: ImagePairRecord):
+        """Generate the 4 images (BF raw, Fluo raw, BF enhanced+contours, Fluo enhanced+contours)
+        exactly as in the GUI, and then scale them to 75% for Excel export."""
+        # Raw
+        bf_raw = tiff.imread(rec.bf_path)
+        fluo_raw = tiff.imread(rec.fluo_path)
+        bf_top_img = self._to_pil(bf_raw)
+        fluo_top_img = self._to_pil(fluo_raw)
+
+        # Preprocess for segmentation
+        fluo_proc = preprocess_fluo_for_seg(rec)
+        min_area_px = int(self.min_area_px_var.get())
+        min_len = int(self.min_contour_len_var.get())
+        mask = segment_particles_from_fluo(fluo_proc, min_area_px=min_area_px)
+        contours = extract_contours(mask, min_length=min_len)
+
+        bf_enh = preprocess_bf_for_seg(rec)
+        fluo_enh = fluo_proc
+
+        bf_enh_f = bf_enh.astype(np.float32)
+        fluo_enh_f = fluo_enh.astype(np.float32)
+        if bf_enh_f.max() > 0:
+            bf_enh_f /= bf_enh_f.max()
+        if fluo_enh_f.max() > 0:
+            fluo_enh_f /= fluo_enh_f.max()
+
+        # Stats / ranking for labels & highlighting
+        stats_rows = self._measure_contours(contours, bf_enh, fluo_enh)
+        highlighted_idx_set = self._compute_highlighted_idxs(stats_rows)
+        local_to_rank = {r["contour_local_idx"]: r["idx"] for r in stats_rows}
+
+        highlight_mask = np.zeros(len(contours), dtype=bool)
+        label_indices = [0] * len(contours)
+        for local_idx, rank_idx in local_to_rank.items():
+            label_indices[local_idx] = rank_idx
+            if rank_idx in highlighted_idx_set:
+                highlight_mask[local_idx] = True
+
+        hex_color = self.contour_color_hex.get()
+        mid_hex_color = self.middle_contour_color_hex.get()
+        try:
+            rgb = tuple(int(hex_color[i:i+2], 16) for i in (1, 3, 5))
+        except Exception:
+            rgb = (255, 0, 0)
+        try:
+            mid_rgb = tuple(int(mid_hex_color[i:i+2], 16) for i in (1, 3, 5))
+        except Exception:
+            mid_rgb = (255, 255, 0)
+
+        line_w = int(self.contour_width_var.get())
+
+        bf_bottom_img = self._overlay_contours_on_gray(
+            bf_enh_f,
+            contours,
+            color=rgb,
+            middle_color=mid_rgb,
+            line_width=line_w,
+            label_indices=label_indices,
+            highlight_mask=highlight_mask,
+        )
+        fluo_bottom_img = self._overlay_contours_on_gray(
+            fluo_enh_f,
+            contours,
+            color=rgb,
+            middle_color=mid_rgb,
+            line_width=line_w,
+            label_indices=label_indices,
+            highlight_mask=highlight_mask,
+        )
+
+        # Optional scale bars
+        if self.show_scaled.get():
+            bf_top_img = self._add_scale_bar(bf_top_img, rec)
+            fluo_top_img = self._add_scale_bar(fluo_top_img, rec)
+            bf_bottom_img = self._add_scale_bar(bf_bottom_img, rec)
+            fluo_bottom_img = self._add_scale_bar(fluo_bottom_img, rec)
+
+        # Scale all four images to 70% for export
+        scale = 0.70
+
+        def _scale(pil_img: Image.Image) -> Image.Image:
+            w, h = pil_img.size
+            new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+            return pil_img.resize(new_size, RESAMPLE)
+
+        bf_top_img = _scale(bf_top_img)
+        fluo_top_img = _scale(fluo_top_img)
+        bf_bottom_img = _scale(bf_bottom_img)
+        fluo_bottom_img = _scale(fluo_bottom_img)
+
+        return bf_top_img, fluo_top_img, bf_bottom_img, fluo_bottom_img
+
+    def _export_single_record(self, rec: ImagePairRecord, out_dir: Path):
+        import pandas as pd
+        from openpyxl.drawing.image import Image as XLImage
+        from io import BytesIO
+        from openpyxl.styles import Font, Alignment
+
+        key = self._rec_key(rec)
+
+        if key in self._stats_cache:
+            stats_rows, highlighted_idx_set = self._stats_cache[key]
+        else:
+            fluo_proc = preprocess_fluo_for_seg(rec)
+            min_area_px = int(self.min_area_px_var.get())
+            min_len = int(self.min_contour_len_var.get())
+            mask = segment_particles_from_fluo(
+                fluo_proc, min_area_px=min_area_px
+            )
+            contours = extract_contours(mask, min_length=min_len)
+            self._seg_contour_cache[key] = contours
+
+            bf_enh = preprocess_bf_for_seg(rec)
+            fluo_enh = fluo_proc
+            stats_rows = self._measure_contours(
+                contours=contours,
+                bf_enh=bf_enh,
+                fluo_enh=fluo_enh,
+            )
+            highlighted_idx_set = self._compute_highlighted_idxs(stats_rows)
+            self._stats_cache[key] = (stats_rows, highlighted_idx_set)
+
+        df_stats = pd.DataFrame(stats_rows)
+        if not df_stats.empty:
+            df_stats = df_stats[
+                ["idx", "area_px", "eq_diam_px", "total_intensity", "intensity_per_area"]
+            ]
+            df_stats["is_middle_range"] = df_stats["idx"].isin(highlighted_idx_set)
+        else:
+            df_stats = pd.DataFrame(
+                columns=[
+                    "idx",
+                    "area_px",
+                    "eq_diam_px",
+                    "total_intensity",
+                    "intensity_per_area",
+                    "is_middle_range",
+                ]
+            )
+
+        # Human-friendly column names
+        df_stats = df_stats.rename(
+            columns={
+                "idx": "Rank (by Intensity / Area)",
+                "area_px": "Area [pixels]",
+                "eq_diam_px": "Equivalent Diameter [pixels]",
+                "total_intensity": "Total Fluorescence Intensity [a.u.]",
+                "intensity_per_area": "Fluorescence Intensity / Area [a.u./pixel]",
+                "is_middle_range": "Is Middle Range (True/False)",
+            }
+        )
+
+        # Extended metadata: Leica LAS X–style structure
+        img_w = getattr(rec, "img_width", None)
+        img_h = getattr(rec, "img_height", None)
+        field_x = getattr(rec, "field_length_um_x", None)
+        field_y = getattr(rec, "field_length_um_y", None)
+        px_um = getattr(rec, "pixel_size_um", None)
+        bd = getattr(rec, "bit_depth", None)
+        objective_name = getattr(rec, "objective_name", None)
+        na_val = getattr(rec, "numerical_aperture", None)
+        exposure_bf_s = getattr(rec, "exposure_bf_s", None)
+        exposure_fluo_s = getattr(rec, "exposure_fluo_s", None)
+        channel_scaling = getattr(rec, "channel_scaling", None)
+
+        # Defaults from Leica LAS X metadata file (10 P 1.docx)
+        default_img_size = "1200 × 1200 pixels"
+        default_phys_size = "131.39 µm × 131.39 µm"
+        default_px_nm = "~109.5 nm/pixel"
+        default_bit_depth = "12-bit (0–4095)"
+        default_n_channels = "2 (Grayscale, Red)"
+        default_objective = "N PLAN 100x/1.25 Oil (Art. No. 11506158)"
+        default_na = "1.25"
+        default_immersion = "Oil (refractive index 1.518)"
+        default_microscope = "DMI8 (inverted)"
+        default_total_mag = "100x"
+        default_bf_exposure = "138 ms"
+        default_bf_tl_intensity = "112"
+        default_fluo_exposure = "138 ms"
+        default_fluo_filter = "DFT51010"
+        default_fluo_emission = "594 nm"
+        default_led = "555 nm at 84% intensity (active)"
+        default_cam = "Photometric Prime 95B (model A21F203002)"
+        default_gain_mode = "Full well mode"
+        default_cam_temp = "-18 °C (target: -30 °C)"
+        default_fan = "Active (level 3)"
+        default_roi = "Full frame (no cropping)"
+        default_ch1_scaling = "Black = 4.4%, White = 18.8%"
+        default_ch2_scaling = "Black = 4.4%, White = 7.3%"
+
+        # Construct human-readable strings
+        if img_w is not None and img_h is not None:
+            img_size_str = f"{img_w} × {img_h} pixels"
+        else:
+            img_size_str = default_img_size
+
+        if field_x is not None and field_y is not None:
+            phys_size_str = f"{field_x:.2f} µm × {field_y:.2f} µm"
+        else:
+            phys_size_str = default_phys_size
+
+        if px_um is not None:
+            px_nm = px_um * 1000.0
+            px_size_str = f"{px_nm:.1f} nm/pixel"
+        else:
+            px_size_str = default_px_nm
+
+        if bd is not None:
+            bit_depth_str = f"{bd}-bit (0–{2**bd - 1})"
+        else:
+            bit_depth_str = default_bit_depth
+
+        if objective_name:
+            objective_str = objective_name
+        else:
+            objective_str = default_objective
+
+        if na_val is not None:
+            na_str = f"{na_val:.2f}"
+        else:
+            na_str = default_na
+
+        if exposure_bf_s is not None:
+            bf_exp_str = f"{exposure_bf_s * 1000.0:.0f} ms"
+        else:
+            bf_exp_str = default_bf_exposure
+
+        if exposure_fluo_s is not None:
+            fluo_exp_str = f"{exposure_fluo_s * 1000.0:.0f} ms"
+        else:
+            fluo_exp_str = default_fluo_exposure
+
+        # Channel scaling from record if present
+        if channel_scaling and len(channel_scaling) >= 2:
+            ch1 = channel_scaling[0]
+            ch2 = channel_scaling[1]
+            ch1_scaling_str = (
+                f"Black = {ch1.get('black_norm', 0):.2%}, "
+                f"White = {ch1.get('white_norm', 1):.2%}"
+            )
+            ch2_scaling_str = (
+                f"Black = {ch2.get('black_norm', 0):.2%}, "
+                f"White = {ch2.get('white_norm', 1):.2%}"
+            )
+        else:
+            ch1_scaling_str = default_ch1_scaling
+            ch2_scaling_str = default_ch2_scaling
+
+        meta_data = {
+            # General / file info
+            "Image: Dataset": str(getattr(rec, "dataset", "")),
+            "Image: Pair name": str(getattr(rec, "pair_name", "")),
+            "Image: Brightfield path": str(getattr(rec, "bf_path", "")),
+            "Image: Fluorescence path": str(getattr(rec, "fluo_path", "")),
+
+            # Image Dimensions & Resolution
+            "Image Dimensions: Image size (pixels)": img_size_str,
+            "Image Dimensions: Physical size (µm)": phys_size_str,
+            "Image Dimensions: Pixel size": px_size_str,
+            "Image Dimensions: Bit depth": bit_depth_str,
+            "Image Dimensions: Number of channels": default_n_channels,
+
+            # Optical Configuration
+            "Optical Configuration: Objective": objective_str,
+            "Optical Configuration: Numerical Aperture (NA)": na_str,
+            "Optical Configuration: Immersion": default_immersion,
+            "Optical Configuration: Microscope": default_microscope,
+            "Optical Configuration: Total magnification": default_total_mag,
+
+            # Channel 1 (Brightfield)
+            "Channel 1 (Brightfield): Contrast method": "TL-BF (Transmitted Light Brightfield)",
+            "Channel 1 (Brightfield): Exposure": bf_exp_str,
+            "Channel 1 (Brightfield): Transmitted light intensity": default_bf_tl_intensity,
+            "Channel 1 (Brightfield): LUT": "Gray",
+            "Channel 1 (Brightfield): Filter cube": "EMP_BF",
+
+            # Channel 2 (Fluorescence)
+            "Channel 2 (Fluorescence): Contrast method": "FLUO",
+            "Channel 2 (Fluorescence): Exposure": fluo_exp_str,
+            "Channel 2 (Fluorescence): Filter cube": default_fluo_filter,
+            "Channel 2 (Fluorescence): Emission wavelength": default_fluo_emission,
+            "Channel 2 (Fluorescence): LUT": "Red",
+            "Channel 2 (Fluorescence): LED": default_led,
+            "Channel 2 (Fluorescence): Diaphragm": "Field/Aperture diaphragm settings available",
+
+            # Stage & Focus Information
+            "Stage & Focus: Stage position": "X = 61.62 mm, Y = 39.78 mm",
+            "Stage & Focus: Z position": "2.539 mm",
+            "Stage & Focus: Z-mode": "z-wide",
+            "Stage & Focus: Autofocus": "Combined HSAF system, channel 1, precision level 2",
+
+            # Camera Settings
+            "Camera: Model": default_cam,
+            "Camera: Gain mode": default_gain_mode,
+            "Camera: Temperature": default_cam_temp,
+            "Camera: Fan control": default_fan,
+            "Camera: ROI": default_roi,
+
+            # Display / Viewing Settings
+            "Display: Channel 1 scaling": ch1_scaling_str,
+            "Display: Channel 2 scaling": ch2_scaling_str,
+        }
+
+        df_meta = (
+            pd.Series(meta_data, name="Value")
+            .rename_axis("Metadata item")
+            .reset_index()
+        )
+
+        # --------- IMPROVED CONFIG SHEET: writing & formatting ----------
+
+        # Collect configuration parameters
+        config_data = {
+            "min_area_px": int(self.min_area_px_var.get()),
+            "min_contour_len": int(self.min_contour_len_var.get()),
+            "contour_width": int(self.contour_width_var.get()),
+            "contour_color_hex": self.contour_color_hex.get(),
+            "middle_low_pct": int(self.middle_low_pct_var.get()),
+            "middle_high_pct": int(self.middle_high_pct_var.get()),
+            "middle_contour_color_hex": self.middle_contour_color_hex.get(),
+            "arrow_length_px": int(self.arrow_length_var.get()),
+            "show_scaled": bool(self.show_scaled.get()),
+            "bar_length_um": float(self.bar_length_um.get()),
+            "contrast_mode": self.contrast_mode.get(),
+        }
+
+        # Build a human-readable, sectioned structure
+        # Format: list of (section_title, [(param_label, value), ...])
+        config_sections = [
+            (
+                "Segmentation & Contours",
+                [
+                    ("Minimum particle area (pixels)", config_data["min_area_px"]),
+                    ("Minimum contour length (pixels)", config_data["min_contour_len"]),
+                    ("Contour line width (pixels)", config_data["contour_width"]),
+                    ("Main contour color (hex)", config_data["contour_color_hex"]),
+                ],
+            ),
+            (
+                "Middle-range Highlighting",
+                [
+                    ("Lower percentile of rank (%)", config_data["middle_low_pct"]),
+                    ("Upper percentile of rank (%)", config_data["middle_high_pct"]),
+                    (
+                        "Middle-range contour color (hex)",
+                        config_data["middle_contour_color_hex"],
+                    ),
+                ],
+            ),
+            (
+                "Arrow & Labelling",
+                [
+                    ("Arrow length (pixels)", config_data["arrow_length_px"]),
+                ],
+            ),
+            (
+                "Display & Scale Bar",
+                [
+                    ("Show scale bar", config_data["show_scaled"]),
+                    ("Scale bar length (µm)", config_data["bar_length_um"]),
+                    ("Display mode", config_data["contrast_mode"]),
+                ],
+            ),
+        ]
+
+        # Turn into a DataFrame with columns: Parameter, Value
+        config_rows = []
+        for section_title, items in config_sections:
+            # Section header row (Value is empty)
+            config_rows.append((section_title, ""))  # section header
+            for label, value in items:
+                # Indent parameter labels for readability
+                config_rows.append(("    " + label, value))
+
+        df_config = pd.DataFrame(config_rows, columns=["Parameter", "Value"])
+
+        safe_name = f"{rec.dataset}_{rec.pair_name}".replace(os.sep, "_")
+        safe_name = safe_name.replace(":", "_")
+        out_path = out_dir / f"{safe_name}.xlsx"
+
+        with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+            # Sheets
+            df_stats.to_excel(writer, sheet_name="Statistics", index=False)
+            df_meta.to_excel(writer, sheet_name="Metadata", index=False)
+            df_config.to_excel(writer, sheet_name="Config", index=False)
+
+            wb = writer.book
+            ws_stats = wb["Statistics"]
+            ws_meta = wb["Metadata"]
+            ws_config = wb["Config"]
+
+            # ----- format Statistics header & columns -----
+            header_font = Font(bold=True)
+            for cell in ws_stats[1]:
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal="center")
+
+            ws_stats.auto_filter.ref = ws_stats.dimensions
+
+            for col_idx, col in enumerate(ws_stats.columns, start=1):
+                max_len = 0
+                col_letter = get_column_letter(col_idx)
+                for cell in col:
+                    if cell.value is not None:
+                        max_len = max(max_len, len(str(cell.value)))
+                ws_stats.column_dimensions[col_letter].width = max(
+                    12, min(max_len + 2, 45)
+                )
+
+            # ----- add histogram figure image to Statistics sheet -----
+            if not df_stats.empty:
+                stats_rows_for_fig: list[dict] = []
+                for _, row in df_stats.iterrows():
+                    stats_rows_for_fig.append(
+                        {
+                            "idx": int(row["Rank (by Intensity / Area)"]),
+                            "area_px": float(row["Area [pixels]"]),
+                            "eq_diam_px": float(row["Equivalent Diameter [pixels]"]),
+                            "total_intensity": float(
+                                row["Total Fluorescence Intensity [a.u.]"]
+                            ),
+                            "intensity_per_area": float(
+                                row["Fluorescence Intensity / Area [a.u./pixel]"]
+                            ),
+                        }
+                    )
+                fig = self._create_histogram_figure_for_export(stats_rows_for_fig)
+                bio_hist = BytesIO()
+                fig.savefig(bio_hist, format="PNG", bbox_inches="tight")
+                bio_hist.seek(0)
+                xl_hist = XLImage(bio_hist)
+                xl_hist.anchor = "A{}".format(ws_stats.max_row + 3)
+                ws_stats.add_image(xl_hist)
+
+            # ----- format Metadata sheet: section headers and items -----
+            ws_meta["A1"].value = "Metadata item"
+            ws_meta["B1"].value = "Value"
+            ws_meta["A1"].font = Font(bold=True)
+            ws_meta["B1"].font = Font(bold=True)
+
+            current_section = None
+            for row in range(2, ws_meta.max_row + 1):
+                key_cell = ws_meta[f"A{row}"]
+                val_cell = ws_meta[f"B{row}"]
+                if not key_cell.value:
+                    continue
+                text = str(key_cell.value)
+                if ":" in text:
+                    section, item = text.split(":", 1)
+                    section = section.strip()
+                    item = item.strip()
+                    if section != current_section:
+                        key_cell.value = section
+                        key_cell.font = Font(bold=True)
+                        val_cell.value = ""
+                        current_section = section
+                    else:
+                        key_cell.value = "    " + item
+                        key_cell.font = Font(bold=False)
+                else:
+                    key_cell.font = Font(bold=False)
+
+            for col_idx, col in enumerate(ws_meta.columns, start=1):
+                col_letter = get_column_letter(col_idx)
+                max_len = 0
+                for cell in col:
+                    if cell.value is not None:
+                        max_len = max(max_len, len(str(cell.value)))
+                    cell.alignment = Alignment(
+                        horizontal="left",
+                        vertical="top",
+                        wrap_text=True,
+                    )
+                ws_meta.column_dimensions[col_letter].width = max(
+                    18, min(max_len + 2, 60)
+                )
+
+            # ----- IMPROVED formatting for Config sheet -----
+            # Header row
+            ws_config["A1"].font = Font(bold=True)
+            ws_config["B1"].font = Font(bold=True)
+            ws_config["A1"].alignment = Alignment(horizontal="left")
+            ws_config["B1"].alignment = Alignment(horizontal="left")
+
+            # Section headers & parameter rows
+            for row in range(2, ws_config.max_row + 1):
+                param_cell = ws_config[f"A{row}"]
+                val_cell = ws_config[f"B{row}"]
+                text = str(param_cell.value) if param_cell.value is not None else ""
+
+                if text and not text.startswith("    "):
+                    # Section header row
+                    param_cell.font = Font(bold=True)
+                    val_cell.value = ""  # keep section rows single-column
+                else:
+                    # Parameter row
+                    param_cell.font = Font(bold=False)
+
+                param_cell.alignment = Alignment(
+                    horizontal="left",
+                    vertical="top",
+                    wrap_text=True,
+                )
+                val_cell.alignment = Alignment(
+                    horizontal="left",
+                    vertical="top",
+                    wrap_text=True,
+                )
+
+            # Auto-size columns in Config
+            for col_idx, col in enumerate(ws_config.columns, start=1):
+                col_letter = get_column_letter(col_idx)
+                max_len = 0
+                for cell in col:
+                    if cell.value is not None:
+                        max_len = max(max_len, len(str(cell.value)))
+                ws_config.column_dimensions[col_letter].width = max(
+                    18, min(max_len + 2, 60)
+                )
+
+            # ----- add 4 images, one per sheet, scaled to 75% -----
+            bf_top_img, fluo_top_img, bf_bottom_img, fluo_bottom_img = \
+                self._generate_four_panel_images_for_export(rec)
+
+            def add_single_image_sheet(sheet_name: str, pil_img: Image.Image, title: str):
+                ws = wb.create_sheet(sheet_name)
+                ws["A1"] = title
+                ws["A1"].font = Font(bold=True)
+                bio = BytesIO()
+                pil_img.save(bio, format="PNG")
+                bio.seek(0)
+                xl_img = XLImage(bio)
+                xl_img.anchor = "A3"
+                ws.add_image(xl_img)
+
+            base_name = rec.pair_name
+            add_single_image_sheet(
+                "BF_Raw",
+                bf_top_img,
+                f"Brightfield (raw) - {base_name}",
+            )
+            add_single_image_sheet(
+                "FLUO_Raw",
+                fluo_top_img,
+                f"Fluorescence (raw) - {base_name}",
+            )
+            add_single_image_sheet(
+                "BF_Contours",
+                bf_bottom_img,
+                f"Brightfield (enhanced + contours) - {base_name}",
+            )
+            add_single_image_sheet(
+                "FLUO_Contours",
+                fluo_bottom_img,
+                f"Fluorescence (enhanced + contours) - {base_name}",
+            )
+
+    # ------------------------------------------------------------------ Image / scale-bar helpers
 
     def _to_pil(self, arr: np.ndarray) -> Image.Image:
         if arr.ndim == 2:
@@ -1560,16 +2249,6 @@ class BFFluoViewer(tk.Tk):
         new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
         return img.resize(new_size, RESAMPLE)
 
-    def _resize_to_width(self, img: Image.Image, target_w: int) -> Image.Image:
-        w, h = img.size
-        if w <= target_w:
-            return img
-        scale = target_w / w
-        new_size = (target_w, int(h * scale))
-        return img.resize(new_size, RESAMPLE)
-
-    # ------------------------------------------------------------------ Scale bar helpers
-
     def _pick_contrasting_colors(self, bg_gray: float):
         if bg_gray > 128:
             bar = "black"
@@ -1585,7 +2264,8 @@ class BFFluoViewer(tk.Tk):
             return ImageFont.load_default()
 
     def _add_scale_bar(self, img: Image.Image, rec: ImagePairRecord) -> Image.Image:
-        if rec.pixel_size_um is None:
+        px_um = getattr(rec, "pixel_size_um", None)
+        if px_um is None:
             return img
 
         try:
@@ -1593,8 +2273,7 @@ class BFFluoViewer(tk.Tk):
         except Exception:
             bar_len_um = 5.0
 
-        px_size = rec.pixel_size_um
-        bar_len_px = int(round(bar_len_um / px_size))
+        bar_len_px = int(round(bar_len_um / px_um))
         if bar_len_px <= 0:
             return img
 
@@ -1621,7 +2300,7 @@ class BFFluoViewer(tk.Tk):
 
         if x1 > w - margin:
             bar_len_px = max(10, w - 2 * margin)
-            bar_len_um = bar_len_px * px_size
+            bar_len_um = bar_len_px * px_um
             x1 = x0 + bar_len_px
 
         draw.rectangle([x0, y0, x1, y1], fill=bar_color, outline=outline_color)
