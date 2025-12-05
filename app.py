@@ -1731,8 +1731,8 @@ class BFFluoViewer(tk.Tk):
             bf_bottom_img = self._add_scale_bar(bf_bottom_img, rec)
             fluo_bottom_img = self._add_scale_bar(fluo_bottom_img, rec)
 
-        # Scale all four images to 70% for export
-        scale = 0.70
+        # Scale all four images to 60% for export
+        scale = 0.6
 
         def _scale(pil_img: Image.Image) -> Image.Image:
             w, h = pil_img.size
