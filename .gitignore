@@ -4,6 +4,7 @@ source/
 source_no_meta/
 
 processed/
+debug/
 
 config/__pycache__/
 analysis/__pycache__/
