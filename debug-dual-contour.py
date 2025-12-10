@@ -72,7 +72,7 @@ def adjust_red_channel(img, normalize=True, brightness=1.0, gamma=1.0):
 # --------------------------------------------------
 grey_path = "source/12/12 N NO 1_ch00.tif"
 red_path = "source/12/12 N NO 1_ch01.tif"
-meta_prop = "source/12/MetaData/12 N NO 1_Propertoes.xml"
+meta_prop = "source/12/MetaData/12 N NO 1_Properties.xml"
 
 # Load brightfield (for contour detection)
 img_bf = cv2.imread(grey_path, cv2.IMREAD_UNCHANGED)
