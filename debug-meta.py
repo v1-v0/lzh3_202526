@@ -26,9 +26,9 @@ RED_BRIGHTNESS = 1.2
 RED_GAMMA = 0.7
 
 # Scale bar parameters
-SCALE_BAR_LENGTH_UM = 50  # Length of scale bar in micrometers
-SCALE_BAR_HEIGHT = 10      # Height of scale bar in pixels
-SCALE_BAR_MARGIN = 30     # Margin from bottom-right corner
+SCALE_BAR_LENGTH_UM = 20  # Length of scale bar in micrometers
+SCALE_BAR_HEIGHT = 5      # Height of scale bar in pixels
+SCALE_BAR_MARGIN = 15     # Margin from bottom-right corner
 SCALE_BAR_COLOR = (255, 255, 255)  # White
 SCALE_BAR_BG_COLOR = (0, 0, 0)     # Black background
 SCALE_BAR_TEXT_COLOR = (255, 255, 255)  # White text
