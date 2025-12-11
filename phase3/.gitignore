@@ -1,0 +1,17 @@
+*DS_Store
+.venv/
+source/
+source_no_meta/
+
+processed/
+debug/
+
+config/__pycache__/
+analysis/__pycache__/
+ui/__pycache__/
+*__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.pyclass
