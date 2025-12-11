@@ -1,27 +1,29 @@
-*DS_Store
-.venv/
-
-source/10
-source/11
-source/12
-source/13
-source/14
-source/15
-source/16
-source/17
-source/18
-source/19
-source_no_meta/
-
-processed/
-debug/
-
-config/__pycache__/
-analysis/__pycache__/
-ui/__pycache__/
-*__pycache__/
+# Python
+__pycache__/
 *.pyc
 *.pyo
 *.pyd
 *.log
 *.pyclass
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# IDE & OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Project-specific directories
+source/1[0-9]/
+source_no_meta/
+processed/
+debug/
+
+# Keep template/example
+!source/example/
