@@ -25,6 +25,11 @@ RED_NORMALIZE = True
 RED_BRIGHTNESS = 1.2
 RED_GAMMA = 0.7
 
+# Brightfield enhancement parameters
+BF_NORMALIZE = True
+BF_BRIGHTNESS = 1.0
+BF_GAMMA = 1.0
+
 # Scale bar parameters
 SCALE_BAR_LENGTH_UM = 10  # Length of scale bar in micrometers
 SCALE_BAR_HEIGHT = 5      # Height of scale bar in pixels
@@ -359,9 +364,19 @@ def parse_metadata(xml_path):
         print(f"⚠ Error parsing metadata: {e}")
         return None, None, None, None
 
-def adjust_red_channel(img, normalize=True, brightness=1.0, gamma=1.0):
+def adjust_channel(img, normalize=True, brightness=1.0, gamma=1.0, channel_name="Channel"):
     """
-    Adjust red channel with normalization, brightness, and gamma
+    Adjust image channel with normalization, brightness, and gamma
+    
+    Parameters:
+    - img: Input image (grayscale)
+    - normalize: Whether to normalize to 0-255 range
+    - brightness: Brightness multiplier
+    - gamma: Gamma correction value
+    - channel_name: Name for debug output
+    
+    Returns:
+    - Enhanced 8-bit image
     """
     img_float = img.astype(np.float32)
     
@@ -370,16 +385,18 @@ def adjust_red_channel(img, normalize=True, brightness=1.0, gamma=1.0):
         max_val = np.max(img_float)
         if max_val > min_val:
             img_float = (img_float - min_val) * 255.0 / (max_val - min_val)
-        print(f"Red channel normalized: [{min_val:.1f}, {max_val:.1f}] -> [0, 255]")
+        print(f"{channel_name} normalized: [{min_val:.1f}, {max_val:.1f}] -> [0, 255]")
     
     if brightness != 1.0:
         img_float = img_float * brightness
         img_float = np.clip(img_float, 0, 255)
+        print(f"{channel_name} brightness adjusted: {brightness}x")
     
     if gamma != 1.0:
         img_normalized = img_float / 255.0
         img_normalized = np.power(img_normalized, gamma)
         img_float = img_normalized * 255.0
+        print(f"{channel_name} gamma corrected: {gamma}")
     
     return img_float.astype(np.uint8)
 
@@ -536,15 +553,46 @@ print(f"✓ Conversion factor: {bit_conversion_factor:.4f}")
 print("="*60 + "\n")
 
 # --------------------------------------------------
-# APPLY ENHANCEMENT TO 8-BIT VERSION (FOR VISUALIZATION)
+# APPLY NORMALIZATION ENHANCEMENT TO BOTH CHANNELS
 # --------------------------------------------------
-img_red_enhanced = adjust_red_channel(
-    img_red_8bit,
+print("="*60)
+print("APPLYING NORMALIZATION ENHANCEMENT")
+print("="*60)
+
+# Save brightfield BEFORE normalization
+save_debug("01c_bf_before_normalize.png", img_bf.copy(), pixel_size, unit_str)
+
+# Apply normalization to brightfield (normalize only, no brightness/gamma)
+img_bf_normalized = adjust_channel(
+    img_bf.copy(),
+    normalize=BF_NORMALIZE,
+    brightness=BF_BRIGHTNESS,
+    gamma=BF_GAMMA,
+    channel_name="Brightfield"
+)
+
+# Save brightfield AFTER normalization
+save_debug("01d_bf_after_normalize.png", img_bf_normalized, pixel_size, unit_str)
+
+# Save red channel BEFORE enhancement
+save_debug("01e_red_before_enhance.png", img_red_8bit.copy(), pixel_size, unit_str)
+
+# Apply enhancement to red channel (normalize + brightness + gamma)
+img_red_enhanced = adjust_channel(
+    img_red_8bit.copy(),
     normalize=RED_NORMALIZE,
     brightness=RED_BRIGHTNESS,
-    gamma=RED_GAMMA
+    gamma=RED_GAMMA,
+    channel_name="Red channel"
 )
-save_debug("01c_red_enhanced.png", img_red_enhanced, pixel_size, unit_str)
+
+# Save red channel AFTER enhancement
+save_debug("01f_red_after_enhance.png", img_red_enhanced, pixel_size, unit_str)
+
+print("="*60 + "\n")
+
+# Use normalized brightfield for segmentation
+img_bf = img_bf_normalized
 
 # --------------------------------------------------
 # BRIGHTFIELD PROCESSING (SEGMENTATION)
@@ -1134,7 +1182,9 @@ if intensities_per_area:
 save_debug("07d_intensity_coded.png", vis_intensity, pixel_size, unit_str)
 
 print("✓ Processing complete")
-print(f"Enhancement settings: Normalize={RED_NORMALIZE}, Brightness={RED_BRIGHTNESS}, Gamma={RED_GAMMA}")
+print(f"Enhancement settings:")
+print(f"  - Brightfield: Normalize={BF_NORMALIZE}, Brightness={BF_BRIGHTNESS}, Gamma={BF_GAMMA}")
+print(f"  - Red channel: Normalize={RED_NORMALIZE}, Brightness={RED_BRIGHTNESS}, Gamma={RED_GAMMA}")
 print(f"Total particles analyzed: {len(object_data)}")
 if has_calibration and pixel_size is not None:
     print(f"\n✓ All images saved with {SCALE_BAR_LENGTH_UM} {unit_str} scale bars")
