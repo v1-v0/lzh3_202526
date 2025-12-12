@@ -1,0 +1,25 @@
+{
+  "background": {
+    "method": "rolling_ball",
+    "radius": 50
+  },
+  "noise": {
+    "gaussian_sigma": 1.5,
+    "median_kernel": 3
+  },
+  "threshold": {
+    "method": "adaptive_gaussian",
+    "block_size": 31,
+    "offset": 10,
+    "percentile": 95
+  },
+  "filters": {
+    "min_area": 10,
+    "max_area": 10000,
+    "min_snr": 2.0
+  },
+  "morphology": {
+    "dilation_kernel": 2,
+    "erosion_kernel": 1
+  }
+}
