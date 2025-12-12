@@ -5,7 +5,7 @@
     "fluorescence_suffix": "_ch01.tif"
   },
   "group_mapping": {
-    "control": ["control group"],
+    "control": ["Control group"],
     "positive": ["10", "15", "16", "19"],
     "negative": ["11", "12", "13", "14", "17", "18"]
   }

@@ -1,457 +1,416 @@
-"""
-Adapted Batch Segmentation Pipeline for Your Data Structure
-Processes images from 'source/' directory with ch00/ch01 naming convention
-"""
-
 import numpy as np
-import cv2
 import pandas as pd
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import Dict, List, Tuple, Optional
 import json
 from tqdm import tqdm
-import xml.etree.ElementTree as ET
-import re
-import os
+import argparse
+import cv2
+import shutil
+
+from brightfield_segmentation import BrightFieldSegmentation
+from fluorescence_segmentation import FluorescenceSegmentation
+
+
+def load_config(config_path: str) -> Dict:
+    """Load configuration from JSON file."""
+    with open(config_path, 'r') as f:
+        return json.load(f)
+
 
 class AdaptedSegmentationPipeline:
     """
-    Batch processing pipeline adapted for your data structure.
+    Pipeline for processing brightfield and fluorescence microscopy images.
+    Handles batch processing of multiple experimental groups.
     """
     
-    def __init__(self, bf_config: Optional[Dict] = None, fl_config: Optional[Dict] = None,
-                 pipeline_config_path: str = 'config/pipeline_config.json'):
+    def __init__(self, bf_config: Dict, fl_config: Dict, pipeline_config: Dict):
         """
-        Initialize pipeline with segmentation modules.
+        Initialize the pipeline with configurations.
         
-        Parameters:
-        -----------
-        bf_config : dict, optional
-            Bright-field segmentation configuration
-        fl_config : dict, optional
-            Fluorescence segmentation configuration
-        pipeline_config_path : str
-            Path to pipeline configuration file
+        Args:
+            bf_config: Brightfield segmentation configuration
+            fl_config: Fluorescence segmentation configuration
+            pipeline_config: Pipeline configuration including source directory and group mapping
         """
-        from brightfield_segmentation import BrightFieldSegmentation
-        from fluorescence_segmentation import FluorescenceSegmentation
+        self.bf_segmenter = BrightFieldSegmentation(bf_config)
+        self.fl_segmenter = FluorescenceSegmentation(fl_config)
         
-        self.bf_segmenter = BrightFieldSegmentation(config=bf_config or {})
-        self.fl_segmenter = FluorescenceSegmentation(config=fl_config or {})
+        self.source_dir = Path(pipeline_config['source_directory'])
+        self.file_patterns = pipeline_config['file_patterns']
+        self.group_mapping = pipeline_config['group_mapping']
         
-        # Load pipeline configuration
-        with open(pipeline_config_path, 'r') as f:
-            self.pipeline_config = json.load(f)
-        
-        self.source_dir = Path(self.pipeline_config['source_directory'])
-    
-    def parse_metadata(self, xml_path: Path) -> float:
+    def find_image_pairs(self, directory: Path) -> List[Tuple[Path, Path]]:
         """
-        Extract pixel size from XML metadata.
+        Find matching brightfield and fluorescence image pairs in a directory.
         
-        Parameters:
-        -----------
-        xml_path : Path
-            Path to XML metadata file
+        Args:
+            directory: Directory to search for image pairs
             
         Returns:
-        --------
-        pixel_size_um : float
-            Pixel size in micrometers
+            List of (brightfield_path, fluorescence_path) tuples
         """
-        try:
-            tree = ET.parse(xml_path)
-            root = tree.getroot()
-            
-            # Try multiple possible XPath locations for pixel size
-            # Adjust based on actual XML structure
-            possible_paths = [
-                './/PixelSize',
-                './/PhysicalSizeX',
-                './/Image/Pixels/PhysicalSizeX',
-                './/Calibration/PixelWidth'
-            ]
-            
-            for path in possible_paths:
-                pixel_size_elem = root.find(path)
-                if pixel_size_elem is not None and pixel_size_elem.text is not None:
-                    return float(pixel_size_elem.text)
-            
-            # If not found, try to find in attributes
-            for elem in root.iter():
-                if 'PhysicalSizeX' in elem.attrib:
-                    return float(elem.attrib['PhysicalSizeX'])
-            
-            print(f"Warning: Pixel size not found in {xml_path}, using default 0.65 μm")
-            return 0.65
-            
-        except Exception as e:
-            print(f"Error parsing {xml_path}: {e}")
-            return 0.65
-    
-    def find_image_pairs(self, directory: Path) -> List[Tuple[Path, Path, Optional[Path], str]]:
-        """
-        Find matching bright-field and fluorescence image pairs.
+        bf_suffix = self.file_patterns['brightfield_suffix']
+        fl_suffix = self.file_patterns['fluorescence_suffix']
         
-        Parameters:
-        -----------
-        directory : Path
-            Directory containing images
-            
-        Returns:
-        --------
-        pairs : List[Tuple[Path, Path, Optional[Path], str]]
-            List of (bf_path, fl_path, metadata_path, image_id) tuples
-        """
-        bf_suffix = self.pipeline_config['file_patterns']['brightfield_suffix']
-        fl_suffix = self.pipeline_config['file_patterns']['fluorescence_suffix']
+        # Find all brightfield images
+        bf_images = sorted(directory.glob(f'*{bf_suffix}'))
         
-        # Find all bright-field images
-        bf_files = sorted(directory.glob(f'*{bf_suffix}'))
-        
-        pairs: List[Tuple[Path, Path, Optional[Path], str]] = []
-        for bf_path in bf_files:
-            # Construct fluorescence path
-            fl_path = Path(str(bf_path).replace(bf_suffix, fl_suffix))
+        pairs = []
+        for bf_path in bf_images:
+            # Construct expected fluorescence filename
+            base_name = bf_path.name.replace(bf_suffix, '')
+            fl_path = directory / f'{base_name}{fl_suffix}'
             
-            if not fl_path.exists():
-                print(f"Warning: No matching fluorescence image for {bf_path}")
-                continue
-            
-            # Extract image ID (remove channel suffix)
-            image_id = bf_path.stem.replace(bf_suffix.replace('.tif', ''), '')
-            
-            # Find metadata file
-            metadata_dir = directory / 'MetaData'
-            metadata_path: Optional[Path] = None
-            
-            if metadata_dir.exists():
-                # Try to find matching XML file
-                xml_files = list(metadata_dir.glob(f'{image_id}.xml'))
-                if not xml_files:
-                    # Try without exact match
-                    base_name = image_id.rstrip('_0123456789')
-                    xml_files = list(metadata_dir.glob(f'{base_name}*.xml'))
-                
-                metadata_path = xml_files[0] if xml_files else None
-            
-            pairs.append((bf_path, fl_path, metadata_path, image_id))
+            if fl_path.exists():
+                pairs.append((bf_path, fl_path))
+            else:
+                print(f"Warning: No matching fluorescence image for {bf_path.name}")
         
         return pairs
     
-    def determine_group(self, directory_name: str) -> str:
+    def process_image_pair(
+        self, 
+        bf_path: Path, 
+        fl_path: Path,
+        pixel_size_um: float = 0.65
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict, Dict]:
         """
-        Determine experimental group from directory name.
+        Process a single pair of brightfield and fluorescence images.
         
-        Parameters:
-        -----------
-        directory_name : str
-            Name of the directory
+        Args:
+            bf_path: Path to brightfield image
+            fl_path: Path to fluorescence image
+            pixel_size_um: Pixel size in micrometers
             
         Returns:
-        --------
-        group : str
-            Group label (Control, Positive, or Negative)
-        """
-        group_mapping = self.pipeline_config['group_mapping']
-        
-        if directory_name in group_mapping['control']:
-            return 'Control'
-        elif directory_name in group_mapping['positive']:
-            return 'Positive'
-        elif directory_name in group_mapping['negative']:
-            return 'Negative'
-        else:
-            return 'Unknown'
-    
-    def process_image_pair(self, bf_path: Path, fl_path: Path,
-                          metadata_path: Optional[Path] = None,
-                          image_id: str = '',
-                          group: str = '') -> Optional[Dict]:
-        """
-        Process matched bright-field and fluorescence images.
-        
-        Parameters:
-        -----------
-        bf_path : Path
-            Path to bright-field image
-        fl_path : Path
-            Path to fluorescence image
-        metadata_path : Path, optional
-            Path to metadata XML file
-        image_id : str
-            Image identifier
-        group : str
-            Experimental group label
-            
-        Returns:
-        --------
-        results : dict or None
-            Combined processing results or None if error
+            Tuple of (brightfield_results_df, fluorescence_results_df)
         """
         # Load images
         bf_image = cv2.imread(str(bf_path), cv2.IMREAD_GRAYSCALE)
         fl_image = cv2.imread(str(fl_path), cv2.IMREAD_GRAYSCALE)
         
-        if bf_image is None or fl_image is None:
-            print(f"Error loading images: {bf_path} or {fl_path}")
-            return None
+        # Check if images loaded successfully
+        if bf_image is None:
+            raise ValueError(f"Failed to load brightfield image: {bf_path}")
+        if fl_image is None:
+            raise ValueError(f"Failed to load fluorescence image: {fl_path}")
         
-        # Parse metadata for pixel size
-        if metadata_path and metadata_path.exists():
-            pixel_size_um = self.parse_metadata(metadata_path)
-        else:
-            pixel_size_um = 0.65  # Default value
+        image_name = bf_path.stem.replace(self.file_patterns['brightfield_suffix'].replace('.tif', ''), '')
         
-        # Process bright-field
+        # Process brightfield image
         bf_results = self.bf_segmenter.process_image(
             image=bf_image,
             pixel_size_um=pixel_size_um,
-            image_id=image_id,
-            group=group
+            image_id=image_name
         )
         
-        # Process fluorescence with particle mask for colocalization
+        # Process fluorescence image
         fl_results = self.fl_segmenter.process_image(
             image=fl_image,
-            particle_mask=bf_results['labeled_mask'],
             pixel_size_um=pixel_size_um,
-            image_id=image_id,
-            group=group
+            image_id=image_name
         )
         
-        combined_results: Dict = {
-            'image_id': image_id,
-            'group': group,
-            'pixel_size_um': pixel_size_um,
-            'bright_field': bf_results,
-            'fluorescence': fl_results
-        }
-        
-        return combined_results
+        return bf_results['measurements'], fl_results['measurements'], bf_results, fl_results
     
-    def process_directory(self, directory: Path, output_dir: Path,
-                         group_label: Optional[str] = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    def process_directory(
+        self,
+        directory: Path,
+        group_name: str,
+        pixel_size_um: float = 0.65,
+        output_base_dir: Path = Path('results')
+    ) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
-        Batch process all images in a directory.
+        Process all image pairs in a directory.
         
-        Parameters:
-        -----------
-        directory : Path
-            Directory containing images
-        output_dir : Path
-            Directory for output files
-        group_label : str, optional
-            Optional group label override
+        Args:
+            directory: Directory containing image pairs
+            group_name: Name of the experimental group
+            pixel_size_um: Pixel size in micrometers
+            output_base_dir: Base directory for saving results
             
         Returns:
-        --------
-        bf_measurements, fl_measurements : Tuple[pd.DataFrame, pd.DataFrame]
-            Measurement data frames
+            Tuple of (combined_brightfield_df, combined_fluorescence_df)
         """
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        pairs = self.find_image_pairs(directory)
         
-        # Create subdirectories
-        (output_dir / 'bf_masks').mkdir(exist_ok=True)
-        (output_dir / 'fl_masks').mkdir(exist_ok=True)
-        (output_dir / 'visualizations').mkdir(exist_ok=True)
-        (output_dir / 'measurements').mkdir(exist_ok=True)
-        (output_dir / 'logs').mkdir(exist_ok=True)
-        
-        # Determine group
-        if group_label is None:
-            group_label = self.determine_group(directory.name)
-        
-        # Find image pairs
-        image_pairs = self.find_image_pairs(directory)
-        
-        if not image_pairs:
-            print(f"No image pairs found in {directory}")
+        if not pairs:
+            print(f"Warning: No image pairs found in {directory}")
             return pd.DataFrame(), pd.DataFrame()
         
-        all_bf_measurements: List[pd.DataFrame] = []
-        all_fl_measurements: List[pd.DataFrame] = []
+        all_bf_results = []
+        all_fl_results = []
         
-        print(f"\nProcessing {group_label} group: {directory.name}")
-        for bf_path, fl_path, metadata_path, image_id in tqdm(image_pairs):
+        # Process each image pair
+        for bf_path, fl_path in tqdm(pairs, desc=f"Processing {group_name}"):
+            # Try to get pixel size from metadata
+            metadata_path = directory / 'MetaData' / f'{bf_path.stem.replace(self.file_patterns["brightfield_suffix"].replace(".tif", ""), "")}.xml'
             
-            # Process image pair
-            results = self.process_image_pair(
-                bf_path=bf_path,
-                fl_path=fl_path,
-                metadata_path=metadata_path,
-                image_id=image_id,
-                group=group_label
-            )
+            current_pixel_size = pixel_size_um
+            if metadata_path.exists():
+                parsed_size = self.parse_pixel_size(metadata_path)
+                if parsed_size is not None:
+                    current_pixel_size = parsed_size
+                else:
+                    print(f"Warning: Pixel size not found in {metadata_path}, using default 0.65 μm")
             
-            if results is None:
+            try:
+                bf_df, fl_df, bf_results, fl_results = self.process_image_pair(bf_path, fl_path, current_pixel_size)
+                
+                # Save segmentation visualizations
+                image_name = bf_path.stem.replace(self.file_patterns['brightfield_suffix'].replace('.tif', ''), '')
+                
+                # Save brightfield segmentation
+                bf_image = cv2.imread(str(bf_path), cv2.IMREAD_GRAYSCALE)
+                if bf_image is not None:
+                    self.bf_segmenter.visualize_segmentation(
+                        original_image=bf_image,
+                        labeled_mask=bf_results['labeled_mask'],
+                        quality_df=bf_results['quality_scores'],
+                        output_path=str(output_base_dir / 'brightfield_images' / f'{group_name}_{image_name}_bf.png')
+                    )
+                
+                # Save fluorescence segmentation
+                fl_image = cv2.imread(str(fl_path), cv2.IMREAD_GRAYSCALE)
+                if fl_image is not None:
+                    self.fl_segmenter.visualize_fluorescence(
+                        original_image=fl_image,
+                        labeled_mask=fl_results['labeled_mask'],
+                        measurements=fl_results['measurements'],
+                        output_path=str(output_base_dir / 'fluorescence_images' / f'{group_name}_{image_name}_fl.png')
+                    )
+                
+                all_bf_results.append(bf_df)
+                all_fl_results.append(fl_df)
+                
+            except Exception as e:
+                print(f"Error processing {bf_path.name}: {str(e)}")
                 continue
-            
-            # Save masks
-            safe_id = image_id.replace(' ', '_').replace('+', 'plus')
-            cv2.imwrite(
-                str(output_dir / 'bf_masks' / f'{safe_id}_BF_mask.tif'),
-                results['bright_field']['labeled_mask'].astype(np.uint16)
-            )
-            cv2.imwrite(
-                str(output_dir / 'fl_masks' / f'{safe_id}_FL_mask.tif'),
-                results['fluorescence']['labeled_mask'].astype(np.uint16)
-            )
-            
-            # Load images for visualization
-            bf_image = cv2.imread(str(bf_path), cv2.IMREAD_GRAYSCALE)
-            fl_image = cv2.imread(str(fl_path), cv2.IMREAD_GRAYSCALE)
-            
-            # Save visualizations
-            if bf_image is not None:
-                self.bf_segmenter.visualize_segmentation(
-                    original_image=bf_image,
-                    labeled_mask=results['bright_field']['labeled_mask'],
-                    quality_df=results['bright_field']['quality_scores'],
-                    output_path=str(output_dir / 'visualizations' / f'{safe_id}_BF_seg.png')
-                )
-            
-            if fl_image is not None:
-                self.fl_segmenter.visualize_fluorescence(
-                    original_image=fl_image,
-                    labeled_mask=results['fluorescence']['labeled_mask'],
-                    measurements=results['fluorescence']['measurements'],
-                    output_path=str(output_dir / 'visualizations' / f'{safe_id}_FL_seg.png')
-                )
-            
-            # Collect measurements
-            all_bf_measurements.append(results['bright_field']['measurements'])
-            all_fl_measurements.append(results['fluorescence']['measurements'])
         
-        # Combine measurements
-        if all_bf_measurements:
-            bf_measurements_df = pd.concat(all_bf_measurements, ignore_index=True)
-            fl_measurements_df = pd.concat(all_fl_measurements, ignore_index=True)
-            
-            # Save measurement tables
-            bf_measurements_df.to_csv(
-                output_dir / 'measurements' / f'{group_label}_bf_measurements.csv',
-                index=False
-            )
-            fl_measurements_df.to_csv(
-                output_dir / 'measurements' / f'{group_label}_fl_measurements.csv',
-                index=False
-            )
-            
-            print(f"  Total BF particles: {len(bf_measurements_df)}")
-            print(f"  Total FL regions: {len(fl_measurements_df)}")
-            
-            return bf_measurements_df, fl_measurements_df
+        # Combine results
+        if all_bf_results:
+            combined_bf = pd.concat(all_bf_results, ignore_index=True)
+            combined_bf['Group'] = group_name
         else:
-            return pd.DataFrame(), pd.DataFrame()
-    
-    def process_all_groups(self, output_base_dir: Path = Path('results')):
-        """
-        Process all groups (control, positive, negative) from source directory.
+            combined_bf = pd.DataFrame()
         
-        Parameters:
-        -----------
-        output_base_dir : Path
-            Base directory for all results
+        if all_fl_results:
+            combined_fl = pd.concat(all_fl_results, ignore_index=True)
+            combined_fl['Group'] = group_name
+        else:
+            combined_fl = pd.DataFrame()
+        
+        return combined_bf, combined_fl
+    
+    def parse_pixel_size(self, xml_path: Path) -> Optional[float]:
         """
-        all_results: Dict[str, Dict[str, List[pd.DataFrame]]] = {
-            'control': {'bf': [], 'fl': []},
-            'positive': {'bf': [], 'fl': []},
-            'negative': {'bf': [], 'fl': []}
+        Parse pixel size from Leica metadata XML.
+        
+        Args:
+            xml_path: Path to XML metadata file
+            
+        Returns:
+            Pixel size in micrometers, or None if not found
+        """
+        try:
+            import xml.etree.ElementTree as ET
+            tree = ET.parse(xml_path)
+            root = tree.getroot()
+            
+            # Method 1: Look for Voxel attribute in DimensionDescription
+            for elem in root.iter('DimensionDescription'):
+                voxel = elem.get('Voxel')
+                if voxel is not None:
+                    try:
+                        return float(voxel)
+                    except ValueError:
+                        pass
+            
+            # Method 2: Calculate from Length and NumberOfElements
+            for elem in root.iter('DimensionDescription'):
+                dim_id = elem.get('DimID')
+                if dim_id in ['1', 'X']:  # X dimension
+                    length = elem.get('Length')
+                    num_elements = elem.get('NumberOfElements')
+                    if length is not None and num_elements is not None:
+                        try:
+                            # Length is in meters, convert to micrometers
+                            length_um = float(length) * 1e6
+                            pixels = float(num_elements)
+                            return length_um / pixels
+                        except ValueError:
+                            pass
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error parsing XML {xml_path}: {e}")
+            return None
+    
+    def process_all_groups(self, output_base_dir: Path):
+        """
+        Process all experimental groups defined in the configuration.
+        
+        Args:
+            output_base_dir: Base directory for saving results
+        """
+        # Clean up existing results
+        if output_base_dir.exists():
+            shutil.rmtree(output_base_dir)
+        
+        output_base_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create subdirectories for images
+        (output_base_dir / 'brightfield_images').mkdir(exist_ok=True)
+        (output_base_dir / 'fluorescence_images').mkdir(exist_ok=True)
+        
+        all_results = {
+            'brightfield': {},
+            'fluorescence': {}
         }
         
-        # Process each subdirectory in source
-        for subdir in sorted(self.source_dir.iterdir()):
-            if not subdir.is_dir():
-                continue
-            
-            group = self.determine_group(subdir.name)
-            
-            if group == 'Control':
-                output_dir = output_base_dir / 'control'
-            elif group == 'Positive':
-                output_dir = output_base_dir / 'positive'
-            elif group == 'Negative':
-                output_dir = output_base_dir / 'negative'
-            else:
-                print(f"Skipping unknown group: {subdir.name}")
-                continue
-            
-            # Process directory
-            bf_df, fl_df = self.process_directory(
-                directory=subdir,
-                output_dir=output_dir,
-                group_label=group
-            )
-            
-            if not bf_df.empty:
-                all_results[group.lower()]['bf'].append(bf_df)
-                all_results[group.lower()]['fl'].append(fl_df)
-        
-        # Combine all results
-        combined_dir = output_base_dir / 'combined'
-        combined_dir.mkdir(parents=True, exist_ok=True)
-        
-        for group_name, data in all_results.items():
-            if data['bf']:
-                group_bf = pd.concat(data['bf'], ignore_index=True)
-                group_fl = pd.concat(data['fl'], ignore_index=True)
+        # Process each group
+        for group_type, directories in self.group_mapping.items():
+            for dir_name in directories:
+                dir_path = self.source_dir / dir_name
                 
-                group_bf.to_csv(
-                    combined_dir / f'{group_name}_all_bf_measurements.csv',
-                    index=False
+                if not dir_path.exists():
+                    print(f"Warning: Directory not found: {dir_path}")
+                    continue
+                
+                print(f"\nProcessing {group_type.capitalize()} group: {dir_name}")
+                
+                bf_df, fl_df = self.process_directory(
+                    dir_path, 
+                    f"{group_type}_{dir_name}",
+                    output_base_dir=output_base_dir
                 )
-                group_fl.to_csv(
-                    combined_dir / f'{group_name}_all_fl_measurements.csv',
-                    index=False
-                )
+                
+                if not bf_df.empty:
+                    all_results['brightfield'][f"{group_type}_{dir_name}"] = bf_df
+                if not fl_df.empty:
+                    all_results['fluorescence'][f"{group_type}_{dir_name}"] = fl_df
         
-        # Create overall combined file
-        all_bf: List[pd.DataFrame] = []
-        all_fl: List[pd.DataFrame] = []
-        for group_data in all_results.values():
-            all_bf.extend(group_data['bf'])
-            all_fl.extend(group_data['fl'])
+        # Save results
+        self.save_results(all_results, output_base_dir)
         
-        if all_bf:
-            final_bf = pd.concat(all_bf, ignore_index=True)
-            final_fl = pd.concat(all_fl, ignore_index=True)
-            
-            final_bf.to_csv(combined_dir / 'all_bf_measurements.csv', index=False)
-            final_fl.to_csv(combined_dir / 'all_fl_measurements.csv', index=False)
-            
-            print("\n" + "="*60)
-            print("COMPLETE ANALYSIS SUMMARY")
-            print("="*60)
-            print(f"Total images processed: {final_bf['Image_ID'].nunique()}")
-            print(f"Total BF particles: {len(final_bf)}")
-            print(f"Total FL regions: {len(final_fl)}")
-            print("\nBy Group:")
-            print(final_bf.groupby('Group').size())
-            print("="*60)
+        # Generate summary statistics
+        self.generate_summary(all_results, output_base_dir)
+    
+    def save_results(self, results: Dict, output_dir: Path):
+        """
+        Save processing results to CSV files.
+        
+        Args:
+            results: Dictionary containing brightfield and fluorescence results
+            output_dir: Directory to save results
+        """
+        # Save brightfield results
+        if results['brightfield']:
+            bf_combined = pd.concat(results['brightfield'].values(), ignore_index=True)
+            bf_path = output_dir / 'brightfield_results.csv'
+            bf_combined.to_csv(bf_path, index=False)
+            print(f"\nSaved brightfield results to {bf_path.absolute()}")
+        
+        # Save fluorescence results
+        if results['fluorescence']:
+            fl_combined = pd.concat(results['fluorescence'].values(), ignore_index=True)
+            fl_path = output_dir / 'fluorescence_results.csv'
+            fl_combined.to_csv(fl_path, index=False)
+            print(f"Saved fluorescence results to {fl_path.absolute()}")
+    
+    def generate_summary(self, results: Dict, output_dir: Path):
+        """
+        Generate summary statistics for each group.
+        
+        Args:
+            results: Dictionary containing brightfield and fluorescence results
+            output_dir: Directory to save summary
+        """
+        summary_data = []
+        
+        for group_name, bf_df in results['brightfield'].items():
+            if group_name in results['fluorescence']:
+                fl_df = results['fluorescence'][group_name]
+                
+                summary_data.append({
+                    'Group': group_name,
+                    'Total_Particles': len(bf_df),
+                    'Total_Signals': len(fl_df),
+                    'Mean_Particle_Area_um2': bf_df['Area_um2'].mean(),
+                    'Mean_Circularity': bf_df['Circularity'].mean(),
+                    'Mean_Signal_Intensity': fl_df['Raw_Mean_Intensity'].mean() if 'Raw_Mean_Intensity' in fl_df.columns else np.nan,
+                    'Mean_Corrected_Intensity': fl_df['Corrected_Mean_Intensity'].mean() if 'Corrected_Mean_Intensity' in fl_df.columns else np.nan
+                })
+        
+        if summary_data:
+            summary_df = pd.DataFrame(summary_data)
+            summary_path = output_dir / 'summary_statistics.csv'
+            summary_df.to_csv(summary_path, index=False)
+            print(f"Saved summary statistics to {summary_path.absolute()}")
 
 
-# Main execution script
 def main():
-    """Main execution function."""
+    parser = argparse.ArgumentParser(description='Process specific sample groups')
+    parser.add_argument('--sample-group', type=str, help='Sample group directory name')
+    parser.add_argument('--control-group', type=str, default='Control group', 
+                        help='Control group directory name')
+    args = parser.parse_args()
+    
+    # If no sample group specified, prompt user
+    if not args.sample_group:
+        print("\nAvailable directories in source folder:")
+        source_dir = Path('../source')
+        dirs = [d.name for d in source_dir.iterdir() if d.is_dir()]
+        for i, d in enumerate(dirs, 1):
+            print(f"  {i}. {d}")
+        
+        choice = input("\nEnter sample group name (or number): ").strip()
+        
+        # Check if user entered a number
+        if choice.isdigit() and 1 <= int(choice) <= len(dirs):
+            args.sample_group = dirs[int(choice) - 1]
+        else:
+            args.sample_group = choice
+    
+    # If no control group specified, prompt user
+    if args.control_group == 'Control group':
+        use_default = input(f"\nUse '{args.control_group}' as control? (y/n): ").strip().lower()
+        if use_default != 'y':
+            args.control_group = input("Enter control group name: ").strip()
+    
+    print(f"\nProcessing sample group: {args.sample_group}")
+    print(f"Control group: {args.control_group}\n")
     
     # Load configurations
-    from utils import load_config
-    
     bf_config = load_config('../config/brightfield_config.json')
     fl_config = load_config('../config/fluorescence_config.json')
     
-    # Initialize pipeline
+    # Create custom group mapping
+    custom_config = {
+        "source_directory": "../source",
+        "file_patterns": {
+            "brightfield_suffix": "_ch00.tif",
+            "fluorescence_suffix": "_ch01.tif"
+        },
+        "group_mapping": {
+            "control": [args.control_group],
+            "sample": [args.sample_group]
+        }
+    }
+    
+    # Initialize and run pipeline
     pipeline = AdaptedSegmentationPipeline(
         bf_config=bf_config,
         fl_config=fl_config,
-        pipeline_config_path='../config/pipeline_config.json'
+        pipeline_config=custom_config
     )
     
-    # Process all groups
     pipeline.process_all_groups(output_base_dir=Path('results'))
+    
+    print("\nProcessing complete!")
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
