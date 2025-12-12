@@ -1,28 +1,12 @@
 {
-  "source_directory": "source",
+  "source_directory": "../source",
   "file_patterns": {
     "brightfield_suffix": "_ch00.tif",
-    "fluorescence_suffix": "_ch01.tif",
-    "metadata_file": ".xml",
-    "metadata_directory": "MetaData"
+    "fluorescence_suffix": "_ch01.tif"
   },
   "group_mapping": {
-    "control": ["Control group"],
-    "positive": ["10", "15", "16"],
-    "negative": ["11", "12", "13", "14", "17", "18", "19"]
-  },
-  "naming_convention": {
-    "control_pattern": "G\\+ microgel (\\d+)",
-    "patient_pattern": "(.+)_(\\d+)"
-  },
-  "output_formats": {
-    "masks": "tif",
-    "visualizations": "png",
-    "measurements": "csv"
-  },
-  "processing": {
-    "parallel": false,
-    "max_workers": 4,
-    "verbose": true
+    "control": ["control group"],
+    "positive": ["10", "15", "16", "19"],
+    "negative": ["11", "12", "13", "14", "17", "18"]
   }
 }

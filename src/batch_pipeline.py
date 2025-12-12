@@ -439,14 +439,14 @@ def main():
     # Load configurations
     from utils import load_config
     
-    bf_config = load_config('config/brightfield_config.json')
-    fl_config = load_config('config/fluorescence_config.json')
+    bf_config = load_config('../config/brightfield_config.json')
+    fl_config = load_config('../config/fluorescence_config.json')
     
     # Initialize pipeline
     pipeline = AdaptedSegmentationPipeline(
         bf_config=bf_config,
         fl_config=fl_config,
-        pipeline_config_path='config/pipeline_config.json'
+        pipeline_config_path='../config/pipeline_config.json'
     )
     
     # Process all groups

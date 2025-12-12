@@ -223,13 +223,16 @@ class FluorescenceSegmentation:
             intensity_image=fluorescence_image,
             properties=[
                 'label', 'area', 'centroid',
-                'mean_intensity', 'max_intensity', 'min_intensity',
-                'integrated_intensity'
+                'mean_intensity', 'max_intensity', 'min_intensity'
             ]
         )
         
         df = pd.DataFrame(props)
         
+        # Calculate integrated intensity immediately after creating DataFrame
+        df['Raw_Integrated_Intensity'] = df['mean_intensity'] * df['area']
+
+
         # Convert area to micrometers
         df['Area_um2'] = df['area'] * (pixel_size_um ** 2)
         
@@ -249,7 +252,7 @@ class FluorescenceSegmentation:
         # Corrected intensities
         df['Corrected_Mean_Intensity'] = df['mean_intensity'] - df['Local_Background']
         df['Corrected_Integrated_Intensity'] = (
-            df['integrated_intensity'] - df['Local_Background'] * df['area']
+            df['Raw_Integrated_Intensity'] - df['Local_Background'] * df['area']
         )
         
         # Signal-to-background ratio
@@ -262,10 +265,11 @@ class FluorescenceSegmentation:
             'centroid-1': 'Centroid_X',
             'mean_intensity': 'Raw_Mean_Intensity',
             'max_intensity': 'Max_Intensity',
-            'min_intensity': 'Min_Intensity',
-            'integrated_intensity': 'Raw_Integrated_Intensity'
+            'min_intensity': 'Min_Intensity'
         })
         
+        df = df.rename(columns={'integrated_intensity': 'Raw_Integrated_Intensity'})
+
         return df
     
     def colocalize_with_particles(self, fluorescence_mask: np.ndarray,
