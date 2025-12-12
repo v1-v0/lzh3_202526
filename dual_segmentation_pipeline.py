@@ -293,8 +293,8 @@ def visualize_results(bf_image: np.ndarray, fl_image: np.ndarray,
 
 def main():
     # Setup paths
-    bf_path = Path("source/12/12 N NO 1_ch00.tif")
-    fl_path = Path("source/12/12 N NO 1_ch01.tif")
+    bf_path = Path("source/10/10 P 1_ch00.tif")
+    fl_path = Path("source/10/10 P 1_ch01.tif")
     
     # Setup output
     output_dir = Path("output")
