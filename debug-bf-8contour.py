@@ -3,6 +3,44 @@ import numpy as np
 import os
 import glob
 
+# --- Embedded logging: tee stdout/stderr to a file ---
+import sys
+from datetime import datetime
+from pathlib import Path
+import atexit
+
+class Tee:
+    def __init__(self, *streams):
+        self.streams = streams
+    def write(self, data):
+        for s in self.streams:
+            s.write(data)
+            s.flush()
+    def flush(self):
+        for s in self.streams:
+            s.flush()
+
+# Create logs directory next to this script and open timestamped file
+_project_root = Path(__file__).resolve().parent
+_logs_dir = _project_root / "logs"
+_logs_dir.mkdir(exist_ok=True)
+_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+_script_name = Path(__file__).stem
+_log_path = _logs_dir / f"run_{_timestamp}_{_script_name}.txt"
+_log_file = open(_log_path, "w", encoding="utf-8")
+
+# Tee both stdout and stderr to file while preserving console output
+sys.stdout = Tee(sys.stdout, _log_file)
+sys.stderr = Tee(sys.stderr, _log_file)
+print(f"Saving output to: {_log_path}")
+
+@atexit.register
+def _close_log_file():
+    try:
+        _log_file.close()
+    except Exception:
+        pass
+
 DEBUG_DIR = "debug"
 os.makedirs(DEBUG_DIR, exist_ok=True)
 

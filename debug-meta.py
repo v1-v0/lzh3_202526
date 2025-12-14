@@ -416,9 +416,9 @@ def auto_adjust_column_width(ws):
 # --------------------------------------------------
 # LOAD IMAGES AND METADATA
 # --------------------------------------------------
-grey_path = "source/12/12 N NO 1_ch00.tif"
-red_path = "source/12/12 N NO 1_ch01.tif"
-meta_path = "source/12/MetaData/12 N NO 1_Properties.xml"
+grey_path = "source/Control group/G+ microgel 1_ch00.tif"
+red_path = "source/Control group/G+ microgel 1_ch01.tif"
+meta_path = "source/Control group/MetaData/G+ microgel 1_Properties.xml"
 
 print("="*60)
 print("LOADING METADATA AND IMAGES")
