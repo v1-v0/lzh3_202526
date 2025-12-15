@@ -21,6 +21,7 @@ env/
 
 # Project-specific directories
 source/1[0-9]/
+source/[1-9]/
 source_no_meta/
 processed/
 debug/
