@@ -97,7 +97,7 @@ DILATE_ITERATIONS = 1
 ERODE_ITERATIONS = 1
 
 # Filtering (in micrometers)
-MIN_AREA_UM2 = 5.0
+MIN_AREA_UM2 = 3.0
 MAX_AREA_UM2 = 2000.0
 MIN_CIRCULARITY = 0.0
 MAX_FRACTION_OF_IMAGE_AREA = 0.25
@@ -105,8 +105,8 @@ MAX_FRACTION_OF_IMAGE_AREA = 0.25
 # --- Fluorescence segmentation (S2) ---
 FLUOR_GAUSSIAN_SIGMA = 1.5
 FLUOR_MORPH_KERNEL_SIZE = 3
-FLUOR_MIN_AREA_UM2 = 1.0
-FLUOR_MATCH_MIN_INTERSECTION_PX = 10.0
+FLUOR_MIN_AREA_UM2 = 3.0
+FLUOR_MATCH_MIN_INTERSECTION_PX = 5.0
 
 # Debug options
 CLEAR_OUTPUT_DIR_EACH_RUN = True
@@ -264,6 +264,25 @@ def prompt_user_select_group(groups: list[Path]) -> Optional[Path]:
             return groups[idx - 1]
 
         print("Out of range. Try again.")
+
+
+def get_percentile_option() -> float:
+    """Prompt user to select percentile for top/bottom group analysis."""
+    print("\nSelect percentile for top/bottom group analysis:")
+    print("  [1] 20% (default)")
+    print("  [2] 25%")
+    print("  [3] 30%")
+    
+    while True:
+        choice = input("Enter number (or press Enter for default): ").strip()
+        if choice == '' or choice == '1':
+            return 0.2
+        elif choice == '2':
+            return 0.25
+        elif choice == '3':
+            return 0.3
+        else:
+            print("Invalid choice. Please enter 1, 2, or 3, or press Enter.")
 
 
 def find_metadata_paths(img_path: Path) -> tuple[Optional[Path], Optional[Path]]:
@@ -665,7 +684,250 @@ def segment_particles_brightfield(img8: np.ndarray, pixel_size_um: float, out_di
 # ==================================================
 # Excel consolidation with enhanced statistics
 # ==================================================
-def consolidate_to_excel(output_dir: Path, group_name: str) -> None:
+def generate_error_bar_comparison(output_dir: Path, percentile: float = 0.2) -> None:
+    """Generate error bar comparison plot with overlaid jitter (strip plot) - SD only"""
+
+    excel_files = list(output_dir.rglob("*_master.xlsx"))
+
+    if len(excel_files) < 2:
+        print(f"[INFO] Need at least 2 groups for comparison. Found {len(excel_files)}")
+        return
+
+    all_data_rows = []
+    group_stats = {}
+
+    for excel_path in sorted(excel_files):
+        group_name = excel_path.stem.replace("_master", "")
+
+        try:
+            typical_sheet = f"{group_name}_Typical_Particles"
+            df = pd.read_excel(excel_path, sheet_name=typical_sheet)
+
+            if "Fluor_Density_per_BF_Area" in df.columns:
+                values = df["Fluor_Density_per_BF_Area"].dropna()
+
+                for v in values:
+                    all_data_rows.append(
+                        {"Group": group_name, "Fluorescence Density": float(np.asarray(v).item())}
+                    )
+
+                mean_val = float(np.asarray(values.mean()).item())
+                std_val = float(np.asarray(values.std()).item())
+                sem_val = float(np.asarray(values.sem()).item())
+
+                group_stats[group_name] = {
+                    "n": len(values),
+                    "mean": mean_val,
+                    "std": std_val,
+                    "sem": sem_val,
+                    "ci_95": 1.96 * sem_val,
+                }
+
+                print(f"Loaded {len(values)} points for group: {group_name}")
+
+        except Exception as e:
+            print(f"[WARN] Could not read {group_name}: {e}")
+            continue
+
+    if not all_data_rows:
+        print("[WARN] No valid data found for comparison")
+        return
+
+    df_all = pd.DataFrame(all_data_rows)
+
+    unique_groups = df_all["Group"].unique()
+    palette_colors = ["silver", "violet"]
+    if len(unique_groups) > 2:
+        palette_colors = sns.color_palette("husl", len(unique_groups))
+
+    # Generate SD plot
+    plt.figure(figsize=(6, 5))
+    sns.set_style("ticks")
+
+    try:
+        sns.barplot(
+            data=df_all,
+            x="Group",
+            y="Fluorescence Density",
+            hue="Group",
+            palette=palette_colors,
+            legend=False,
+            errorbar="sd",
+            capsize=0.1,
+            edgecolor="black",
+            alpha=0.7,
+            err_kws={"color": "black", "linewidth": 1.5},
+        )
+    except TypeError:
+        # Fallback for older seaborn versions
+        sns.barplot(
+            x="Group",
+            y="Fluorescence Density",
+            data=df_all,
+            ci="sd",
+            capsize=0.1,
+            palette=palette_colors,
+            edgecolor="black",
+            errcolor="black",
+            errwidth=1.5,
+            alpha=0.7,
+        )
+
+    sns.stripplot(
+        x="Group",
+        y="Fluorescence Density",
+        data=df_all,
+        jitter=True,
+        color="cyan",
+        edgecolor="black",
+        linewidth=0.5,
+        size=6,
+        alpha=0.6,
+    )
+
+    plt.ylabel("Fluorescence Density (a.u./µm²)", fontsize=12, fontweight="bold")
+    plt.xlabel("")
+    plt.xticks(fontsize=10, fontweight="bold")
+    plt.yticks(fontsize=10, fontweight="bold")
+    
+    # Updated title with percentile
+    percentile_pct = int(percentile * 100)
+    plt.title(f"Top {percentile_pct}% vs Bottom {percentile_pct}% Comparison\n(Error Bars: Standard Deviation)", fontsize=11)
+
+    for axis in ["top", "bottom", "left", "right"]:
+        plt.gca().spines[axis].set_linewidth(1.5)
+
+    plt.tight_layout()
+
+    out_path = output_dir / f"error_bar_jitter_comparison_SD_{percentile_pct}pct.png"
+    plt.savefig(out_path, dpi=300)
+    plt.close()
+    print(f"Saved plot: {out_path}")
+
+    # Save statistics CSV
+    pd.DataFrame(
+        [
+            {
+                "Group": g_name,
+                "n": stats["n"],
+                "Mean": f"{stats['mean']:.2f}",
+                "SD": f"{stats['std']:.2f}",
+                "SEM": f"{stats['sem']:.2f}",
+                "95% CI": f"±{stats['ci_95']:.2f}",
+            }
+            for g_name, stats in group_stats.items()
+        ]
+    ).to_csv(output_dir / "comparison_statistics.csv", index=False)
+
+    # Perform t-test if exactly 2 groups
+    if len(unique_groups) == 2:
+        g1, g2 = unique_groups[0], unique_groups[1]
+        data1 = df_all[df_all["Group"] == g1]["Fluorescence Density"]
+        data2 = df_all[df_all["Group"] == g2]["Fluorescence Density"]
+
+        t_stat_any, p_val_any = cast(Any, scipy_stats.ttest_ind(data1, data2))
+
+        t_stat = float(np.asarray(t_stat_any).item())
+        p_val_float = float(np.asarray(p_val_any).item())
+
+        with open(output_dir / "statistical_test.txt", "w", encoding="utf-8") as f:
+            f.write("Two-Sample t-Test Results\n")
+            f.write(f"{'=' * 60}\n")
+            f.write(f"Group 1: {g1} (n={len(data1)})\n")
+            f.write(f"Group 2: {g2} (n={len(data2)})\n\n")
+            f.write(f"t-statistic: {t_stat:.4f}\n")
+            f.write(f"p-value: {p_val_float:.4f}\n")
+            f.write(f"Significance (alpha=0.05): {'YES' if p_val_float < 0.05 else 'NO'}\n")
+
+
+def embed_comparison_plots_into_all_excels(
+    output_root: Path,
+    percentile: float = 0.2,
+) -> None:
+    """
+    Post-process all master Excel files under output_root:
+      - rename 'Error_Bar_Summary' to 'Summary' (or keep 'Summary' if already present)
+      - move 'Summary' to the first worksheet
+      - embed SD comparison plot into 'Summary'
+    """
+    percentile_pct = int(percentile * 100)
+    sd_plot = f"error_bar_jitter_comparison_SD_{percentile_pct}pct.png"
+    sd_img_path = output_root / sd_plot
+
+    if not sd_img_path.exists():
+        print(f"[WARN] SD plot not found, embedding skipped: {sd_img_path}")
+
+    excel_files = sorted(output_root.rglob("*_master.xlsx"))
+    if not excel_files:
+        print(f"[WARN] No master Excel files found under {output_root}")
+        return
+
+    def add_png(ws, path: Path, anchor_cell: str, width_px: int = 620) -> None:
+        if not path.exists():
+            return
+        img = XLImage(str(path))
+        if getattr(img, "width", None) and getattr(img, "height", None):
+            scale = width_px / float(img.width)
+            img.width = int(img.width * scale)
+            img.height = int(img.height * scale)
+        ws.add_image(img, anchor_cell)
+    
+    updated = 0
+    for excel_path in excel_files:
+        try:
+            wb = load_workbook(excel_path)
+
+            modified = False
+
+            if "Summary" in wb.sheetnames:
+                ws_summary = wb["Summary"]
+            elif "Error_Bar_Summary" in wb.sheetnames:
+                ws_summary = wb["Error_Bar_Summary"]
+                ws_summary.title = "Summary"
+                ws_summary = wb["Summary"]
+                modified = True
+            else:
+                ws_summary = wb.create_sheet("Summary")
+                modified = True
+
+            # After moving Summary to index 0:
+            if "Ratios" in wb.sheetnames:
+                ws_ratios = wb["Ratios"]
+                ratios_idx = wb.sheetnames.index("Ratios")
+                desired_idx = 1
+                if ratios_idx != desired_idx:
+                    wb.move_sheet(ws_ratios, offset=desired_idx - ratios_idx)
+                    modified = True
+
+            current_idx = wb.sheetnames.index(ws_summary.title)
+            if current_idx != 0:
+                wb.move_sheet(ws_summary, offset=-current_idx)
+                modified = True
+
+            marker_cell = "G1"
+            marker_value = "COMPARISON_PLOTS_EMBEDDED"
+            if ws_summary[marker_cell].value != marker_value:
+                add_png(ws_summary, sd_img_path, "G3")
+                
+                ws_summary[marker_cell].value = marker_value
+                modified = True
+            else:
+                print(f"Plots already embedded in {excel_path.name}; skipping embedding.")
+
+            if modified:
+                wb.save(excel_path)
+                updated += 1
+                print(f"Updated workbook: {excel_path}")
+            else:
+                print(f"No changes needed: {excel_path}")
+
+        except Exception as e:
+            print(f"[WARN] Could not embed plots into {excel_path}: {e}")
+
+    print(f"Embedding complete. Updated {updated}/{len(excel_files)} workbooks.")
+
+
+def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -> None:
     """Consolidate all CSVs in a group folder into one Excel workbook with statistics and color coding"""
     csv_files = list(output_dir.glob("*/object_stats.csv"))
 
@@ -810,13 +1072,10 @@ def consolidate_to_excel(output_dir: Path, group_name: str) -> None:
                 image_name = csv_file.parent.name
                 df = pd.read_csv(csv_file)
 
-                # Back-compat rename (if older CSVs exist)
-                df.rename(columns={"Area_px": "BF_Area_px", "Area_um2": "BF_Area_um2"}, inplace=True)
-
-                # Derived metrics
                 if "Fluor_IntegratedDensity" in df.columns and "BF_Area_um2" in df.columns:
                     df["Fluor_Density_per_BF_Area"] = (
-                        df["Fluor_IntegratedDensity"].astype(float) / df["BF_Area_um2"].astype(float)
+                        pd.to_numeric(df["Fluor_IntegratedDensity"], errors="coerce")
+                        / pd.to_numeric(df["BF_Area_um2"], errors="coerce")
                     )
                 else:
                     df["Fluor_Density_per_BF_Area"] = 0.0
@@ -839,16 +1098,20 @@ def consolidate_to_excel(output_dir: Path, group_name: str) -> None:
                 # Sorting for color coding + typical selection
                 df_sorted = df.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
 
-                n_rows = len(df_sorted)
-                top_20_threshold = int(np.ceil(n_rows * 0.2))
-                bottom_20_threshold = int(np.floor(n_rows * 0.8))
+                # Filter out zero-fluorescence objects before percentile calculation
+                df_sorted = df_sorted[df_sorted["Fluor_Density_per_BF_Area"] > 0].reset_index(drop=True)
 
-                typical_particles = df_sorted.iloc[top_20_threshold:bottom_20_threshold].copy()
+                n_rows = len(df_sorted)
+                # Use user-selected percentile
+                top_threshold = int(np.ceil(n_rows * percentile))
+                bottom_threshold = int(np.floor(n_rows * (1 - percentile)))
+
+                typical_particles = df_sorted.iloc[top_threshold:bottom_threshold].copy()
                 typical_particles["Source_Image"] = image_name
                 all_typical_particles.append(typical_particles)
 
                 sheet_name = image_name[:31]
-                df_sorted.to_excel(writer, sheet_name=sheet_name, index=False)
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
                 ws = writer.sheets[sheet_name]
 
                 # Header formatting
@@ -858,13 +1121,6 @@ def consolidate_to_excel(output_dir: Path, group_name: str) -> None:
                     cell.alignment = center_align
 
                 ws.auto_filter.ref = ws.dimensions
-
-                # NOTE: Your original formatting/column-width/color-coding block was
-                # replaced by "formatting omitted ..." in the provided test.py.
-                # Keeping behavior consistent with the file you shared: no extra formatting here.
-
-                # If you want the full original formatting logic restored too, tell me and I’ll
-                # merge it back (it’s a longer block).
 
             # --- Restore {group}_Typical_Particles merged sheet (for group comparison) ---
             try:
@@ -887,7 +1143,51 @@ def consolidate_to_excel(output_dir: Path, group_name: str) -> None:
             except Exception as e:
                 print(f"[WARN] Could not create {group_name}_Typical_Particles sheet: {e}")
 
-            # --- QA_Ratios sheet (plots + support PNGs) ---
+            # --- Summary sheet ---
+            try:
+                summary_data = []
+                for csv_file in sorted(csv_files):
+                    image_name = csv_file.parent.name
+                    df = pd.read_csv(csv_file)
+                    
+                    # Calculate Fluor_Density_per_BF_Area if not present
+                    if "Fluor_IntegratedDensity" in df.columns and "BF_Area_um2" in df.columns:
+                        df["Fluor_Density_per_BF_Area"] = (
+                            pd.to_numeric(df["Fluor_IntegratedDensity"], errors="coerce")
+                            / pd.to_numeric(df["BF_Area_um2"], errors="coerce")
+                        )
+                        df["Fluor_Density_per_BF_Area"] = df["Fluor_Density_per_BF_Area"].replace([np.inf, -np.inf], 0)
+                    
+                    if "Fluor_Area_um2" in df.columns and "BF_Area_um2" in df.columns:
+                        df["BF_to_Fluor_Area_Ratio"] = (
+                            pd.to_numeric(df["BF_Area_um2"], errors="coerce")
+                            / pd.to_numeric(df["Fluor_Area_um2"], errors="coerce")
+                        )
+                        df["BF_to_Fluor_Area_Ratio"] = df["BF_to_Fluor_Area_Ratio"].replace([np.inf, -np.inf], 0)
+                    
+                    # Calculate statistics for this image
+                    summary_data.append({
+                        'Image': image_name,
+                        'Total_Particles': len(df),
+                        'Avg_BF_Area_um2': df['BF_Area_um2'].mean() if 'BF_Area_um2' in df.columns else 0,
+                        'Avg_Fluor_Density': df['Fluor_Density_per_BF_Area'].mean() if 'Fluor_Density_per_BF_Area' in df.columns else 0,
+                        'Avg_BF_to_Fluor_Ratio': df['BF_to_Fluor_Area_Ratio'].mean() if 'BF_to_Fluor_Area_Ratio' in df.columns else 0
+                    })
+                
+                summary_df = pd.DataFrame(summary_data)
+                summary_df.to_excel(writer, sheet_name="Summary", index=False)
+                ws_summary = writer.sheets["Summary"]
+                
+                # Format header
+                for cell in ws_summary[1]:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = center_align
+                    
+            except Exception as e:
+                print(f"[WARN] Could not create Summary sheet: {e}")
+
+            # --- Ratios sheet (plots + support PNGs) ---
             try:
                 wb = writer.book
 
@@ -898,12 +1198,7 @@ def consolidate_to_excel(output_dir: Path, group_name: str) -> None:
                     if legacy in wb.sheetnames:
                         wb.remove(wb[legacy])
 
-                # Create "Ratios" and place it right after "Summary" if Summary exists
-                if "Summary" in wb.sheetnames:
-                    summary_idx = wb.sheetnames.index("Summary")  # 0-based
-                    ws_qa = wb.create_sheet(ratios_name, index=summary_idx + 1)
-                else:
-                    ws_qa = wb.create_sheet(ratios_name)  # appended if Summary doesn't exi
+                ws_qa = wb.create_sheet(ratios_name)
 
                 def add_png(ws, path: Path, anchor_cell: str, width_px: int = 360) -> None:
                     if not path.exists():
@@ -952,52 +1247,47 @@ def consolidate_to_excel(output_dir: Path, group_name: str) -> None:
                         .fillna(0)
                     )
 
+                    # SORT HERE - BEFORE writing rows
+                    df = df.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
+
                     ws_qa[f"A{row}"] = image_name
                     ws_qa[f"A{row}"].font = Font(bold=True, size=12)
                     row0 = row
 
+                    # SWAPPED: Now Fluor_Density on left (A,B), BF_to_Fluor on right (D,E)
                     ws_qa[f"A{row+1}"] = "Object_ID"
-                    ws_qa[f"B{row+1}"] = "BF_to_Fluor_Area_Ratio"
+                    ws_qa[f"B{row+1}"] = "Fluor_Density_per_BF_Area"
                     ws_qa[f"D{row+1}"] = "Object_ID"
-                    ws_qa[f"E{row+1}"] = "Fluor_Density_per_BF_Area"
+                    ws_qa[f"E{row+1}"] = "BF_to_Fluor_Area_Ratio"
                     for c in ["A", "B", "D", "E"]:
                         ws_qa[f"{c}{row+1}"].font = Font(bold=True)
                         ws_qa[f"{c}{row+1}"].alignment = Alignment(horizontal="center")
 
                     start_data_row = row + 2
+
+                    # Column widths
+                    ws_qa.column_dimensions["A"].width = 16  # Object_ID
+                    ws_qa.column_dimensions["B"].width = 26  # Fluor_Density_per_BF_Area
+                    ws_qa.column_dimensions["C"].width = 3   # spacer
+                    ws_qa.column_dimensions["D"].width = 16  # Object_ID
+                    ws_qa.column_dimensions["E"].width = 22  # BF_to_Fluor_Area_Ratio
+
                     for k, r in enumerate(df.itertuples(index=False), 0):
-                        # end_row = start_data_row + n - 1 
-                        
-                        # Column widths (set once; harmless if repeated)
-                        ws_qa.column_dimensions["A"].width = 16  # Object_ID
-                        ws_qa.column_dimensions["B"].width = 22  # BF_to_Fluor_Area_Ratio
-                        ws_qa.column_dimensions["C"].width = 3   # spacer
-                        ws_qa.column_dimensions["D"].width = 16  # Object_ID
-                        ws_qa.column_dimensions["E"].width = 26  # Fluor_Density_per_BF_Area
-
-                        # Number formats
-                        # ratio_fmt = "0.000"        # e.g., 0.848
-                        #density_fmt = "#,##0.00"   # e.g., 6,408.31
-
-                        # for r in range(start_data_row, end_row + 1):
-                        #     ws_qa[f"B{r}"].number_format = ratio_fmt
-                        #     ws_qa[f"E{r}"].number_format = density_fmt
-
                         ws_qa[f"A{start_data_row+k}"] = getattr(r, "Object_ID")
                         ws_qa[f"B{start_data_row+k}"] = float(
-                            getattr(r, "BF_to_Fluor_Area_Ratio", 0.0)
+                            getattr(r, "Fluor_Density_per_BF_Area", 0.0)
                         )
                         ws_qa[f"D{start_data_row+k}"] = getattr(r, "Object_ID")
                         ws_qa[f"E{start_data_row+k}"] = float(
-                            getattr(r, "Fluor_Density_per_BF_Area", 0.0)
+                            getattr(r, "BF_to_Fluor_Area_Ratio", 0.0)
                         )
 
                     n = len(df)
                     if n > 0:
-                        # Chart 1
+                        # SWAPPED Chart 1: Now Fluor_Density on left
                         ch1 = ScatterChart()
-                        ch1.title = "BF area / FL area (BF_to_Fluor_Area_Ratio)"
-                        ch1.y_axis.title = "Ratio"
+                        ch1.title = "Fluor intensity / BF area (Fluor_Density_per_BF_Area)"
+                        ch1.y_axis.title = "a.u./µm²"
                         ch1.x_axis.title = "Object_ID"
                         xref = Reference(
                             ws_qa,
@@ -1013,20 +1303,20 @@ def consolidate_to_excel(output_dir: Path, group_name: str) -> None:
                         )
                         s1 = cast(Any, SeriesFactory(yref, xref))
                         try:
-                            s1.title = "BF/FL Area Ratio"
+                            s1.title = "Fluor Density"
                         except Exception:
                             pass
                         try:
-                            s1.marker = Marker(symbol="circle", size=5)
+                            s1.marker = Marker(symbol="triangle", size=5)
                         except Exception:
                             pass
                         ch1.series.append(s1)
                         ws_qa.add_chart(ch1, f"G{row+1}")
 
-                        # Chart 2
+                        # SWAPPED Chart 2: Now BF_to_Fluor on right
                         ch2 = ScatterChart()
-                        ch2.title = "Fluor intensity / BF area (Fluor_Density_per_BF_Area)"
-                        ch2.y_axis.title = "a.u./µm²"
+                        ch2.title = "BF area / FL area (BF_to_Fluor_Area_Ratio)"
+                        ch2.y_axis.title = "Ratio"
                         ch2.x_axis.title = "Object_ID"
                         xref2 = Reference(
                             ws_qa,
@@ -1042,11 +1332,11 @@ def consolidate_to_excel(output_dir: Path, group_name: str) -> None:
                         )
                         s2 = cast(Any, SeriesFactory(yref2, xref2))
                         try:
-                            s2.title = "Fluor Density"
+                            s2.title = "BF/FL Area Ratio"
                         except Exception:
                             pass
                         try:
-                            s2.marker = Marker(symbol="triangle", size=5)
+                            s2.marker = Marker(symbol="circle", size=5)
                         except Exception:
                             pass
                         ch2.series.append(s2)
@@ -1063,6 +1353,20 @@ def consolidate_to_excel(output_dir: Path, group_name: str) -> None:
             except Exception as e:
                 print(f"[WARN] Could not create Ratios sheet: {e}")
 
+        # Reorder worksheets AFTER ExcelWriter closes
+        wb = load_workbook(excel_path)
+        desired_order = ["Summary", "Ratios", "README", f"{group_name}_Typical_Particles"]
+
+        # Move sheets to desired positions
+        for idx, sheet_name in enumerate(desired_order):
+            if sheet_name in wb.sheetnames:
+                sheet = wb[sheet_name]
+                current_idx = wb.sheetnames.index(sheet_name)
+                if current_idx != idx:
+                    wb.move_sheet(sheet, offset=idx - current_idx)
+
+        wb.save(excel_path)
+
         print(f"Excel consolidation saved: {excel_path}")
         print("  - Ratios sheet with ratio plots + support PNGs")
 
@@ -1073,252 +1377,7 @@ def consolidate_to_excel(output_dir: Path, group_name: str) -> None:
         print(f"[ERROR] Failed to create Excel file: {e}")
         import traceback
         traceback.print_exc()
-
-
-
-# ==================================================
-def generate_error_bar_comparison(output_dir: Path) -> None:
-    """Generate error bar comparison plot with overlaid jitter (strip plot)"""
-
-    excel_files = list(output_dir.rglob("*_master.xlsx"))
-
-    if len(excel_files) < 2:
-        print(f"[INFO] Need at least 2 groups for comparison. Found {len(excel_files)}")
-        return
-
-    all_data_rows = []
-    group_stats = {}
-
-    for excel_path in sorted(excel_files):
-        group_name = excel_path.stem.replace("_master", "")
-
-        try:
-            typical_sheet = f"{group_name}_Typical_Particles"
-            df = pd.read_excel(excel_path, sheet_name=typical_sheet)
-
-            if "Fluor_Density_per_BF_Area" in df.columns:
-                values = df["Fluor_Density_per_BF_Area"].dropna()
-
-                for v in values:
-                    all_data_rows.append(
-                        {"Group": group_name, "Fluorescence Density": float(np.asarray(v).item())}
-                    )
-
-                mean_val = float(np.asarray(values.mean()).item())
-                std_val = float(np.asarray(values.std()).item())
-                sem_val = float(np.asarray(values.sem()).item())
-
-                group_stats[group_name] = {
-                    "n": len(values),
-                    "mean": mean_val,
-                    "std": std_val,
-                    "sem": sem_val,
-                    "ci_95": 1.96 * sem_val,
-                }
-
-                print(f"Loaded {len(values)} points for group: {group_name}")
-
-        except Exception as e:
-            print(f"[WARN] Could not read {group_name}: {e}")
-            continue
-
-    if not all_data_rows:
-        print("[WARN] No valid data found for comparison")
-        return
-
-    df_all = pd.DataFrame(all_data_rows)
-
-    plot_configs = [("SD", "sd", "Standard Deviation"), ("CI95", 95, "95% Confidence Interval")]
-
-    unique_groups = df_all["Group"].unique()
-    palette_colors = ["silver", "violet"]
-    if len(unique_groups) > 2:
-        palette_colors = sns.color_palette("husl", len(unique_groups))
-
-    for suffix, ci_param, label in plot_configs:
-        plt.figure(figsize=(6, 5))
-        sns.set_style("ticks")
-
-        try:
-            ebar_arg = "sd" if ci_param == "sd" else ("ci", ci_param)
-            sns.barplot(
-                data=df_all,
-                x="Group",
-                y="Fluorescence Density",
-                hue="Group",
-                palette=palette_colors,
-                legend=False,
-                errorbar=ebar_arg,
-                capsize=0.1,
-                edgecolor="black",
-                alpha=0.7,
-                err_kws={"color": "black", "linewidth": 1.5},
-            )
-        except TypeError:
-            sns.barplot(
-                x="Group",
-                y="Fluorescence Density",
-                data=df_all,
-                ci=ci_param,
-                capsize=0.1,
-                palette=palette_colors,
-                edgecolor="black",
-                errcolor="black",
-                errwidth=1.5,
-                alpha=0.7,
-            )
-
-        sns.stripplot(
-            x="Group",
-            y="Fluorescence Density",
-            data=df_all,
-            jitter=True,
-            color="cyan",
-            edgecolor="black",
-            linewidth=0.5,
-            size=6,
-            alpha=0.6,
-        )
-
-        plt.ylabel("Fluorescence Density (a.u./µm²)", fontsize=12, fontweight="bold")
-        plt.xlabel("")
-        plt.xticks(fontsize=10, fontweight="bold")
-        plt.yticks(fontsize=10, fontweight="bold")
-        plt.title(f"Comparison (Error Bars: {label})", fontsize=11)
-
-        for axis in ["top", "bottom", "left", "right"]:
-            plt.gca().spines[axis].set_linewidth(1.5)
-
-        plt.tight_layout()
-
-        out_path = output_dir / f"error_bar_jitter_comparison_{suffix}.png"
-        plt.savefig(out_path, dpi=300)
-        plt.close()
-        print(f"Saved plot: {out_path}")
-
-    pd.DataFrame(
-        [
-            {
-                "Group": g_name,
-                "n": stats["n"],
-                "Mean": f"{stats['mean']:.2f}",
-                "SD": f"{stats['std']:.2f}",
-                "SEM": f"{stats['sem']:.2f}",
-                "95% CI": f"±{stats['ci_95']:.2f}",
-            }
-            for g_name, stats in group_stats.items()
-        ]
-    ).to_csv(output_dir / "comparison_statistics.csv", index=False)
-
-    if len(unique_groups) == 2:
-        g1, g2 = unique_groups[0], unique_groups[1]
-        data1 = df_all[df_all["Group"] == g1]["Fluorescence Density"]
-        data2 = df_all[df_all["Group"] == g2]["Fluorescence Density"]
-
-        t_stat_any, p_val_any = cast(Any, scipy_stats.ttest_ind(data1, data2))
-
-        t_stat = float(np.asarray(t_stat_any).item())
-        p_val_float = float(np.asarray(p_val_any).item())
-
-        with open(output_dir / "statistical_test.txt", "w", encoding="utf-8") as f:
-            f.write("Two-Sample t-Test Results\n")
-            f.write(f"{'=' * 60}\n")
-            f.write(f"Group 1: {g1} (n={len(data1)})\n")
-            f.write(f"Group 2: {g2} (n={len(data2)})\n\n")
-            f.write(f"t-statistic: {t_stat:.4f}\n")
-            f.write(f"p-value: {p_val_float:.4f}\n")
-            f.write(f"Significance (alpha=0.05): {'YES' if p_val_float < 0.05 else 'NO'}\n")
-
-
-def embed_comparison_plots_into_all_excels(
-    output_root: Path,
-    sd_plot: str = "error_bar_jitter_comparison_SD.png",
-    ci_plot: str = "error_bar_jitter_comparison_CI95.png",
-) -> None:
-    """
-    Post-process all master Excel files under output_root:
-      - rename 'Error_Bar_Summary' to 'Summary' (or keep 'Summary' if already present)
-      - move 'Summary' to the first worksheet
-      - embed SD and CI95 comparison plots into 'Summary'
-    """
-    sd_img_path = output_root / sd_plot
-    ci_img_path = output_root / ci_plot
-
-    if not sd_img_path.exists():
-        print(f"[WARN] SD plot not found, embedding skipped: {sd_img_path}")
-    if not ci_img_path.exists():
-        print(f"[WARN] CI95 plot not found, embedding skipped: {ci_img_path}")
-
-    excel_files = sorted(output_root.rglob("*_master.xlsx"))
-    if not excel_files:
-        print(f"[WARN] No master Excel files found under {output_root}")
-        return
-
-    def add_png(ws, path: Path, anchor_cell: str, width_px: int = 620) -> None:
-        if not path.exists():
-            return
-        img = XLImage(str(path))
-        if getattr(img, "width", None) and getattr(img, "height", None):
-            scale = width_px / float(img.width)
-            img.width = int(img.width * scale)
-            img.height = int(img.height * scale)
-        ws.add_image(img, anchor_cell)
-    
-    updated = 0
-    for excel_path in excel_files:
-        try:
-            wb = load_workbook(excel_path)
-
-            modified = False
-
-            if "Summary" in wb.sheetnames:
-                ws_summary = wb["Summary"]
-            elif "Error_Bar_Summary" in wb.sheetnames:
-                ws_summary = wb["Error_Bar_Summary"]
-                ws_summary.title = "Summary"
-                ws_summary = wb["Summary"]
-                modified = True
-            else:
-                ws_summary = wb.create_sheet("Summary")
-                modified = True
-
-            # After moving Summary to index 0:
-            if "Ratios" in wb.sheetnames:
-                ws_ratios = wb["Ratios"]
-                ratios_idx = wb.sheetnames.index("Ratios")
-                desired_idx = 1
-                if ratios_idx != desired_idx:
-                    wb.move_sheet(ws_ratios, offset=desired_idx - ratios_idx)
-                    modified = True
-
-            current_idx = wb.sheetnames.index(ws_summary.title)
-            if current_idx != 0:
-                wb.move_sheet(ws_summary, offset=-current_idx)
-                modified = True
-
-            marker_cell = "A1"
-            marker_value = "COMPARISON_PLOTS_EMBEDDED"
-            if ws_summary[marker_cell].value != marker_value:
-                add_png(ws_summary, sd_img_path, "A3")
-                add_png(ws_summary, ci_img_path, "K3")
-                ws_summary[marker_cell].value = marker_value
-                modified = True
-            else:
-                print(f"Plots already embedded in {excel_path.name}; skipping embedding.")
-
-            if modified:
-                wb.save(excel_path)
-                updated += 1
-                print(f"Updated workbook: {excel_path}")
-            else:
-                print(f"No changes needed: {excel_path}")
-
-        except Exception as e:
-            print(f"[WARN] Could not embed plots into {excel_path}: {e}")
-
-    print(f"Embedding complete. Updated {updated}/{len(excel_files)} workbooks.")
-
-
+        
 # ==================================================
 # Main processing
 # ==================================================
@@ -1454,6 +1513,13 @@ def process_image(img_path: Path, output_root: Path) -> None:
             save_debug(img_out, "23_fluorescence_contours_global.png", vis_fluor, um_per_px_avg)
 
             matches = match_fluor_to_bf_by_overlap(accepted, fluor_contours, fluor_img8.shape[:2])
+
+            # DIAGNOSTIC LOGGING
+            unmatched = sum(1 for m in matches if m is None)
+            print(f"Fluorescence matching: {len(accepted) - unmatched}/{len(accepted)} BF objects matched")
+            print(f"Total fluorescence contours available: {len(fluor_contours)}")
+            if unmatched > 0:
+                print(f"  → {unmatched} BF objects have NO fluorescence match (will have Fluor_Area_px=0)")
 
             fluor_measurements = measure_fluorescence_intensity_with_global_area(
                 fluor_img, accepted, fluor_contours, matches, float(um_per_px_x), float(um_per_px_y)
@@ -1628,11 +1694,17 @@ def process_image(img_path: Path, output_root: Path) -> None:
     print("✓ Done")
 
 
+
+
 def main() -> None:
     if CLEAR_OUTPUT_DIR_EACH_RUN:
         clear_output_dir(OUTPUT_DIR)
 
     print(f"Input dir: {_project_root.resolve()}")
+    
+    # Get percentile choice early
+    percentile = get_percentile_option()
+    
     groups = list_sample_group_folders(SOURCE_DIR)
     selected_group_dir = prompt_user_select_group(groups)
 
@@ -1672,14 +1744,14 @@ def main() -> None:
     if SEPARATE_OUTPUT_BY_GROUP:
         for group_dir in OUTPUT_DIR.iterdir():
             if group_dir.is_dir():
-                consolidate_to_excel(group_dir, group_dir.name)
+                consolidate_to_excel(group_dir, group_dir.name, percentile)
 
         print(f"\n{'=' * 80}")
         print("Generating error bar comparison plots...")
-        generate_error_bar_comparison(OUTPUT_DIR)
+        generate_error_bar_comparison(OUTPUT_DIR, percentile)
 
         print("Embedding comparison plots into master Excel files...")
-        embed_comparison_plots_into_all_excels(OUTPUT_DIR)
+        embed_comparison_plots_into_all_excels(OUTPUT_DIR, percentile)
 
 
 if __name__ == "__main__":
