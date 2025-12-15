@@ -104,8 +104,7 @@ MAX_FRACTION_OF_IMAGE_AREA = 0.25
 FLUOR_GAUSSIAN_SIGMA = 1.5
 FLUOR_MORPH_KERNEL_SIZE = 3
 FLUOR_MIN_AREA_UM2 = 3.0
-FLUOR_MATCH_MIN_IOU = 0.3  # Changed from pixel threshold to IoU ratio
-FLUOR_BACKGROUND_PERCENTILE = 5.0  # For background subtraction
+FLUOR_MATCH_MIN_INTERSECTION_PX = 5.0
 
 # Debug options
 CLEAR_OUTPUT_DIR_EACH_RUN = True
@@ -312,9 +311,9 @@ def get_run_mode() -> str:
 def get_percentile_option() -> float:
     """Prompt user to select percentile for top/bottom group analysis."""
     print("\nSelect percentile for top/bottom group analysis:")
-    print("  [1] 20% (default)")
+    print("  [1] 20%")
     print("  [2] 25%")
-    print("  [3] 30%")
+    print("  [3] 30% (default)")
 
     while True:
         choice = input("Enter number (or press Enter for default): ").strip()
@@ -540,18 +539,12 @@ def save_debug_ids(
 
 
 # ==================================================
-# Fluorescence segmentation + matching (IMPROVED with IoU)
+# Fluorescence segmentation + matching (many-to-one allowed)
 # ==================================================
-def segment_fluorescence_with_background_subtraction(
-    fluor_img8: np.ndarray,
-) -> np.ndarray:
-    """Segment fluorescence objects with background subtraction."""
-    # Background subtraction
-    background = np.percentile(fluor_img8, FLUOR_BACKGROUND_PERCENTILE)
-    corrected = np.clip(fluor_img8.astype(float) - background, 0, 255).astype(np.uint8)
-    
+def segment_fluorescence_global(fluor_img8: np.ndarray) -> np.ndarray:
+    """Segment fluorescence objects globally. Returns binary mask uint8 (0/255)."""
     blur = cv2.GaussianBlur(
-        corrected, (0, 0), sigmaX=FLUOR_GAUSSIAN_SIGMA, sigmaY=FLUOR_GAUSSIAN_SIGMA
+        fluor_img8, (0, 0), sigmaX=FLUOR_GAUSSIAN_SIGMA, sigmaY=FLUOR_GAUSSIAN_SIGMA
     )
     _, bw = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
@@ -562,7 +555,7 @@ def segment_fluorescence_with_background_subtraction(
 
 
 def contour_intersection_area_px(c1: np.ndarray, c2: np.ndarray, shape_hw: tuple[int, int]) -> float:
-    """Intersection area in pixels between two contours."""
+    """Intersection area in pixels between two contours (matching heuristic only)."""
     H, W = shape_hw
     m1 = np.zeros((H, W), dtype=np.uint8)
     m2 = np.zeros((H, W), dtype=np.uint8)
@@ -571,43 +564,35 @@ def contour_intersection_area_px(c1: np.ndarray, c2: np.ndarray, shape_hw: tuple
     return float(np.count_nonzero(cv2.bitwise_and(m1, m2)))
 
 
-def match_fluor_to_bf_by_iou(
+def match_fluor_to_bf_by_overlap(
     bf_contours: list[np.ndarray],
     fluor_contours: list[np.ndarray],
     img_shape_hw: tuple[int, int],
-    min_iou: float = FLUOR_MATCH_MIN_IOU,
+    min_intersection_px: float = FLUOR_MATCH_MIN_INTERSECTION_PX,
 ) -> list[Optional[int]]:
     """
-    IMPROVED: Match fluorescence to BF using IoU (Intersection over Union).
-    For each BF contour, pick the fluorescence contour with highest IoU.
-    Many-to-one allowed. IoU threshold prevents poor matches.
+    For each BF contour, pick the fluorescence contour that maximizes overlap.
+    Many-to-one allowed. Overlap used ONLY for assignment.
     """
     matches: list[Optional[int]] = []
     fluor_boxes = [cv2.boundingRect(c) for c in fluor_contours]
 
     for bf in bf_contours:
         bx, by, bw, bh = cv2.boundingRect(bf)
-        bf_area = float(cv2.contourArea(bf))
 
         best_idx: Optional[int] = None
-        best_iou = 0.0
+        best_inter = 0.0
 
         for j, (fx, fy, fw, fh) in enumerate(fluor_boxes):
-            # Quick bounding box rejection
             if (bx + bw < fx) or (fx + fw < bx) or (by + bh < fy) or (fy + fh < by):
                 continue
 
-            intersection = contour_intersection_area_px(bf, fluor_contours[j], img_shape_hw)
-            fluor_area = float(cv2.contourArea(fluor_contours[j]))
-            union = bf_area + fluor_area - intersection
-            
-            if union > 0:
-                iou = intersection / union
-                if iou > best_iou:
-                    best_iou = iou
-                    best_idx = j
+            inter = contour_intersection_area_px(bf, fluor_contours[j], img_shape_hw)
+            if inter > best_inter:
+                best_inter = inter
+                best_idx = j
 
-        if best_idx is not None and best_iou >= min_iou:
+        if best_idx is not None and best_inter >= float(min_intersection_px):
             matches.append(best_idx)
         else:
             matches.append(None)
@@ -729,46 +714,7 @@ def segment_particles_brightfield(img8: np.ndarray, pixel_size_um: float, out_di
 
 
 # ==================================================
-# Quality Control Metrics (NEW)
-# ==================================================
-def calculate_qc_metrics(df: pd.DataFrame) -> dict:
-    """Calculate quality control statistics"""
-    total = len(df)
-    fluorescent = (df["Fluor_Area_um2"] > 0).sum()
-    
-    qc = {
-        "total_particles": int(total),
-        "fluorescent_particles": int(fluorescent),
-        "fluorescence_coverage": float(fluorescent / total if total > 0 else 0),
-    }
-    
-    df_fluor = df[df["Fluor_Density_per_BF_Area"] > 0]
-    if len(df_fluor) > 0:
-        qc["median_density"] = float(df_fluor["Fluor_Density_per_BF_Area"].median())
-        mean_val = float(df_fluor["Fluor_Density_per_BF_Area"].mean())
-        std_val = float(df_fluor["Fluor_Density_per_BF_Area"].std())
-        qc["cv_density"] = float(std_val / mean_val if mean_val > 0 else 0)
-    else:
-        qc["median_density"] = 0.0
-        qc["cv_density"] = 0.0
-    
-    return qc
-
-
-def identify_outliers_iqr(data: pd.Series, k: float = 1.5) -> pd.Series:
-    """Identify outliers using IQR method"""
-    Q1 = data.quantile(0.25)
-    Q3 = data.quantile(0.75)
-    IQR = Q3 - Q1
-    
-    lower_bound = Q1 - k * IQR
-    upper_bound = Q3 + k * IQR
-    
-    return (data < lower_bound) | (data > upper_bound)
-
-
-# ==================================================
-# Group comparison plot (SD + jitter)
+# Group comparison plot (SD + jitter), with optional restriction to specific masters
 # ==================================================
 def _display_group_name(name: str) -> str:
     return "Control" if name == "Control group" else name
@@ -792,11 +738,13 @@ def generate_error_bar_comparison(
 ) -> Optional[Path]:
     """
     Generate error bar comparison plot with overlaid jitter (strip plot) - SD only.
-    PATCHED: Fixed NumPy scalar conversion issue.
-    """
-    percentile_f: float = float(percentile)  # PATCH: Ensure native Python float
 
-    excel_files = sorted(output_dir.rglob("*_master.xlsx"))
+    If restrict_to_groups is provided, compare ONLY those groups (after display-name mapping).
+    Example for single group mode: restrict_to_groups=["11", "Control"].
+    """
+
+    excel_files = list(output_dir.rglob("*_master.xlsx"))
+
     if not excel_files:
         print(f"[INFO] No master Excel files found under {output_dir}")
         return None
@@ -804,7 +752,7 @@ def generate_error_bar_comparison(
     all_data_rows: list[dict[str, object]] = []
     group_stats: dict[str, dict[str, float | int]] = {}
 
-    for excel_path in excel_files:
+    for excel_path in sorted(excel_files):
         group_name_raw = excel_path.stem.replace("_master", "")
         display_name = _display_group_name(group_name_raw)
 
@@ -816,22 +764,18 @@ def generate_error_bar_comparison(
             df = pd.read_excel(excel_path, sheet_name=typical_sheet)
 
             if "Fluor_Density_per_BF_Area" not in df.columns:
-                print(f"[WARN] Missing column in {excel_path.name}:{typical_sheet}")
                 continue
 
-            values = pd.to_numeric(df["Fluor_Density_per_BF_Area"], errors="coerce").dropna()
-            if values.empty:
-                print(f"[WARN] No valid values in {excel_path.name}:{typical_sheet}")
-                continue
+            values = df["Fluor_Density_per_BF_Area"].dropna()
 
-            arr = np.asarray(values, dtype=np.float64)
+            for v in values:
+                all_data_rows.append(
+                    {"Group": display_name, "Fluorescence Density": float(np.asarray(v).item())}
+                )
 
-            for v in arr.tolist():
-                all_data_rows.append({"Group": display_name, "Fluorescence Density": float(v)})
-
-            mean_val = float(arr.mean())
-            std_val = float(arr.std(ddof=1)) if len(arr) > 1 else 0.0
-            sem_val = float(arr.std(ddof=1) / np.sqrt(len(arr))) if len(arr) > 1 else 0.0
+            mean_val = float(np.asarray(values.mean()).item())
+            std_val = float(np.asarray(values.std()).item())
+            sem_val = float(np.asarray(values.sem()).item())
 
             group_stats[display_name] = {
                 "n": int(len(values)),
@@ -853,9 +797,9 @@ def generate_error_bar_comparison(
 
     df_all = pd.DataFrame(all_data_rows)
 
+    # Stable group order: numeric ascending, Control last
     group_order: list[str] = sorted(
-        df_all["Group"].dropna().astype(str).drop_duplicates().tolist(),
-        key=_group_order_key,
+        df_all["Group"].dropna().astype(str).drop_duplicates().tolist(), key=_group_order_key
     )
 
     if len(group_order) < 2:
@@ -866,10 +810,11 @@ def generate_error_bar_comparison(
     if len(group_order) > 2:
         palette_colors = list(sns.color_palette("husl", len(group_order)))
 
-    # ---------- Plot ----------
+    # Generate SD plot
     plt.figure(figsize=(8, 5))
     sns.set_style("ticks")
 
+    # Bar plot WITHOUT seaborn error bars (we add SD ourselves)
     try:
         ax = sns.barplot(
             data=df_all,
@@ -880,11 +825,12 @@ def generate_error_bar_comparison(
             hue_order=group_order,
             palette=palette_colors,
             legend=False,
-            errorbar=None,
+            errorbar=None,  # seaborn>=0.12
             edgecolor="black",
             alpha=0.7,
         )
     except TypeError:
+        # Older seaborn
         ax = sns.barplot(
             data=df_all,
             x="Group",
@@ -899,12 +845,13 @@ def generate_error_bar_comparison(
             alpha=0.7,
         )
 
+    # Add SD error bars manually, with double-wide caps for Control
     means = df_all.groupby("Group")["Fluorescence Density"].mean()
     sds = df_all.groupby("Group")["Fluorescence Density"].std(ddof=1)
 
     for xi, g in enumerate(group_order):
-        m = float(means.get(g, 0.0))
-        sd = float(sds.get(g, 0.0))
+        m = float(np.asarray(means.get(g, 0.0)).item())
+        sd = float(np.asarray(sds.get(g, 0.0)).item())
         cap = 14 if g == "Control" else 7
 
         ax.errorbar(
@@ -936,10 +883,8 @@ def generate_error_bar_comparison(
     plt.xlabel("")
     plt.xticks(fontsize=10, fontweight="bold")
     plt.yticks(fontsize=10, fontweight="bold")
-
-    # PATCH: Use native Python float for percentile calculation
-    pct = int(round(percentile_f * 100))
-    
+    # plt.title("Comparison (Error Bars: Standard Deviation)", fontsize=11)
+    pct = int(round(percentile * 100))
     title = f"Comparison (Error Bars: Standard Deviation) — Typical = middle {100 - 2*pct}% (p={pct}%)"
     if title_suffix:
         title += f" — {title_suffix}"
@@ -950,8 +895,6 @@ def generate_error_bar_comparison(
 
     plt.tight_layout()
 
-    # ---------- Output paths ----------
-    safe: Optional[str] = None
     if output_path is not None:
         out_path = output_path
     else:
@@ -963,13 +906,11 @@ def generate_error_bar_comparison(
     plt.savefig(out_path, dpi=300)
     plt.close()
     print(f"Saved plot: {out_path}")
+    return out_path
 
-    # ---------- Save statistics CSV ----------
-    if safe is None and restrict_to_groups is not None:
-        safe = "_".join([g.replace(" ", "_") for g in group_order])
-
+    # Save statistics CSV
     stats_out = output_dir / "comparison_statistics.csv"
-    if safe:
+    if restrict_to_groups is not None:
         stats_out = output_dir / f"comparison_statistics_{safe}.csv"
 
     pd.DataFrame(
@@ -987,7 +928,7 @@ def generate_error_bar_comparison(
         ]
     ).to_csv(stats_out, index=False)
 
-    # ---------- t-test (only if exactly 2 groups) ----------
+    # Perform t-test if exactly 2 groups on the plotted order
     if len(group_order) == 2:
         g1, g2 = group_order[0], group_order[1]
         data1 = df_all[df_all["Group"] == g1]["Fluorescence Density"]
@@ -998,7 +939,7 @@ def generate_error_bar_comparison(
         p_val_float = float(np.asarray(p_val_any).item())
 
         test_out = output_dir / "statistical_test.txt"
-        if safe:
+        if restrict_to_groups is not None:
             test_out = output_dir / f"statistical_test_{safe}.txt"
 
         with open(test_out, "w", encoding="utf-8") as f:
@@ -1010,14 +951,14 @@ def generate_error_bar_comparison(
             f.write(f"p-value: {p_val_float:.4f}\n")
             f.write(f"Significance (alpha=0.05): {'YES' if p_val_float < 0.05 else 'NO'}\n")
 
-    return out_path
-
-
 def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: float) -> None:
     """
     ALL-GROUPS mode behavior:
       - Save an "all groups" plot only into the Control group folder
       - For each numeric group folder: compare ONLY that group vs Control and save plot into that group folder
+    Assumes per-group masters are in:
+      OUTPUT_ROOT/<group>/<group>_master.xlsx
+      OUTPUT_ROOT/Control group/Control group_master.xlsx
     """
     control_folder = output_root / "Control group"
     control_master = control_folder / "Control group_master.xlsx"
@@ -1025,6 +966,8 @@ def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: floa
         print(f"[WARN] Control master not found: {control_master}")
         return
 
+    # (2) Keep the all-groups filename ONLY under Control group folder
+    # Use output_root for searching all masters, but force output to Control folder filename
     all_groups_plot_path = control_folder / "error_bar_jitter_comparison_SD_all_groups.png"
     generate_error_bar_comparison(
         output_dir=output_root,
@@ -1034,6 +977,7 @@ def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: floa
         title_suffix="ALL groups",
     )
 
+    # (3) For each numeric group, compare only group vs control and save into that group folder
     for group_dir in sorted(output_root.iterdir()):
         if not group_dir.is_dir():
             continue
@@ -1048,6 +992,7 @@ def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: floa
             continue
 
         pair_plot_path = group_dir / "error_bar_jitter_comparison_SD_vs_Control.png"
+        # We want ONLY [this group, Control]
         generate_error_bar_comparison(
             output_dir=output_root,
             percentile=percentile,
@@ -1057,6 +1002,8 @@ def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: floa
         )
 
         print(f"[OK] Pairwise plot saved for group {group_dir.name}: {pair_plot_path}")
+
+
 
 
 def embed_comparison_plots_into_all_excels(
@@ -1069,6 +1016,8 @@ def embed_comparison_plots_into_all_excels(
       - rename 'Error_Bar_Summary' to 'Summary' (or keep 'Summary' if already present)
       - move 'Summary' to the first worksheet
       - embed SD comparison plot into 'Summary'
+
+    If plot_path is provided, embed that plot instead of the default all-groups plot.
     """
     if plot_path is None:
         sd_plot = "error_bar_jitter_comparison_SD_all_groups.png"
@@ -1231,8 +1180,8 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                         "Bounding box height (pixels)",
                         "Bounding box width (µm)",
                         "Bounding box height (µm)",
-                        "Fluorescent region area (pixels²) (global, matched by IoU≥0.3)",
-                        "Fluorescent region area (µm²) (global, matched by IoU≥0.3)",
+                        "Fluorescent region area (pixels²) (global fluorescence contour, can exceed BF)",
+                        "Fluorescent region area (µm²) (global fluorescence contour, can exceed BF)",
                         "Average fluorescence intensity (measured within BF region)",
                         "Median fluorescence intensity (measured within BF region)",
                         "Standard deviation of fluorescence (measured within BF region)",
@@ -1314,7 +1263,10 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                 )
                 df = df.fillna(0)
 
+                # Sorting for color coding + typical selection
                 df_sorted = df.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
+
+                # Filter out zero-fluorescence objects before percentile calculation
                 df_sorted = df_sorted[df_sorted["Fluor_Density_per_BF_Area"] > 0].reset_index(drop=True)
 
                 n_rows = len(df_sorted)
@@ -1336,7 +1288,7 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
 
                 ws.auto_filter.ref = ws.dimensions
 
-            # --- Typical particles sheet ---
+            # --- Restore {group}_Typical_Particles merged sheet (for group comparison) ---
             try:
                 if all_typical_particles:
                     merged_typical = pd.concat(all_typical_particles, ignore_index=True)
@@ -1355,7 +1307,7 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
             except Exception as e:
                 print(f"[WARN] Could not create {group_name}_Typical_Particles sheet: {e}")
 
-            # --- Summary sheet with QC metrics ---
+            # --- Summary sheet ---
             try:
                 summary_data = []
                 for csv_file in sorted(csv_files):
@@ -1380,20 +1332,14 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                             [np.inf, -np.inf], 0
                         )
 
-                    qc = calculate_qc_metrics(df)
-
                     summary_data.append(
                         {
                             "Image": image_name,
-                            "Total_Particles": qc["total_particles"],
-                            "Fluorescent_Particles": qc["fluorescent_particles"],
-                            "Fluorescence_Coverage": f"{qc['fluorescence_coverage']:.2%}",
+                            "Total_Particles": len(df),
                             "Avg_BF_Area_um2": df["BF_Area_um2"].mean() if "BF_Area_um2" in df.columns else 0,
                             "Avg_Fluor_Density": df["Fluor_Density_per_BF_Area"].mean()
                             if "Fluor_Density_per_BF_Area" in df.columns
                             else 0,
-                            "Median_Fluor_Density": qc["median_density"],
-                            "CV_Fluor_Density": f"{qc['cv_density']:.2f}",
                             "Avg_BF_to_Fluor_Ratio": df["BF_to_Fluor_Area_Ratio"].mean()
                             if "BF_to_Fluor_Area_Ratio" in df.columns
                             else 0,
@@ -1412,7 +1358,7 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
             except Exception as e:
                 print(f"[WARN] Could not create Summary sheet: {e}")
 
-            # --- Ratios sheet ---
+            # --- Ratios sheet (plots + support PNGs) ---
             try:
                 wb = writer.book
                 ratios_name = "Ratios"
@@ -1545,7 +1491,7 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
             except Exception as e:
                 print(f"[WARN] Could not create Ratios sheet: {e}")
 
-        # Reorder worksheets
+        # Reorder worksheets AFTER ExcelWriter closes
         wb2 = load_workbook(excel_path)
         desired_order = ["Summary", "Ratios", "README", f"{group_name}_Typical_Particles"]
 
@@ -1560,7 +1506,6 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
 
         print(f"Excel consolidation saved: {excel_path}")
         print("  - Ratios sheet with ratio plots + support PNGs")
-        print("  - Enhanced QC metrics in Summary")
 
     except PermissionError:
         print(f"[ERROR] Cannot write to {excel_path} - file may be open")
@@ -1687,7 +1632,7 @@ def process_image(img_path: Path, output_root: Path) -> None:
             fluor_img8 = normalize_to_8bit(fluor_img)
             save_debug(img_out, "20_fluorescence_8bit.png", fluor_img8, um_per_px_avg)
 
-            fluor_bw = segment_fluorescence_with_background_subtraction(fluor_img8)
+            fluor_bw = segment_fluorescence_global(fluor_img8)
             save_debug(img_out, "22_fluorescence_mask_global.png", fluor_bw, um_per_px_avg)
 
             _fc2 = cv2.findContours(fluor_bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -1700,10 +1645,10 @@ def process_image(img_path: Path, output_root: Path) -> None:
             cv2.drawContours(vis_fluor, fluor_contours, -1, (0, 255, 0), 1)
             save_debug(img_out, "23_fluorescence_contours_global.png", vis_fluor, um_per_px_avg)
 
-            matches = match_fluor_to_bf_by_iou(accepted, fluor_contours, fluor_img8.shape[:2])
+            matches = match_fluor_to_bf_by_overlap(accepted, fluor_contours, fluor_img8.shape[:2])
 
             unmatched = sum(1 for m in matches if m is None)
-            print(f"Fluorescence matching (IoU≥{FLUOR_MATCH_MIN_IOU}): {len(accepted) - unmatched}/{len(accepted)} BF objects matched")
+            print(f"Fluorescence matching: {len(accepted) - unmatched}/{len(accepted)} BF objects matched")
             print(f"Total fluorescence contours available: {len(fluor_contours)}")
             if unmatched > 0:
                 print(f"  → {unmatched} BF objects have NO fluorescence match (will have Fluor_Area_px=0)")
@@ -1916,6 +1861,7 @@ def main() -> None:
         print("[WARN] SEPARATE_OUTPUT_BY_GROUP is False; this script expects per-group output folders.")
         return
 
+    # Consolidate per group
     for group_dir in OUTPUT_DIR.iterdir():
         if group_dir.is_dir():
             consolidate_to_excel(group_dir, group_dir.name, percentile)
@@ -1924,6 +1870,7 @@ def main() -> None:
     print("Generating error bar comparison plots...")
 
     if mode == "single" and selected_group_name is not None:
+        # Save plot into OUTPUT_DIR/{selected_group_name}/
         selected_folder = OUTPUT_DIR / selected_group_name
         ensure_dir(selected_folder)
 
@@ -1941,6 +1888,9 @@ def main() -> None:
             print("[WARN] Comparison plot not generated; embedding skipped.")
 
     else:
+        # ALL-GROUPS mode:
+        #   - Control folder gets the ALL-GROUPS plot
+        #   - Each numeric folder gets its own vs-Control plot
         generate_pairwise_group_vs_control_plots(OUTPUT_DIR, percentile)
 
         print("Embedding per-group comparison plots into master Excel files...")
@@ -1957,7 +1907,6 @@ def main() -> None:
 
             if plot.exists():
                 embed_comparison_plots_into_all_excels(group_dir, percentile, plot_path=plot)
-
 
 if __name__ == "__main__":
     main()
