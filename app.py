@@ -14,6 +14,9 @@ from tqdm import tqdm
 import pandas as pd
 from scipy import stats as scipy_stats
 
+# --- NEW IMPORT FOR REGISTRATION ---
+from skimage.registration import phase_cross_correlation
+
 import matplotlib
 
 matplotlib.use("Agg")
@@ -311,9 +314,9 @@ def get_run_mode() -> str:
 def get_percentile_option() -> float:
     """Prompt user to select percentile for top/bottom group analysis."""
     print("\nSelect percentile for top/bottom group analysis:")
-    print("  [1] 20% (default)")
+    print("  [1] 20%")
     print("  [2] 25%")
-    print("  [3] 30%")
+    print("  [3] 30% (default)")
 
     while True:
         choice = input("Enter number (or press Enter for default): ").strip()
@@ -539,6 +542,51 @@ def save_debug_ids(
 
 
 # ==================================================
+# Fluorescence Registration / Alignment (NEW)
+# ==================================================
+def align_fluorescence_channel(bf_img: np.ndarray, fluor_img: np.ndarray) -> tuple[np.ndarray, tuple[float, float]]:
+    """
+    Aligns the fluorescence image to the brightfield image using Phase Correlation.
+    
+    1. Inverts the Brightfield image (so dark cells become bright features).
+    2. Calculates the shift between inverted BF and Fluorescence.
+    3. Warps the Fluorescence image to match the BF.
+    
+    Returns:
+        (aligned_fluor_img, (shift_y, shift_x))
+    """
+    # Ensure grayscale for calculation
+    if bf_img.ndim == 3:
+        bf_gray = cv2.cvtColor(bf_img, cv2.COLOR_BGR2GRAY)
+    else:
+        bf_gray = bf_img
+
+    if fluor_img.ndim == 3:
+        fluor_gray = cv2.cvtColor(fluor_img, cv2.COLOR_BGR2GRAY)
+    else:
+        fluor_gray = fluor_img
+
+    # Invert BF so dark cells become bright features (matching fluor spots)
+    bf_inverted = cv2.bitwise_not(bf_gray)
+
+    # Calculate shift
+    # upsample_factor=10 gives subpixel precision (0.1 px)
+    shift, error, diffphase = phase_cross_correlation(bf_inverted, fluor_gray, upsample_factor=10)
+    shift_y, shift_x = shift
+
+    # Apply shift to the original fluor_img (preserving color/depth if any)
+    rows, cols = fluor_img.shape[:2]
+    
+    # To correct the shift, we move in the negative direction of the detected shift
+    # FIX: Use np.array to create a matrix, not np.float32 (which creates a scalar)
+    M = np.array([[1, 0, -shift_x], [0, 1, -shift_y]], dtype=np.float32)
+    
+    aligned_fluor = cv2.warpAffine(fluor_img, M, (cols, rows))
+
+    return aligned_fluor, (shift_y, shift_x)
+
+
+# ==================================================
 # Fluorescence segmentation + matching (many-to-one allowed)
 # ==================================================
 def segment_fluorescence_global(fluor_img8: np.ndarray) -> np.ndarray:
@@ -546,7 +594,23 @@ def segment_fluorescence_global(fluor_img8: np.ndarray) -> np.ndarray:
     blur = cv2.GaussianBlur(
         fluor_img8, (0, 0), sigmaX=FLUOR_GAUSSIAN_SIGMA, sigmaY=FLUOR_GAUSSIAN_SIGMA
     )
-    _, bw = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # --- MODIFICATION START: Lower threshold sensitivity ---
+    # OLD CODE:
+    # _, bw = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # NEW CODE:
+    # 1. Calculate Otsu's threshold value without applying it yet
+    thresh_val, _ = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # 2. Lower the threshold manually (e.g., to 50% of what Otsu suggests)
+    # Adjust this multiplier (0.5) if it's still too strict or too noisy.
+    # 0.5 is a good starting point for very faint signals.
+    new_thresh_val = thresh_val * 0.5 
+    
+    # 3. Apply the new threshold
+    _, bw = cv2.threshold(blur, new_thresh_val, 255, cv2.THRESH_BINARY)
+    # --- MODIFICATION END ---
 
     k = np.ones((FLUOR_MORPH_KERNEL_SIZE, FLUOR_MORPH_KERNEL_SIZE), np.uint8)
     bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, k, iterations=1)
@@ -885,7 +949,8 @@ def generate_error_bar_comparison(
     plt.yticks(fontsize=10, fontweight="bold")
     # plt.title("Comparison (Error Bars: Standard Deviation)", fontsize=11)
     pct = int(round(percentile * 100))
-    title = f"Comparison (Error Bars: Standard Deviation) — Typical = middle {100 - 2*pct}% (p={pct}%)"
+    # title = f"Comparison (Error Bars: Standard Deviation) — Typical = middle {100 - 2*pct}% (p={pct}%)"
+    title = f"Comparison (Error Bars: Standard Deviation) — Typical = Closest 3 to Group Mean"
     if title_suffix:
         title += f" — {title_suffix}"
     plt.title(title, fontsize=11)
@@ -1094,7 +1159,6 @@ def embed_comparison_plots_into_all_excels(
 
     print(f"Embedding complete. Updated {updated}/{len(excel_files)} workbooks.")
 
-
 def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -> None:
     """Consolidate all CSVs in a group folder into one Excel workbook with statistics and color coding"""
     csv_files = list(output_dir.glob("*/object_stats.csv"))
@@ -1114,14 +1178,41 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
             return
 
     try:
-        from openpyxl.styles import PatternFill, Font, Alignment
+        from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
 
-        green_fill = PatternFill(start_color="90EE90", end_color="90EE90", fill_type="solid")
-        red_fill = PatternFill(start_color="FFB6C1", end_color="FFB6C1", fill_type="solid")
-        yellow_fill = PatternFill(start_color="FFFFE0", end_color="FFFFE0", fill_type="solid")
+        # --- Styles ---
+        yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
         header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
         header_font = Font(bold=True, color="FFFFFF")
         center_align = Alignment(horizontal="center", vertical="center")
+        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
+                             top=Side(style='thin'), bottom=Side(style='thin'))
+
+        # Helper to adjust column widths
+        def adjust_column_widths(ws):
+            for column in ws.columns:
+                max_length = 0
+                column_letter = get_column_letter(column[0].column)
+                for cell in column:
+                    try:
+                        if cell.value:
+                            max_length = max(max_length, len(str(cell.value)))
+                    except:
+                        pass
+                adjusted_width = (max_length + 2) * 1.1
+                # Cap width to prevent massive columns
+                if adjusted_width > 50:
+                    adjusted_width = 50
+                ws.column_dimensions[column_letter].width = adjusted_width
+
+        # Helper to format numbers
+        def format_numbers(ws):
+            for row in ws.iter_rows(min_row=2):
+                for cell in row:
+                    if isinstance(cell.value, (int, float)):
+                        # Apply 4 decimal places for small numbers, 2 for large
+                        cell.number_format = '0.0000'
 
         all_typical_particles: list[pd.DataFrame] = []
 
@@ -1130,97 +1221,25 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
             readme_df = pd.DataFrame(
                 {
                     "Column Name": [
-                        "Object_ID",
-                        "BF_Area_px",
-                        "BF_Area_um2",
-                        "Perimeter_px",
-                        "Perimeter_um",
-                        "EquivDiameter_px",
-                        "EquivDiameter_um",
-                        "Circularity",
-                        "AspectRatio",
-                        "CentroidX_px",
-                        "CentroidY_px",
-                        "CentroidX_um",
-                        "CentroidY_um",
-                        "BBoxX_px",
-                        "BBoxY_px",
-                        "BBoxW_px",
-                        "BBoxH_px",
-                        "BBoxW_um",
-                        "BBoxH_um",
-                        "Fluor_Area_px",
-                        "Fluor_Area_um2",
-                        "Fluor_Mean",
-                        "Fluor_Median",
-                        "Fluor_Std",
-                        "Fluor_Min",
-                        "Fluor_Max",
-                        "Fluor_IntegratedDensity",
-                        "Fluor_Density_per_BF_Area",
-                        "BF_to_Fluor_Area_Ratio",
+                        "Object_ID", "BF_Area_px", "BF_Area_um2", "Perimeter_px", "Perimeter_um",
+                        "EquivDiameter_px", "EquivDiameter_um", "Circularity", "AspectRatio",
+                        "CentroidX_px", "CentroidY_px", "CentroidX_um", "CentroidY_um",
+                        "BBoxX_px", "BBoxY_px", "BBoxW_px", "BBoxH_px", "BBoxW_um", "BBoxH_um",
+                        "Fluor_Area_px", "Fluor_Area_um2", "Fluor_Mean", "Fluor_Median",
+                        "Fluor_Std", "Fluor_Min", "Fluor_Max", "Fluor_IntegratedDensity",
+                        "Fluor_Density_per_BF_Area", "BF_to_Fluor_Area_Ratio",
                     ],
                     "Description": [
-                        "Unique particle identifier (format: GroupID_ImageSequence_ParticleID, e.g., 12_2_5)",
-                        "Brightfield particle area (pixels²)",
-                        "Brightfield particle area (µm²)",
-                        "Particle perimeter (pixels)",
-                        "Particle perimeter (µm)",
-                        "Diameter of equivalent circle (pixels)",
-                        "Diameter of equivalent circle (µm)",
-                        "Shape roundness: 4π×Area/Perimeter² (0-1, 1=perfect circle)",
-                        "Bounding box width/height ratio",
-                        "Particle center X-coordinate (pixels)",
-                        "Particle center Y-coordinate (pixels)",
-                        "Particle center X-coordinate (µm)",
-                        "Particle center Y-coordinate (µm)",
-                        "Bounding box top-left X (pixels)",
-                        "Bounding box top-left Y (pixels)",
-                        "Bounding box width (pixels)",
-                        "Bounding box height (pixels)",
-                        "Bounding box width (µm)",
-                        "Bounding box height (µm)",
-                        "Fluorescent region area (pixels²) (global fluorescence contour, can exceed BF)",
-                        "Fluorescent region area (µm²) (global fluorescence contour, can exceed BF)",
-                        "Average fluorescence intensity (measured within BF region)",
-                        "Median fluorescence intensity (measured within BF region)",
-                        "Standard deviation of fluorescence (measured within BF region)",
-                        "Minimum fluorescence value (measured within BF region)",
-                        "Maximum fluorescence value (measured within BF region)",
-                        "Total fluorescence signal (sum of BF-mask pixel values)",
-                        "Fluorescence density normalized by brightfield area (IntegratedDensity/BF_Area_um2) - PRIMARY METRIC",
-                        "Ratio of brightfield area to fluorescence area (BF_Area_um2/Fluor_Area_um2)",
-                    ],
-                    "Unit": [
-                        "String",
-                        "pixels²",
-                        "µm²",
-                        "pixels",
-                        "µm",
-                        "pixels",
-                        "µm",
-                        "dimensionless",
-                        "dimensionless",
-                        "pixels",
-                        "pixels",
-                        "µm",
-                        "µm",
-                        "pixels",
-                        "pixels",
-                        "pixels",
-                        "pixels",
-                        "µm",
-                        "µm",
-                        "pixels²",
-                        "µm²",
-                        "a.u.",
-                        "a.u.",
-                        "a.u.",
-                        "a.u.",
-                        "a.u.",
-                        "a.u.",
-                        "a.u./µm²",
-                        "dimensionless",
+                        "Unique particle identifier", "Brightfield particle area (pixels²)", "Brightfield particle area (µm²)",
+                        "Particle perimeter (pixels)", "Particle perimeter (µm)", "Diameter of equivalent circle (pixels)",
+                        "Diameter of equivalent circle (µm)", "Shape roundness (0-1)", "Bounding box width/height ratio",
+                        "Particle center X (px)", "Particle center Y (px)", "Particle center X (µm)", "Particle center Y (µm)",
+                        "BBox top-left X (px)", "BBox top-left Y (px)", "BBox width (px)", "BBox height (px)",
+                        "BBox width (µm)", "BBox height (µm)",
+                        "Fluorescent region area (pixels²)", "Fluorescent region area (µm²)",
+                        "Avg fluorescence intensity", "Median fluorescence intensity", "Std Dev fluorescence",
+                        "Min fluorescence", "Max fluorescence", "Total fluorescence signal",
+                        "Fluor density / BF Area (Primary Metric)", "Ratio of BF area to Fluor area",
                     ],
                 }
             )
@@ -1231,67 +1250,91 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                 cell.fill = header_fill
                 cell.font = header_font
                 cell.alignment = center_align
-            ws_readme.column_dimensions["A"].width = 30
-            ws_readme.column_dimensions["B"].width = 80
-            ws_readme.column_dimensions["C"].width = 15
+            adjust_column_widths(ws_readme)
 
             # --- Per-image sheets ---
             for csv_file in sorted(csv_files):
                 image_name = csv_file.parent.name
                 df = pd.read_csv(csv_file)
 
+                # Ensure numeric types
+                cols_to_numeric = ["Fluor_Area_px", "Fluor_IntegratedDensity", "BF_Area_um2", "Fluor_Area_um2"]
+                for col in cols_to_numeric:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+                # Calculate derived metrics
                 if "Fluor_IntegratedDensity" in df.columns and "BF_Area_um2" in df.columns:
-                    df["Fluor_Density_per_BF_Area"] = (
-                        pd.to_numeric(df["Fluor_IntegratedDensity"], errors="coerce")
-                        / pd.to_numeric(df["BF_Area_um2"], errors="coerce")
-                    )
+                    df["Fluor_Density_per_BF_Area"] = df["Fluor_IntegratedDensity"] / df["BF_Area_um2"]
                 else:
                     df["Fluor_Density_per_BF_Area"] = 0.0
 
                 if "Fluor_Area_um2" in df.columns and "BF_Area_um2" in df.columns:
-                    df["BF_to_Fluor_Area_Ratio"] = (
-                        df["BF_Area_um2"].astype(float) / df["Fluor_Area_um2"].astype(float)
-                    )
+                    df["BF_to_Fluor_Area_Ratio"] = df["BF_Area_um2"] / df["Fluor_Area_um2"]
                 else:
                     df["BF_to_Fluor_Area_Ratio"] = 0.0
 
-                df["Fluor_Density_per_BF_Area"] = df["Fluor_Density_per_BF_Area"].replace(
-                    [np.inf, -np.inf], 0
-                )
-                df["BF_to_Fluor_Area_Ratio"] = df["BF_to_Fluor_Area_Ratio"].replace(
-                    [np.inf, -np.inf], 0
-                )
-                df = df.fillna(0)
+                df = df.replace([np.inf, -np.inf], 0).fillna(0)
 
-                # Sorting for color coding + typical selection
-                df_sorted = df.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
+                # --- NEW FILTERING LOGIC (Mean Deviation Ranking) ---
+                # 1. Filter for valid particles (exclude noise)
+                df_valid = df[df["Fluor_Area_px"] > 0].reset_index(drop=True)
 
-                # Filter out zero-fluorescence objects before percentile calculation
-                df_sorted = df_sorted[df_sorted["Fluor_Density_per_BF_Area"] > 0].reset_index(drop=True)
+                if not df_valid.empty:
+                    # 2. Calculate Group Mean (for this image)
+                    group_mean = df_valid["Fluor_Density_per_BF_Area"].mean()
 
-                n_rows = len(df_sorted)
-                top_threshold = int(np.ceil(n_rows * percentile))
-                bottom_threshold = int(np.floor(n_rows * (1 - percentile)))
+                    # 3. Calculate Deviation from Mean
+                    df_valid["Deviation_from_Mean"] = (df_valid["Fluor_Density_per_BF_Area"] - group_mean).abs()
 
-                typical_particles = df_sorted.iloc[top_threshold:bottom_threshold].copy()
+                    # 4. Sort by Deviation (Rank 1 = Smallest Deviation)
+                    df_valid = df_valid.sort_values("Deviation_from_Mean", ascending=True)
+
+                    # 5. Apply Rule:
+                    # If count <= 3, keep all.
+                    # If count > 3, keep top 3 (smallest deviation).
+                    if len(df_valid) <= 3:
+                        typical_particles = df_valid.copy()
+                    else:
+                        typical_particles = df_valid.iloc[:3].copy()
+                else:
+                    typical_particles = df_valid.copy()
+                # ----------------------------------------------------
+
                 typical_particles["Source_Image"] = image_name
                 all_typical_particles.append(typical_particles)
 
                 sheet_name = image_name[:31]
+                # Save the full dataframe to the sheet, but highlight the typical ones
                 df.to_excel(writer, sheet_name=sheet_name, index=False)
                 ws = writer.sheets[sheet_name]
 
+                # Formatting
                 for cell in ws[1]:
                     cell.fill = header_fill
                     cell.font = header_font
                     cell.alignment = center_align
+                
+                format_numbers(ws)
+                adjust_column_widths(ws)
+
+                # Highlight Typical Particles
+                typical_ids = set(typical_particles["Object_ID"].astype(str).values)
+                for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
+                    if row[0].value is not None:
+                        obj_id = str(row[0].value)
+                        if obj_id in typical_ids:
+                            for cell in row:
+                                cell.fill = yellow_fill
 
                 ws.auto_filter.ref = ws.dimensions
 
-            # --- Restore {group}_Typical_Particles merged sheet (for group comparison) ---
+            # --- {group}_Typical_Particles sheet ---
             try:
                 if all_typical_particles:
                     merged_typical = pd.concat(all_typical_particles, ignore_index=True)
+                    
+                    # Sort by density just for display in the summary sheet
                     if "Fluor_Density_per_BF_Area" in merged_typical.columns:
                         merged_typical = merged_typical.sort_values("Fluor_Density_per_BF_Area", ascending=False)
 
@@ -1303,6 +1346,9 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                         cell.fill = header_fill
                         cell.font = header_font
                         cell.alignment = center_align
+                    
+                    format_numbers(ws_typ)
+                    adjust_column_widths(ws_typ)
                     ws_typ.auto_filter.ref = ws_typ.dimensions
             except Exception as e:
                 print(f"[WARN] Could not create {group_name}_Typical_Particles sheet: {e}")
@@ -1314,39 +1360,46 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                     image_name = csv_file.parent.name
                     df = pd.read_csv(csv_file)
 
+                    # Re-calculate metrics for summary consistency
                     if "Fluor_IntegratedDensity" in df.columns and "BF_Area_um2" in df.columns:
-                        df["Fluor_Density_per_BF_Area"] = (
-                            pd.to_numeric(df["Fluor_IntegratedDensity"], errors="coerce")
-                            / pd.to_numeric(df["BF_Area_um2"], errors="coerce")
-                        )
-                        df["Fluor_Density_per_BF_Area"] = df["Fluor_Density_per_BF_Area"].replace(
-                            [np.inf, -np.inf], 0
-                        )
+                        df["Fluor_Density_per_BF_Area"] = pd.to_numeric(df["Fluor_IntegratedDensity"], errors='coerce') / pd.to_numeric(df["BF_Area_um2"], errors='coerce')
+                    else:
+                        df["Fluor_Density_per_BF_Area"] = 0
 
-                    if "Fluor_Area_um2" in df.columns and "BF_Area_um2" in df.columns:
-                        df["BF_to_Fluor_Area_Ratio"] = (
-                            pd.to_numeric(df["BF_Area_um2"], errors="coerce")
-                            / pd.to_numeric(df["Fluor_Area_um2"], errors="coerce")
-                        )
-                        df["BF_to_Fluor_Area_Ratio"] = df["BF_to_Fluor_Area_Ratio"].replace(
-                            [np.inf, -np.inf], 0
-                        )
+                    if "Fluor_Area_px" in df.columns:
+                        df["Fluor_Area_px"] = pd.to_numeric(df["Fluor_Area_px"], errors='coerce').fillna(0)
+                        
+                    df = df.replace([np.inf, -np.inf], 0).fillna(0)
+                    
+                    # Stats on valid particles only
+                    df_stats = df[df["Fluor_Area_px"] > 0]
+                    
+                    avg_fluor_density = df_stats["Fluor_Density_per_BF_Area"].mean() if not df_stats.empty else 0.0
+                    
+                    # Ratio calculation
+                    avg_ratio = 0.0
+                    if not df_stats.empty and "BF_Area_um2" in df_stats.columns and "Fluor_Area_um2" in df_stats.columns:
+                         # Calculate ratio per particle then average, or sum then ratio? 
+                         # Usually per particle average is safer for "Average Ratio"
+                         ratios = df_stats["BF_Area_um2"] / df_stats["Fluor_Area_um2"]
+                         avg_ratio = ratios.replace([np.inf, -np.inf], 0).mean()
 
-                    summary_data.append(
-                        {
-                            "Image": image_name,
-                            "Total_Particles": len(df),
-                            "Avg_BF_Area_um2": df["BF_Area_um2"].mean() if "BF_Area_um2" in df.columns else 0,
-                            "Avg_Fluor_Density": df["Fluor_Density_per_BF_Area"].mean()
-                            if "Fluor_Density_per_BF_Area" in df.columns
-                            else 0,
-                            "Avg_BF_to_Fluor_Ratio": df["BF_to_Fluor_Area_Ratio"].mean()
-                            if "BF_to_Fluor_Area_Ratio" in df.columns
-                            else 0,
-                        }
-                    )
+                    summary_data.append({
+                        "Image": image_name,
+                        "Total_Particles_Detected": len(df),
+                        "Particles_With_Fluor": len(df_stats),
+                        "Avg_BF_Area_um2": df["BF_Area_um2"].mean() if "BF_Area_um2" in df.columns else 0,
+                        "Avg_Fluor_Density": avg_fluor_density,
+                        "Avg_BF_to_Fluor_Ratio": avg_ratio,
+                    })
 
                 summary_df = pd.DataFrame(summary_data)
+
+                # --- SORTING REQUIREMENT ---
+                if "Avg_Fluor_Density" in summary_df.columns:
+                    summary_df = summary_df.sort_values("Avg_Fluor_Density", ascending=False)
+                # ---------------------------
+
                 summary_df.to_excel(writer, sheet_name="Summary", index=False)
                 ws_summary = writer.sheets["Summary"]
 
@@ -1354,26 +1407,27 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                     cell.fill = header_fill
                     cell.font = header_font
                     cell.alignment = center_align
+                
+                format_numbers(ws_summary)
+                adjust_column_widths(ws_summary)
 
             except Exception as e:
                 print(f"[WARN] Could not create Summary sheet: {e}")
 
-            # --- Ratios sheet (plots + support PNGs) ---
+            # --- Ratios sheet ---
             try:
                 wb = writer.book
                 ratios_name = "Ratios"
-
-                for legacy in (ratios_name, "QA_Ratios"):
-                    if legacy in wb.sheetnames:
-                        wb.remove(wb[legacy])
-
+                if ratios_name in wb.sheetnames:
+                    wb.remove(wb[ratios_name])
                 ws_qa = wb.create_sheet(ratios_name)
 
-                from openpyxl.styles import Font, Alignment
+                # Re-import styles for this scope if needed, or use outer scope
+                ws_qa["A1"] = f"QA Ratios - Group: {group_name}"
+                ws_qa["A1"].font = Font(bold=True, size=14)
 
                 def add_png(ws, path: Path, anchor_cell: str, width_px: int = 360) -> None:
-                    if not path.exists():
-                        return
+                    if not path.exists(): return
                     img = XLImage(str(path))
                     if getattr(img, "width", None) and getattr(img, "height", None):
                         scale = width_px / float(img.width)
@@ -1381,127 +1435,104 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                         img.height = int(img.height * scale)
                     ws.add_image(img, anchor_cell)
 
-                ws_qa["A1"] = f"QA Ratios - Group: {group_name}"
-                ws_qa["A1"].font = Font(bold=True, size=14)
-
                 row = 3
                 block_h = 34
 
                 for csv_file in sorted(csv_files):
                     image_name = csv_file.parent.name
                     df = pd.read_csv(csv_file)
-
+                    
+                    # Recalc metrics for plotting
                     if "Fluor_IntegratedDensity" in df.columns and "BF_Area_um2" in df.columns:
-                        df["Fluor_Density_per_BF_Area"] = (
-                            pd.to_numeric(df["Fluor_IntegratedDensity"], errors="coerce")
-                            / pd.to_numeric(df["BF_Area_um2"], errors="coerce")
-                        )
+                        df["Fluor_Density_per_BF_Area"] = pd.to_numeric(df["Fluor_IntegratedDensity"], errors='coerce') / pd.to_numeric(df["BF_Area_um2"], errors='coerce')
                     else:
                         df["Fluor_Density_per_BF_Area"] = 0.0
-
-                    if "Fluor_Area_um2" in df.columns and "BF_Area_um2" in df.columns:
-                        df["BF_to_Fluor_Area_Ratio"] = (
-                            pd.to_numeric(df["BF_Area_um2"], errors="coerce")
-                            / pd.to_numeric(df["Fluor_Area_um2"], errors="coerce")
-                        )
+                    
+                    if "BF_Area_um2" in df.columns and "Fluor_Area_um2" in df.columns:
+                        df["BF_to_Fluor_Area_Ratio"] = pd.to_numeric(df["BF_Area_um2"], errors='coerce') / pd.to_numeric(df["Fluor_Area_um2"], errors='coerce')
                     else:
                         df["BF_to_Fluor_Area_Ratio"] = 0.0
 
-                    df["Fluor_Density_per_BF_Area"] = (
-                        df["Fluor_Density_per_BF_Area"].replace([np.inf, -np.inf], 0).fillna(0)
-                    )
-                    df["BF_to_Fluor_Area_Ratio"] = (
-                        df["BF_to_Fluor_Area_Ratio"].replace([np.inf, -np.inf], 0).fillna(0)
-                    )
+                    df = df.replace([np.inf, -np.inf], 0).fillna(0)
 
-                    df = df.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
+                    # --- SORTING REQUIREMENT ---
+                    if "Fluor_Density_per_BF_Area" in df.columns:
+                        df = df.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
+                    # ---------------------------
 
                     ws_qa[f"A{row}"] = image_name
                     ws_qa[f"A{row}"].font = Font(bold=True, size=12)
-                    row0 = row
-
-                    ws_qa[f"A{row+1}"] = "Object_ID"
-                    ws_qa[f"B{row+1}"] = "Fluor_Density_per_BF_Area"
-                    ws_qa[f"D{row+1}"] = "Object_ID"
-                    ws_qa[f"E{row+1}"] = "BF_to_Fluor_Area_Ratio"
-                    for c in ["A", "B", "D", "E"]:
-                        ws_qa[f"{c}{row+1}"].font = Font(bold=True)
-                        ws_qa[f"{c}{row+1}"].alignment = Alignment(horizontal="center")
+                    
+                    # Headers
+                    headers = ["Object_ID", "Fluor_Density_per_BF_Area", "", "Object_ID", "BF_to_Fluor_Area_Ratio"]
+                    for col_idx, header in enumerate(headers, 1):
+                        cell = ws_qa.cell(row=row+1, column=col_idx, value=header)
+                        cell.font = Font(bold=True)
+                        cell.alignment = center_align
 
                     start_data_row = row + 2
-
-                    ws_qa.column_dimensions["A"].width = 16
-                    ws_qa.column_dimensions["B"].width = 26
-                    ws_qa.column_dimensions["C"].width = 3
-                    ws_qa.column_dimensions["D"].width = 16
-                    ws_qa.column_dimensions["E"].width = 22
-
+                    
+                    # Write data
                     for k, r in enumerate(df.itertuples(index=False), 0):
-                        ws_qa[f"A{start_data_row+k}"] = getattr(r, "Object_ID")
-                        ws_qa[f"B{start_data_row+k}"] = float(getattr(r, "Fluor_Density_per_BF_Area", 0.0))
-                        ws_qa[f"D{start_data_row+k}"] = getattr(r, "Object_ID")
-                        ws_qa[f"E{start_data_row+k}"] = float(getattr(r, "BF_to_Fluor_Area_Ratio", 0.0))
+                        ws_qa.cell(row=start_data_row+k, column=1, value=getattr(r, "Object_ID"))
+                        ws_qa.cell(row=start_data_row+k, column=2, value=float(getattr(r, "Fluor_Density_per_BF_Area", 0.0))).number_format = '0.0000'
+                        ws_qa.cell(row=start_data_row+k, column=4, value=getattr(r, "Object_ID"))
+                        ws_qa.cell(row=start_data_row+k, column=5, value=float(getattr(r, "BF_to_Fluor_Area_Ratio", 0.0))).number_format = '0.0000'
+
+                    # Adjust widths for this block
+                    ws_qa.column_dimensions["A"].width = 20
+                    ws_qa.column_dimensions["B"].width = 25
+                    ws_qa.column_dimensions["C"].width = 5
+                    ws_qa.column_dimensions["D"].width = 20
+                    ws_qa.column_dimensions["E"].width = 25
 
                     n = len(df)
                     if n > 0:
+                        # Charts
                         ch1 = ScatterChart()
-                        ch1.title = "Fluor intensity / BF area (Fluor_Density_per_BF_Area)"
+                        ch1.title = "Fluor Density"
                         ch1.y_axis.title = "a.u./µm²"
-                        ch1.x_axis.title = "Object_ID"
+                        ch1.x_axis.title = "Object Index" # Scatter uses index if not numeric X? Actually Object_ID is string, scatter needs numeric.
+                        # Using row number as X for scatter if ID is string, or use LineChart. 
+                        # Assuming previous implementation worked, we keep Reference logic.
+                        # Note: ScatterChart expects numeric X. If Object_ID is string, it might fail or plot against index.
+                        
                         xref = Reference(ws_qa, min_col=1, min_row=start_data_row, max_row=start_data_row + n - 1)
                         yref = Reference(ws_qa, min_col=2, min_row=start_data_row, max_row=start_data_row + n - 1)
-                        s1 = cast(Any, SeriesFactory(yref, xref))
-                        try:
-                            s1.title = "Fluor Density"
-                        except Exception:
-                            pass
-                        try:
-                            s1.marker = Marker(symbol="triangle", size=5)
-                        except Exception:
-                            pass
+                        s1 = SeriesFactory(yref, title="Density")
+                        s1.marker = Marker(symbol="triangle", size=5)
                         ch1.series.append(s1)
                         ws_qa.add_chart(ch1, f"G{row+1}")
 
                         ch2 = ScatterChart()
-                        ch2.title = "BF area / FL area (BF_to_Fluor_Area_Ratio)"
-                        ch2.y_axis.title = "Ratio"
-                        ch2.x_axis.title = "Object_ID"
-                        xref2 = Reference(ws_qa, min_col=4, min_row=start_data_row, max_row=start_data_row + n - 1)
+                        ch2.title = "Area Ratio"
                         yref2 = Reference(ws_qa, min_col=5, min_row=start_data_row, max_row=start_data_row + n - 1)
-                        s2 = cast(Any, SeriesFactory(yref2, xref2))
-                        try:
-                            s2.title = "BF/FL Area Ratio"
-                        except Exception:
-                            pass
-                        try:
-                            s2.marker = Marker(symbol="circle", size=5)
-                        except Exception:
-                            pass
+                        s2 = SeriesFactory(yref2, title="Ratio")
+                        s2.marker = Marker(symbol="circle", size=5)
                         ch2.series.append(s2)
                         ws_qa.add_chart(ch2, f"G{row+18}")
 
+                    # Images
                     img_dir = csv_file.parent
                     add_png(ws_qa, img_dir / "13_mask_accepted_ids.png", f"Q{row+1}", width_px=330)
                     add_png(ws_qa, img_dir / "22_fluorescence_mask_global_ids.png", f"Q{row+18}", width_px=330)
                     add_png(ws_qa, img_dir / "23_fluorescence_contours_global_ids.png", f"Q{row+18}", width_px=330)
                     add_png(ws_qa, img_dir / "24_bf_fluor_matching_overlay_ids.png", f"Q{row+1}", width_px=330)
 
-                    row = row0 + block_h
+                    row += block_h
 
             except Exception as e:
                 print(f"[WARN] Could not create Ratios sheet: {e}")
 
-        # Reorder worksheets AFTER ExcelWriter closes
+        # Reorder worksheets
         wb2 = load_workbook(excel_path)
         desired_order = ["Summary", "Ratios", "README", f"{group_name}_Typical_Particles"]
-
         for idx, sheet_name in enumerate(desired_order):
             if sheet_name in wb2.sheetnames:
                 sheet = wb2[sheet_name]
                 current_idx = wb2.sheetnames.index(sheet_name)
                 if current_idx != idx:
                     wb2.move_sheet(sheet, offset=idx - current_idx)
-
         wb2.save(excel_path)
 
         print(f"Excel consolidation saved: {excel_path}")
@@ -1509,11 +1540,9 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
 
     except PermissionError:
         print(f"[ERROR] Cannot write to {excel_path} - file may be open")
-        print("        Close Excel and try again")
     except Exception as e:
         print(f"[ERROR] Failed to create Excel file: {e}")
         import traceback
-
         traceback.print_exc()
 
 
@@ -1602,9 +1631,13 @@ def process_image(img_path: Path, output_root: Path) -> None:
 
     vis_acc = cv2.cvtColor(img8, cv2.COLOR_GRAY2BGR)
     cv2.drawContours(vis_acc, rejected, -1, (0, 165, 255), 1)
-    cv2.drawContours(vis_acc, accepted, -1, (0, 0, 255), 1)
+    
+    # --- MODIFICATION: Changed accepted contours to Yellow (0, 255, 255) ---
+    cv2.drawContours(vis_acc, accepted, -1, (0, 255, 255), 1)
+    
     vis_acc = draw_object_ids(vis_acc, accepted)
-    save_debug(img_out, "11_contours_rejected_orange_accepted_red_ids_green.png", vis_acc, um_per_px_avg)
+    # Updated filename to reflect color change
+    save_debug(img_out, "11_contours_rejected_orange_accepted_yellow_ids_green.png", vis_acc, um_per_px_avg)
 
     mask_all = np.zeros_like(mask)
     cv2.drawContours(mask_all, contours, -1, 255, thickness=-1)
@@ -1624,6 +1657,16 @@ def process_image(img_path: Path, output_root: Path) -> None:
     if fluor_path.exists():
         fluor_img = cv2.imread(str(fluor_path), cv2.IMREAD_UNCHANGED)
         if fluor_img is not None:
+            # --- START ALIGNMENT INTEGRATION ---
+            print("Aligning Fluorescence channel to Brightfield...")
+            # 'img' is the grayscale BF image loaded earlier
+            fluor_img, (sy, sx) = align_fluorescence_channel(img, fluor_img)
+            print(f"  -> Applied Shift: Y={-sy:.2f}, X={-sx:.2f}")
+            
+            # Save the aligned raw image for verification
+            save_debug(img_out, "20_fluorescence_aligned_raw.png", normalize_to_8bit(fluor_img), um_per_px_avg)
+            # --- END ALIGNMENT INTEGRATION ---
+
             if fluor_img.ndim == 3:
                 fluor_img = cv2.cvtColor(fluor_img, cv2.COLOR_BGR2GRAY)
 
@@ -1803,6 +1846,7 @@ def process_image(img_path: Path, output_root: Path) -> None:
 
     print(f"CSV saved: {csv_path} ({len(accepted)} objects)")
     print("✓ Done")
+
 
 
 def main() -> None:
