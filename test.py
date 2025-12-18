@@ -806,6 +806,7 @@ def generate_error_bar_comparison(
     If restrict_to_groups is provided, compare ONLY those groups (after display-name mapping).
     Example for single group mode: restrict_to_groups=["11", "Control"].
     """
+    import textwrap  # Added for title wrapping
 
     excel_files = list(output_dir.rglob("*_master.xlsx"))
 
@@ -875,7 +876,7 @@ def generate_error_bar_comparison(
         palette_colors = list(sns.color_palette("husl", len(group_order)))
 
     # Generate SD plot
-    plt.figure(figsize=(8, 5))
+    plt.figure(figsize=(8, 6)) # Slightly increased height for wrapped title
     sns.set_style("ticks")
 
     # Bar plot WITHOUT seaborn error bars (we add SD ourselves)
@@ -947,13 +948,16 @@ def generate_error_bar_comparison(
     plt.xlabel("")
     plt.xticks(fontsize=10, fontweight="bold")
     plt.yticks(fontsize=10, fontweight="bold")
-    # plt.title("Comparison (Error Bars: Standard Deviation)", fontsize=11)
-    pct = int(round(percentile * 100))
-    # title = f"Comparison (Error Bars: Standard Deviation) — Typical = middle {100 - 2*pct}% (p={pct}%)"
-    title = f"Comparison (Error Bars: Standard Deviation) — Typical = Closest 3 to Group Mean"
+    
+    # --- UPDATED TITLE LOGIC ---
+    pct_display = int(percentile * 100)
+    raw_title = f"Comparison (Error Bars: Standard Deviation) — Typical = Middle {100 - 2*pct_display}% (Cut top/bottom {pct_display}%)"
     if title_suffix:
-        title += f" — {title_suffix}"
-    plt.title(title, fontsize=11)
+        raw_title += f" — {title_suffix}"
+    
+    # Wrap title at 50 characters to prevent cutoff
+    wrapped_title = "\n".join(textwrap.wrap(raw_title, width=50))
+    plt.title(wrapped_title, fontsize=11, pad=10)
 
     for axis in ["top", "bottom", "left", "right"]:
         plt.gca().spines[axis].set_linewidth(1.5)
@@ -973,48 +977,6 @@ def generate_error_bar_comparison(
     print(f"Saved plot: {out_path}")
     return out_path
 
-    # Save statistics CSV
-    stats_out = output_dir / "comparison_statistics.csv"
-    if restrict_to_groups is not None:
-        stats_out = output_dir / f"comparison_statistics_{safe}.csv"
-
-    pd.DataFrame(
-        [
-            {
-                "Group": g_name,
-                "n": int(stats["n"]),
-                "Mean": f"{float(stats['mean']):.2f}",
-                "SD": f"{float(stats['std']):.2f}",
-                "SEM": f"{float(stats['sem']):.2f}",
-                "95% CI": f"±{float(stats['ci_95']):.2f}",
-            }
-            for g_name, stats in group_stats.items()
-            if (restrict_to_groups is None or g_name in group_order)
-        ]
-    ).to_csv(stats_out, index=False)
-
-    # Perform t-test if exactly 2 groups on the plotted order
-    if len(group_order) == 2:
-        g1, g2 = group_order[0], group_order[1]
-        data1 = df_all[df_all["Group"] == g1]["Fluorescence Density"]
-        data2 = df_all[df_all["Group"] == g2]["Fluorescence Density"]
-
-        t_stat_any, p_val_any = cast(Any, scipy_stats.ttest_ind(data1, data2))
-        t_stat = float(np.asarray(t_stat_any).item())
-        p_val_float = float(np.asarray(p_val_any).item())
-
-        test_out = output_dir / "statistical_test.txt"
-        if restrict_to_groups is not None:
-            test_out = output_dir / f"statistical_test_{safe}.txt"
-
-        with open(test_out, "w", encoding="utf-8") as f:
-            f.write("Two-Sample t-Test Results\n")
-            f.write(f"{'=' * 60}\n")
-            f.write(f"Group 1: {g1} (n={len(data1)})\n")
-            f.write(f"Group 2: {g2} (n={len(data2)})\n\n")
-            f.write(f"t-statistic: {t_stat:.4f}\n")
-            f.write(f"p-value: {p_val_float:.4f}\n")
-            f.write(f"Significance (alpha=0.05): {'YES' if p_val_float < 0.05 else 'NO'}\n")
 
 def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: float) -> None:
     """
@@ -1276,27 +1238,34 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
 
                 df = df.replace([np.inf, -np.inf], 0).fillna(0)
 
-                # --- NEW FILTERING LOGIC (Mean Deviation Ranking) ---
-                # 1. Filter for valid particles (exclude noise)
-                df_valid = df[df["Fluor_Area_px"] > 0].reset_index(drop=True)
+                # --- NEW FILTERING LOGIC (Percentile Top/Bottom Cut) ---
+                # 1. Filter out objects with Fluor_IntegratedDensity == 0 (and ensure Area > 0 for safety)
+                df_valid = df[(df["Fluor_IntegratedDensity"] > 0) & (df["Fluor_Area_px"] > 0)].reset_index(drop=True)
 
                 if not df_valid.empty:
-                    # 2. Calculate Group Mean (for this image)
-                    group_mean = df_valid["Fluor_Density_per_BF_Area"].mean()
+                    # 2. Sort by Fluor_Density_per_BF_Area in descending order
+                    df_valid = df_valid.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
 
-                    # 3. Calculate Deviation from Mean
-                    df_valid["Deviation_from_Mean"] = (df_valid["Fluor_Density_per_BF_Area"] - group_mean).abs()
+                    # 3. Calculate cut indices based on percentile
+                    n_total = len(df_valid)
+                    n_cut = int(n_total * percentile)
 
-                    # 4. Sort by Deviation (Rank 1 = Smallest Deviation)
-                    df_valid = df_valid.sort_values("Deviation_from_Mean", ascending=True)
+                    # The middle group indices
+                    start_idx = n_cut
+                    end_idx = n_total - n_cut
 
-                    # 5. Apply Rule:
-                    # If count <= 3, keep all.
-                    # If count > 3, keep top 3 (smallest deviation).
-                    if len(df_valid) <= 3:
+                    # Ensure indices make sense (start < end)
+                    if start_idx < end_idx:
+                        middle_group = df_valid.iloc[start_idx:end_idx].copy()
+                    else:
+                        # If math results in empty or negative range, middle is empty
+                        middle_group = pd.DataFrame(columns=df_valid.columns)
+
+                    # 4. Fallback: If middle group has <= 3 particles, use ALL valid objects
+                    if len(middle_group) <= 3:
                         typical_particles = df_valid.copy()
                     else:
-                        typical_particles = df_valid.iloc[:3].copy()
+                        typical_particles = middle_group
                 else:
                     typical_particles = df_valid.copy()
                 # ----------------------------------------------------
@@ -1305,7 +1274,12 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                 all_typical_particles.append(typical_particles)
 
                 sheet_name = image_name[:31]
-                # Save the full dataframe to the sheet, but highlight the typical ones
+                
+                # --- SORTING FOR INDIVIDUAL SHEETS ---
+                # Sort the main dataframe for this sheet by density as requested
+                if "Fluor_Density_per_BF_Area" in df.columns:
+                    df = df.sort_values("Fluor_Density_per_BF_Area", ascending=False)
+                
                 df.to_excel(writer, sheet_name=sheet_name, index=False)
                 ws = writer.sheets[sheet_name]
 
@@ -1379,8 +1353,6 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                     # Ratio calculation
                     avg_ratio = 0.0
                     if not df_stats.empty and "BF_Area_um2" in df_stats.columns and "Fluor_Area_um2" in df_stats.columns:
-                         # Calculate ratio per particle then average, or sum then ratio? 
-                         # Usually per particle average is safer for "Average Ratio"
                          ratios = df_stats["BF_Area_um2"] / df_stats["Fluor_Area_um2"]
                          avg_ratio = ratios.replace([np.inf, -np.inf], 0).mean()
 
@@ -1422,7 +1394,6 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                     wb.remove(wb[ratios_name])
                 ws_qa = wb.create_sheet(ratios_name)
 
-                # Re-import styles for this scope if needed, or use outer scope
                 ws_qa["A1"] = f"QA Ratios - Group: {group_name}"
                 ws_qa["A1"].font = Font(bold=True, size=14)
 
@@ -1455,7 +1426,7 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
 
                     df = df.replace([np.inf, -np.inf], 0).fillna(0)
 
-                    # --- SORTING REQUIREMENT ---
+                    # --- SORTING REQUIREMENT (Fix for Issue 2) ---
                     if "Fluor_Density_per_BF_Area" in df.columns:
                         df = df.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
                     # ---------------------------
@@ -1463,51 +1434,63 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                     ws_qa[f"A{row}"] = image_name
                     ws_qa[f"A{row}"].font = Font(bold=True, size=12)
                     
-                    # Headers
-                    headers = ["Object_ID", "Fluor_Density_per_BF_Area", "", "Object_ID", "BF_to_Fluor_Area_Ratio"]
+                    # Headers - Added "Rank" for proper Scatter plotting
+                    headers = ["Object_ID", "Fluor_Density_per_BF_Area", "Rank", "Object_ID", "BF_to_Fluor_Area_Ratio"]
                     for col_idx, header in enumerate(headers, 1):
                         cell = ws_qa.cell(row=row+1, column=col_idx, value=header)
                         cell.font = Font(bold=True)
                         cell.alignment = center_align
 
                     start_data_row = row + 2
+                    n = len(df)
                     
                     # Write data
                     for k, r in enumerate(df.itertuples(index=False), 0):
+                        # Col 1: Object ID
                         ws_qa.cell(row=start_data_row+k, column=1, value=getattr(r, "Object_ID"))
+                        # Col 2: Density
                         ws_qa.cell(row=start_data_row+k, column=2, value=float(getattr(r, "Fluor_Density_per_BF_Area", 0.0))).number_format = '0.0000'
+                        # Col 3: Rank (Numeric X-axis for Scatter Chart)
+                        ws_qa.cell(row=start_data_row+k, column=3, value=k+1)
+                        # Col 4: Object ID (Repeated for context)
                         ws_qa.cell(row=start_data_row+k, column=4, value=getattr(r, "Object_ID"))
+                        # Col 5: Ratio
                         ws_qa.cell(row=start_data_row+k, column=5, value=float(getattr(r, "BF_to_Fluor_Area_Ratio", 0.0))).number_format = '0.0000'
 
                     # Adjust widths for this block
                     ws_qa.column_dimensions["A"].width = 20
                     ws_qa.column_dimensions["B"].width = 25
-                    ws_qa.column_dimensions["C"].width = 5
+                    ws_qa.column_dimensions["C"].width = 10 # Rank
                     ws_qa.column_dimensions["D"].width = 20
                     ws_qa.column_dimensions["E"].width = 25
 
-                    n = len(df)
                     if n > 0:
-                        # Charts
+                        # --- CHART FIXES (Issue 1) ---
+                        # Use Column 3 (Rank) as X-axis so ScatterChart works correctly
+                        
+                        # Chart 1: Density
                         ch1 = ScatterChart()
                         ch1.title = "Fluor Density"
                         ch1.y_axis.title = "a.u./µm²"
-                        ch1.x_axis.title = "Object Index" # Scatter uses index if not numeric X? Actually Object_ID is string, scatter needs numeric.
-                        # Using row number as X for scatter if ID is string, or use LineChart. 
-                        # Assuming previous implementation worked, we keep Reference logic.
-                        # Note: ScatterChart expects numeric X. If Object_ID is string, it might fail or plot against index.
+                        ch1.x_axis.title = "Object Rank (Sorted)"
                         
-                        xref = Reference(ws_qa, min_col=1, min_row=start_data_row, max_row=start_data_row + n - 1)
+                        xref = Reference(ws_qa, min_col=3, min_row=start_data_row, max_row=start_data_row + n - 1)
                         yref = Reference(ws_qa, min_col=2, min_row=start_data_row, max_row=start_data_row + n - 1)
-                        s1 = SeriesFactory(yref, title="Density")
+                        
+                        s1 = SeriesFactory(yref, xref, title="Density")
                         s1.marker = Marker(symbol="triangle", size=5)
                         ch1.series.append(s1)
                         ws_qa.add_chart(ch1, f"G{row+1}")
 
+                        # Chart 2: Ratio
                         ch2 = ScatterChart()
                         ch2.title = "Area Ratio"
+                        ch2.y_axis.title = "Ratio"
+                        ch2.x_axis.title = "Object Rank (Sorted)"
+                        
                         yref2 = Reference(ws_qa, min_col=5, min_row=start_data_row, max_row=start_data_row + n - 1)
-                        s2 = SeriesFactory(yref2, title="Ratio")
+                        
+                        s2 = SeriesFactory(yref2, xref, title="Ratio")
                         s2.marker = Marker(symbol="circle", size=5)
                         ch2.series.append(s2)
                         ws_qa.add_chart(ch2, f"G{row+18}")
@@ -1544,7 +1527,6 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
         print(f"[ERROR] Failed to create Excel file: {e}")
         import traceback
         traceback.print_exc()
-
 
 # ==================================================
 # Main processing
@@ -1951,6 +1933,16 @@ def main() -> None:
 
             if plot.exists():
                 embed_comparison_plots_into_all_excels(group_dir, percentile, plot_path=plot)
+    
+    img_paths: list[Path] = []
+    for d in dirs_to_process:
+        for img_path in sorted(d.rglob(IMAGE_GLOB)):
+            # Skip macOS metadata files and other hidden files
+            if any(part.startswith('.') for part in img_path.parts):
+                continue
+            img_paths.append(img_path)
+    
+    print(f"Found {len(img_paths)} brightfield images matching '{IMAGE_GLOB}'")
 
 if __name__ == "__main__":
     main()
