@@ -24,6 +24,7 @@ source/
 source_no_meta/
 processed/
 debug/
+debug-2/
 logs/
 
 # Keep template/example
