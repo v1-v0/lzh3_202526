@@ -1121,6 +1121,8 @@ def embed_comparison_plots_into_all_excels(
 
     print(f"Embedding complete. Updated {updated}/{len(excel_files)} workbooks.")
 
+
+
 def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -> None:
     """Consolidate all CSVs in a group folder into one Excel workbook with statistics and color coding"""
     csv_files = list(output_dir.glob("*/object_stats.csv"))
@@ -1145,6 +1147,7 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
 
         # --- Styles ---
         yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+        red_fill = PatternFill(start_color="FFB6C1", end_color="FFB6C1", fill_type="solid")  # Light red for excluded
         header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
         header_font = Font(bold=True, color="FFFFFF")
         center_align = Alignment(horizontal="center", vertical="center")
@@ -1173,10 +1176,11 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
             for row in ws.iter_rows(min_row=2):
                 for cell in row:
                     if isinstance(cell.value, (int, float)):
-                        # Apply 4 decimal places for small numbers, 2 for large
                         cell.number_format = '0.0000'
 
-        all_typical_particles: list[pd.DataFrame] = []
+        # Track ALL objects for group-level filtering
+        all_valid_objects: list[pd.DataFrame] = []
+        all_excluded_objects: list[dict] = []
 
         with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
             # --- README sheet ---
@@ -1238,45 +1242,39 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
 
                 df = df.replace([np.inf, -np.inf], 0).fillna(0)
 
-                # --- NEW FILTERING LOGIC (Percentile Top/Bottom Cut) ---
-                # 1. Filter out objects with Fluor_IntegratedDensity == 0 (and ensure Area > 0 for safety)
-                df_valid = df[(df["Fluor_IntegratedDensity"] > 0) & (df["Fluor_Area_px"] > 0)].reset_index(drop=True)
+                # --- NEW: Track excluded objects with reasons ---
+                for idx, row in df.iterrows():
+                    reason = None
+                    
+                    # Check exclusion criteria
+                    if row["Fluor_Area_px"] == 0 and row["Fluor_IntegratedDensity"] > 0:
+                        reason = "Zero fluorescence area with positive integrated density"
+                    elif row["Fluor_Area_px"] == 0:
+                        reason = "Zero fluorescence area"
+                    elif row["Fluor_IntegratedDensity"] == 0:
+                        reason = "Zero integrated density"
+                    
+                    if reason:
+                        all_excluded_objects.append({
+                            "Object_ID": row["Object_ID"],
+                            "Source_Image": image_name,
+                            "BF_Area_um2": row["BF_Area_um2"],
+                            "Fluor_Area_px": row["Fluor_Area_px"],
+                            "Fluor_IntegratedDensity": row["Fluor_IntegratedDensity"],
+                            "Exclusion_Reason": reason
+                        })
 
+                # Filter valid objects (both area and intensity > 0)
+                df_valid = df[(df["Fluor_IntegratedDensity"] > 0) & (df["Fluor_Area_px"] > 0)].copy()
+                df_valid["Source_Image"] = image_name
+                
+                # Append ALL valid objects (no per-image percentile filtering)
                 if not df_valid.empty:
-                    # 2. Sort by Fluor_Density_per_BF_Area in descending order
-                    df_valid = df_valid.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
-
-                    # 3. Calculate cut indices based on percentile
-                    n_total = len(df_valid)
-                    n_cut = int(n_total * percentile)
-
-                    # The middle group indices
-                    start_idx = n_cut
-                    end_idx = n_total - n_cut
-
-                    # Ensure indices make sense (start < end)
-                    if start_idx < end_idx:
-                        middle_group = df_valid.iloc[start_idx:end_idx].copy()
-                    else:
-                        # If math results in empty or negative range, middle is empty
-                        middle_group = pd.DataFrame(columns=df_valid.columns)
-
-                    # 4. Fallback: If middle group has <= 3 particles, use ALL valid objects
-                    if len(middle_group) <= 3:
-                        typical_particles = df_valid.copy()
-                    else:
-                        typical_particles = middle_group
-                else:
-                    typical_particles = df_valid.copy()
-                # ----------------------------------------------------
-
-                typical_particles["Source_Image"] = image_name
-                all_typical_particles.append(typical_particles)
+                    all_valid_objects.append(df_valid)
 
                 sheet_name = image_name[:31]
                 
-                # --- SORTING FOR INDIVIDUAL SHEETS ---
-                # Sort the main dataframe for this sheet by density as requested
+                # Sort by density for display
                 if "Fluor_Density_per_BF_Area" in df.columns:
                     df = df.sort_values("Fluor_Density_per_BF_Area", ascending=False)
                 
@@ -1291,41 +1289,134 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                 
                 format_numbers(ws)
                 adjust_column_widths(ws)
-
-                # Highlight Typical Particles
-                typical_ids = set(typical_particles["Object_ID"].astype(str).values)
-                for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
-                    if row[0].value is not None:
-                        obj_id = str(row[0].value)
-                        if obj_id in typical_ids:
-                            for cell in row:
-                                cell.fill = yellow_fill
-
                 ws.auto_filter.ref = ws.dimensions
 
-            # --- {group}_Typical_Particles sheet ---
-            try:
-                if all_typical_particles:
-                    merged_typical = pd.concat(all_typical_particles, ignore_index=True)
-                    
-                    # Sort by density just for display in the summary sheet
-                    if "Fluor_Density_per_BF_Area" in merged_typical.columns:
-                        merged_typical = merged_typical.sort_values("Fluor_Density_per_BF_Area", ascending=False)
+            # --- NEW: Excluded_Objects sheet ---
+            if all_excluded_objects:
+                excluded_df = pd.DataFrame(all_excluded_objects)
+                excluded_df.to_excel(writer, sheet_name="Excluded_Objects", index=False)
+                ws_excluded = writer.sheets["Excluded_Objects"]
+                
+                for cell in ws_excluded[1]:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = center_align
+                
+                # Highlight rows with light red
+                for row in ws_excluded.iter_rows(min_row=2, max_row=ws_excluded.max_row):
+                    for cell in row:
+                        cell.fill = red_fill
+                
+                adjust_column_widths(ws_excluded)
+                ws_excluded.auto_filter.ref = ws_excluded.dimensions
+                
+                print(f"[INFO] Excluded {len(all_excluded_objects)} objects (see 'Excluded_Objects' sheet)")
 
-                    typical_sheet_name = f"{group_name}_Typical_Particles"
-                    merged_typical.to_excel(writer, sheet_name=typical_sheet_name, index=False)
-                    ws_typ = writer.sheets[typical_sheet_name]
+            # --- All Valid Objects (unsorted, for reference) ---
+            if all_valid_objects:
+                merged_all = pd.concat(all_valid_objects, ignore_index=True)
+                
+                # Sort by density
+                merged_all = merged_all.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
+                
+                all_valid_sheet_name = f"{group_name}_All_Valid_Objects"
+                merged_all.to_excel(writer, sheet_name=all_valid_sheet_name, index=False)
+                ws_all = writer.sheets[all_valid_sheet_name]
+                
+                for cell in ws_all[1]:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = center_align
+                
+                format_numbers(ws_all)
+                adjust_column_widths(ws_all)
+                ws_all.auto_filter.ref = ws_all.dimensions
 
-                    for cell in ws_typ[1]:
-                        cell.fill = header_fill
-                        cell.font = header_font
-                        cell.alignment = center_align
+            # --- GROUP-LEVEL Percentile Filtering: {group}_Typical_Particles ---
+            if all_valid_objects:
+                merged_all = pd.concat(all_valid_objects, ignore_index=True)
+                
+                # Sort by density
+                merged_all = merged_all.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
+                
+                # Apply percentile cut at GROUP level
+                n_total = len(merged_all)
+                n_cut = int(n_total * percentile)
+                
+                start_idx = n_cut
+                end_idx = n_total - n_cut
+                
+                if start_idx < end_idx and n_total > 3:
+                    typical_particles = merged_all.iloc[start_idx:end_idx].copy()
+                    print(f"[INFO] Group-level filtering: {n_total} total → {len(typical_particles)} typical (cut top/bottom {int(percentile*100)}%)")
                     
-                    format_numbers(ws_typ)
-                    adjust_column_widths(ws_typ)
-                    ws_typ.auto_filter.ref = ws_typ.dimensions
-            except Exception as e:
-                print(f"[WARN] Could not create {group_name}_Typical_Particles sheet: {e}")
+                    # Track which objects were excluded due to percentile
+                    excluded_top = merged_all.iloc[:start_idx]
+                    excluded_bottom = merged_all.iloc[end_idx:]
+                    
+                    for idx, row in excluded_top.iterrows():
+                        all_excluded_objects.append({
+                            "Object_ID": row["Object_ID"],
+                            "Source_Image": row["Source_Image"],
+                            "BF_Area_um2": row["BF_Area_um2"],
+                            "Fluor_Area_px": row["Fluor_Area_px"],
+                            "Fluor_IntegratedDensity": row["Fluor_IntegratedDensity"],
+                            "Exclusion_Reason": f"Outside typical particle range (top {int(percentile*100)}%)"
+                        })
+                    
+                    for idx, row in excluded_bottom.iterrows():
+                        all_excluded_objects.append({
+                            "Object_ID": row["Object_ID"],
+                            "Source_Image": row["Source_Image"],
+                            "BF_Area_um2": row["BF_Area_um2"],
+                            "Fluor_Area_px": row["Fluor_Area_px"],
+                            "Fluor_IntegratedDensity": row["Fluor_IntegratedDensity"],
+                            "Exclusion_Reason": f"Outside typical particle range (bottom {int(percentile*100)}%)"
+                        })
+                else:
+                    typical_particles = merged_all.copy()
+                    print(f"[INFO] Group has ≤3 objects or percentile range invalid; using ALL {n_total} valid objects as typical")
+
+                typical_sheet_name = f"{group_name}_Typical_Particles"
+                typical_particles.to_excel(writer, sheet_name=typical_sheet_name, index=False)
+                ws_typ = writer.sheets[typical_sheet_name]
+
+                for cell in ws_typ[1]:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = center_align
+                
+                # Highlight typical particles with yellow
+                for row in ws_typ.iter_rows(min_row=2, max_row=ws_typ.max_row):
+                    for cell in row:
+                        cell.fill = yellow_fill
+                
+                format_numbers(ws_typ)
+                adjust_column_widths(ws_typ)
+                ws_typ.auto_filter.ref = ws_typ.dimensions
+
+            # --- Update Excluded_Objects sheet with percentile exclusions ---
+            if all_excluded_objects:
+                # Overwrite with complete list
+                wb = writer.book
+                if "Excluded_Objects" in wb.sheetnames:
+                    wb.remove(wb["Excluded_Objects"])
+                
+                excluded_df = pd.DataFrame(all_excluded_objects)
+                excluded_df.to_excel(writer, sheet_name="Excluded_Objects", index=False)
+                ws_excluded = writer.sheets["Excluded_Objects"]
+                
+                for cell in ws_excluded[1]:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = center_align
+                
+                for row in ws_excluded.iter_rows(min_row=2, max_row=ws_excluded.max_row):
+                    for cell in row:
+                        cell.fill = red_fill
+                
+                adjust_column_widths(ws_excluded)
+                ws_excluded.auto_filter.ref = ws_excluded.dimensions
 
             # --- Summary sheet ---
             try:
@@ -1346,7 +1437,7 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                     df = df.replace([np.inf, -np.inf], 0).fillna(0)
                     
                     # Stats on valid particles only
-                    df_stats = df[df["Fluor_Area_px"] > 0]
+                    df_stats = df[(df["Fluor_Area_px"] > 0) & (df["Fluor_IntegratedDensity"] > 0)]
                     
                     avg_fluor_density = df_stats["Fluor_Density_per_BF_Area"].mean() if not df_stats.empty else 0.0
                     
@@ -1367,10 +1458,8 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
 
                 summary_df = pd.DataFrame(summary_data)
 
-                # --- SORTING REQUIREMENT ---
                 if "Avg_Fluor_Density" in summary_df.columns:
                     summary_df = summary_df.sort_values("Avg_Fluor_Density", ascending=False)
-                # ---------------------------
 
                 summary_df.to_excel(writer, sheet_name="Summary", index=False)
                 ws_summary = writer.sheets["Summary"]
@@ -1386,7 +1475,7 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
             except Exception as e:
                 print(f"[WARN] Could not create Summary sheet: {e}")
 
-            # --- Ratios sheet ---
+            # --- Ratios sheet (unchanged) ---
             try:
                 wb = writer.book
                 ratios_name = "Ratios"
@@ -1426,15 +1515,12 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
 
                     df = df.replace([np.inf, -np.inf], 0).fillna(0)
 
-                    # --- SORTING REQUIREMENT (Fix for Issue 2) ---
                     if "Fluor_Density_per_BF_Area" in df.columns:
                         df = df.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
-                    # ---------------------------
 
                     ws_qa[f"A{row}"] = image_name
                     ws_qa[f"A{row}"].font = Font(bold=True, size=12)
                     
-                    # Headers - Added "Rank" for proper Scatter plotting
                     headers = ["Object_ID", "Fluor_Density_per_BF_Area", "Rank", "Object_ID", "BF_to_Fluor_Area_Ratio"]
                     for col_idx, header in enumerate(headers, 1):
                         cell = ws_qa.cell(row=row+1, column=col_idx, value=header)
@@ -1444,31 +1530,20 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                     start_data_row = row + 2
                     n = len(df)
                     
-                    # Write data
                     for k, r in enumerate(df.itertuples(index=False), 0):
-                        # Col 1: Object ID
                         ws_qa.cell(row=start_data_row+k, column=1, value=getattr(r, "Object_ID"))
-                        # Col 2: Density
                         ws_qa.cell(row=start_data_row+k, column=2, value=float(getattr(r, "Fluor_Density_per_BF_Area", 0.0))).number_format = '0.0000'
-                        # Col 3: Rank (Numeric X-axis for Scatter Chart)
                         ws_qa.cell(row=start_data_row+k, column=3, value=k+1)
-                        # Col 4: Object ID (Repeated for context)
                         ws_qa.cell(row=start_data_row+k, column=4, value=getattr(r, "Object_ID"))
-                        # Col 5: Ratio
                         ws_qa.cell(row=start_data_row+k, column=5, value=float(getattr(r, "BF_to_Fluor_Area_Ratio", 0.0))).number_format = '0.0000'
 
-                    # Adjust widths for this block
                     ws_qa.column_dimensions["A"].width = 20
                     ws_qa.column_dimensions["B"].width = 25
-                    ws_qa.column_dimensions["C"].width = 10 # Rank
+                    ws_qa.column_dimensions["C"].width = 10
                     ws_qa.column_dimensions["D"].width = 20
                     ws_qa.column_dimensions["E"].width = 25
 
                     if n > 0:
-                        # --- CHART FIXES (Issue 1) ---
-                        # Use Column 3 (Rank) as X-axis so ScatterChart works correctly
-                        
-                        # Chart 1: Density
                         ch1 = ScatterChart()
                         ch1.title = "Fluor Density"
                         ch1.y_axis.title = "a.u./µm²"
@@ -1482,7 +1557,6 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                         ch1.series.append(s1)
                         ws_qa.add_chart(ch1, f"G{row+1}")
 
-                        # Chart 2: Ratio
                         ch2 = ScatterChart()
                         ch2.title = "Area Ratio"
                         ch2.y_axis.title = "Ratio"
@@ -1495,7 +1569,6 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                         ch2.series.append(s2)
                         ws_qa.add_chart(ch2, f"G{row+18}")
 
-                    # Images
                     img_dir = csv_file.parent
                     add_png(ws_qa, img_dir / "13_mask_accepted_ids.png", f"Q{row+1}", width_px=330)
                     add_png(ws_qa, img_dir / "22_fluorescence_mask_global_ids.png", f"Q{row+18}", width_px=330)
@@ -1509,7 +1582,14 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
 
         # Reorder worksheets
         wb2 = load_workbook(excel_path)
-        desired_order = ["Summary", "Ratios", "README", f"{group_name}_Typical_Particles"]
+        desired_order = [
+            "Summary", 
+            "Ratios", 
+            "README", 
+            f"{group_name}_Typical_Particles",
+            f"{group_name}_All_Valid_Objects",
+            "Excluded_Objects"
+        ]
         for idx, sheet_name in enumerate(desired_order):
             if sheet_name in wb2.sheetnames:
                 sheet = wb2[sheet_name]
@@ -1519,7 +1599,8 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
         wb2.save(excel_path)
 
         print(f"Excel consolidation saved: {excel_path}")
-        print("  - Ratios sheet with ratio plots + support PNGs")
+        print("  - Group-level percentile filtering applied")
+        print("  - Excluded_Objects sheet with detailed reasons")
 
     except PermissionError:
         print(f"[ERROR] Cannot write to {excel_path} - file may be open")
@@ -1527,6 +1608,8 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
         print(f"[ERROR] Failed to create Excel file: {e}")
         import traceback
         traceback.print_exc()
+
+
 
 # ==================================================
 # Main processing
