@@ -1934,15 +1934,6 @@ def main() -> None:
             if plot.exists():
                 embed_comparison_plots_into_all_excels(group_dir, percentile, plot_path=plot)
     
-    img_paths: list[Path] = []
-    for d in dirs_to_process:
-        for img_path in sorted(d.rglob(IMAGE_GLOB)):
-            # Skip macOS metadata files and other hidden files
-            if any(part.startswith('.') for part in img_path.parts):
-                continue
-            img_paths.append(img_path)
-    
-    print(f"Found {len(img_paths)} brightfield images matching '{IMAGE_GLOB}'")
 
 if __name__ == "__main__":
     main()
