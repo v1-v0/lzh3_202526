@@ -1,3 +1,4 @@
+
 import cv2
 import numpy as np
 import sys
@@ -295,17 +296,17 @@ def prompt_user_select_single_group_only(groups: list[Path]) -> Path:
 def get_run_mode() -> str:
     """
     Choose processing mode:
-      - 'All groups': process numeric groups 10..19 plus Control group
+      - 'all_10_19': process numeric groups 10..19 plus Control group
       - 'single': process one selected numeric group plus Control group
     """
     print("\nSelect run mode:")
-    print("  [1] ALL groups + Control (percentile only)")
+    print("  [1] ALL numeric groups + Control (percentile only)")
     print("  [2] Single group + Control")
 
     while True:
         s = input("Enter number: ").strip()
         if s == "1":
-            return "All groups"
+            return "all_10_19"
         if s == "2":
             return "single"
         print("Invalid choice. Enter 1 or 2.")
@@ -618,23 +619,17 @@ def segment_fluorescence_global(fluor_img8: np.ndarray) -> np.ndarray:
         fluor_img8, (0, 0), sigmaX=FLUOR_GAUSSIAN_SIGMA, sigmaY=FLUOR_GAUSSIAN_SIGMA
     )
     
-    # --- MODIFICATION START: Lower threshold sensitivity ---
-    # OLD CODE:
-    # _, bw = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Calculate Otsu's threshold
+    otsu_threshold = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0]
     
-    # NEW CODE:
-    # 1. Calculate Otsu's threshold value without applying it yet
-    thresh_val, _ = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Lower threshold for faint signals
+    THRESHOLD_MULTIPLIER = 0.5
+    adjusted_threshold = otsu_threshold * THRESHOLD_MULTIPLIER
     
-    # 2. Lower the threshold manually (e.g., to 50% of what Otsu suggests)
-    # Adjust this multiplier (0.5) if it's still too strict or too noisy.
-    # 0.5 is a good starting point for very faint signals.
-    new_thresh_val = thresh_val * 0.5 
+    print(f"  Fluorescence threshold: Otsu={otsu_threshold:.1f}, Adjusted={adjusted_threshold:.1f}")
     
-    # 3. Apply the new threshold
-    _, bw = cv2.threshold(blur, new_thresh_val, 255, cv2.THRESH_BINARY)
-    # --- MODIFICATION END ---
-
+    _, bw = cv2.threshold(blur, adjusted_threshold, 255, cv2.THRESH_BINARY)
+    
     k = np.ones((FLUOR_MORPH_KERNEL_SIZE, FLUOR_MORPH_KERNEL_SIZE), np.uint8)
     bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, k, iterations=1)
     bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, k, iterations=1)
@@ -1062,8 +1057,6 @@ def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: floa
         )
 
         print(f"[OK] Pairwise plot saved for group {group_dir.name}: {pair_plot_path}")
-
-
 
 
 def embed_comparison_plots_into_all_excels(
@@ -1756,10 +1749,11 @@ def process_image(img_path: Path, output_root: Path) -> None:
         fluor_img = cv2.imread(str(fluor_path), cv2.IMREAD_UNCHANGED)
         if fluor_img is not None:
             # --- START ALIGNMENT INTEGRATION ---
-            print("Aligning Fluorescence channel to Brightfield...")
+            print(f"Aligning Fluorescence channel to Brightfield...")
             # 'img' is the grayscale BF image loaded earlier
             fluor_img, (sy, sx) = align_fluorescence_channel(img, fluor_img)
-            print(f"  -> Applied Shift: Y={-sy:.2f}, X={-sx:.2f}")
+            print(f"  -> Detected shift: Y={-sy:.2f}px, X={-sx:.2f}px")
+            print(f"  -> Applied correction: ΔY={-sy:.2f}px, ΔX={-sx:.2f}px")
             
             # Save the aligned raw image for verification
             save_debug(img_out, "20_fluorescence_aligned_raw.png", normalize_to_8bit(fluor_img), um_per_px_avg)
@@ -1961,9 +1955,8 @@ def main() -> None:
 
     selected_group_name: Optional[str] = None
 
-    if mode == "All groups":
-        # Select all numeric groups
-        dirs_to_process = [g for g in groups if re.fullmatch(r"\d+", g.name)]
+    if mode == "all_10_19":
+        dirs_to_process = groups
         print(f"Selected numeric groups: {[d.name for d in dirs_to_process]}")
     else:
         selected = prompt_user_select_single_group_only(groups)
@@ -2007,7 +2000,7 @@ def main() -> None:
 
     # Consolidate per group
     for group_dir in OUTPUT_DIR.iterdir():
-        if group_dir.is_dir():
+        if group_dir.is_dir() and len(list(group_dir.glob("*/object_stats.csv"))) > 0:
             consolidate_to_excel(group_dir, group_dir.name, percentile)
 
     print(f"\n{'=' * 80}")
