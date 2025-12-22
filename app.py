@@ -78,7 +78,7 @@ CONTROL_DIR = SOURCE_DIR / "Control group"
 # Segment only brightfield channel
 IMAGE_GLOB = "*_ch00.tif"
 
-OUTPUT_DIR = _project_root / "debug"
+OUTPUT_DIR = _project_root / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 # Scale bar parameters

@@ -20,6 +20,7 @@ env/
 *~
 
 # Project-specific directories
+outputs/
 source/
 source_no_meta/
 processed/
