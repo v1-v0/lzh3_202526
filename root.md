@@ -2,9 +2,7 @@ Folder PATH listing
 Volume serial number is 5C81-200F
 C:.
 |   .gitignore
-|   01_gray_8bit.png
 |   app.py
-|   config.py
 |   debug-bf-8contour.py
 |   debug-meta.py
 |   dec-16.py
@@ -14,13 +12,7 @@ C:.
 |   dev-20.py
 |   dev12.py
 |   dev13.py
-|   dual_segmentation_pipeline.py
-|   exporter.py
-|   loader.py
-|   main.py
 |   root.md
-|   segment.md
-|   segmentation_brightfield.py
 |   test.py
 |   
 +---.venv
@@ -33725,13 +33717,28 @@ C:.
 +---.vscode
 |       settings.json
 |       
-+---config
-|       brightfield_config.json
-|       default_config.json
-|       fluorescence_config.json
-|       pipeline_config.json
++---logs
+|       run_20251220_195334_test.txt
+|       run_20251220_204223_test.txt
+|       run_20251220_214245.txt
+|       run_20251220_215033.txt
+|       run_20251220_215903.txt
+|       run_20251220_223649.txt
+|       run_20251220_224708.txt
+|       run_20251220_230242.txt
+|       run_20251220_231323_test.txt
+|       run_20251220_231413_test.txt
+|       run_20251220_231748_test.txt
+|       run_20251220_235414_test.txt
+|       run_20251220_235823_test.txt
+|       run_20251221_000347_test.txt
+|       run_20251221_001059_test.txt
+|       run_20251222_182432_app.txt
+|       run_20251222_182649_test.txt
+|       run_20251222_191430_app.txt
+|       run_20251222_191632_app.txt
 |       
-+---debug
++---outputs
 |   +---10
 |   |   |   10_master.xlsx
 |   |   |   error_bar_jitter_comparison_SD_vs_Control.png
@@ -34394,29 +34401,28 @@ C:.
 |   |   |       24_bf_fluor_matching_overlay_ids.png
 |   |   |       object_stats.csv
 |   |   |       
-|   |   +---15 N NO 5 3rd_ch00
-|   |   |       01_gray_8bit.png
-|   |   |       02_enhanced.png
-|   |   |       03_enhanced_blur.png
-|   |   |       04_thresh_raw.png
-|   |   |       05_closed.png
-|   |   |       10_contours_all.png
-|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
-|   |   |       12_mask_all.png
-|   |   |       13_mask_accepted.png
-|   |   |       13_mask_accepted_ids.png
-|   |   |       20_fluorescence_8bit.png
-|   |   |       20_fluorescence_aligned_raw.png
-|   |   |       21_fluorescence_overlay.png
-|   |   |       22_fluorescence_mask_global.png
-|   |   |       22_fluorescence_mask_global_ids.png
-|   |   |       23_fluorescence_contours_global.png
-|   |   |       23_fluorescence_contours_global_ids.png
-|   |   |       24_bf_fluor_matching_overlay.png
-|   |   |       24_bf_fluor_matching_overlay_ids.png
-|   |   |       object_stats.csv
-|   |   |       
-|   |   \---MetaData
+|   |   \---15 N NO 5 3rd_ch00
+|   |           01_gray_8bit.png
+|   |           02_enhanced.png
+|   |           03_enhanced_blur.png
+|   |           04_thresh_raw.png
+|   |           05_closed.png
+|   |           10_contours_all.png
+|   |           11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |           12_mask_all.png
+|   |           13_mask_accepted.png
+|   |           13_mask_accepted_ids.png
+|   |           20_fluorescence_8bit.png
+|   |           20_fluorescence_aligned_raw.png
+|   |           21_fluorescence_overlay.png
+|   |           22_fluorescence_mask_global.png
+|   |           22_fluorescence_mask_global_ids.png
+|   |           23_fluorescence_contours_global.png
+|   |           23_fluorescence_contours_global_ids.png
+|   |           24_bf_fluor_matching_overlay.png
+|   |           24_bf_fluor_matching_overlay_ids.png
+|   |           object_stats.csv
+|   |           
 |   +---16
 |   |   |   16_master.xlsx
 |   |   |   error_bar_jitter_comparison_SD_vs_Control.png
@@ -34987,794 +34993,495 @@ C:.
 |               24_bf_fluor_matching_overlay_ids.png
 |               object_stats.csv
 |               
-+---logs
-|       run_20251220_195334_test.txt
-|       run_20251220_204223_test.txt
-|       run_20251220_214245.txt
-|       run_20251220_215033.txt
-|       run_20251220_215903.txt
-|       run_20251220_223649.txt
-|       run_20251220_224708.txt
-|       run_20251220_230242.txt
-|       run_20251220_231323_test.txt
-|       run_20251220_231413_test.txt
-|       run_20251220_231748_test.txt
-|       run_20251220_235414_test.txt
-|       run_20251220_235823_test.txt
-|       run_20251221_000347_test.txt
-|       run_20251221_001059_test.txt
-|       run_20251222_182432_app.txt
-|       run_20251222_182649_test.txt
-|       
-+---modules
-|   |   analyzer.py
-|   |   file_handler.py
-|   |   image_processor.py
-|   |   reporter.py
-|   |   __init__.py
-|   |   
-|   \---__pycache__
-|           analyzer.cpython-312.pyc
-|           file_handler.cpython-312.pyc
-|           image_processor.cpython-312.pyc
-|           reporter.cpython-312.pyc
-|           __init__.cpython-312.pyc
-|           
-+---notebooks
-|       files_loader.ipynb
-|       preprocessor.ipynb
-|       testing.ipynb
-|       
-+---output
-|   +---analysis_20251214_032410
-|   |   \---charts
-|   +---analysis_20251214_032735
-|   |   \---charts
-|   +---analysis_20251214_033537
-|   |   \---charts
-|   \---analysis_20251214_033627
-|       \---charts
-+---phase1
-|       app-excel.py
-|       app.py
-|       config.py
-|       dev.py
-|       README-1.md
-|       requirements.txt
-|       
-+---phase2
-|   |   main.py
-|   |   
-|   +---analysis
-|   |       statistics.py
-|   |       visualization.py
-|   |       __init__.py
-|   |       
-|   +---config
-|   |       parameters.py
-|   |       themes.py
-|   |       __init__.py
-|   |       
-|   +---core
-|   |   |   image_processing.py
-|   |   |   metadata.py
-|   |   |   segmentation.py
-|   |   |   __init__.py
-|   |   |   
-|   |   \---__pycache__
-|   |           __init__.cpython-312.pyc
-|   |           
-|   +---ui
-|   |       canvas_manager.py
-|   |       controls.py
-|   |       main_window.py
-|   |       statistics_panel.py
-|   |       widgets.py
-|   |       __init__.py
-|   |       
-|   \---utils
-|           drawing.py
-|           file_utils.py
-|           platform_utils.py
-|           __init__.py
-|           
-+---phase3
-|   |   .gitignore
-|   |   10 P 1.docx
-|   |   app.py
-|   |   config.py
-|   |   contours_config.json
-|   |   debug-bf-8contour.py
-|   |   debug-bf-contour.py
-|   |   debug-dual-contour.py
-|   |   debug-meta.py
-|   |   dev.py
-|   |   export_utils.py
-|   |   grey_image.tif
-|   |   leica_xml_meta.py
-|   |   metadata.py
-|   |   pairing.py
-|   |   preprocess.py
-|   |   qc.py
-|   |   README.md
-|   |   Red-Overlay.py
-|   |   red_image.tif
-|   |   register_dataset.py
-|   |   run_proprocessing.py
-|   |   test.ipynb
-|   |   test.py
-|   |   test_incoming.ipynb
-|   |   ui-Check.py
-|   |   ui-Counter.py
-|   |   ui-Inspection.py
-|   |   ui-LightRoom.py
-|   |   ui-ScaleBar.py
-|   |   ui-TuneBrightness.py
-|   |   __init__.py
-|   |   
-|   \---wip
-|           10 P 1_channel_scaling.json
-|           channel_scale.ipynb
-|           dev-2-metadata.py
-|           dev-3.py
-|           dev-4.py
-|           dev_loop.ipynb
-|           extract_all_metadata.py
-|           
-+---reference_outputs
-|   +---12-1
-|   |       01c_red_enhanced.png
-|   |       07a_bf_contours.png
-|   |       07b_red_contours.png
-|   |       07c_overlay_contours.png
-|   |       07d_intensity_coded.png
-|   |       fluorescence_statistics.xlsx
-|   |       
-|   \---G+ microgel 1_ch00
-|           01_gray_8bit.png
-|           02_inv.png
-|           03_inv_blur.png
-|           04_inv_blur_clahe.png
-|           05_tophat - use_clahe.png
-|           05_tophat.png
-|           06_thresh_adaptive - use clahe.png
-|           06_thresh_adaptive.png
-|           07_open.png
-|           08_close.png
-|           09_filled.png
-|           10_contours_all.png
-|           11_contours_rejected_orange_accepted_red_ids_green.png
-|           12_mask_all.png
-|           13_mask_accepted.png
-|           object_stats.csv
-|           
-+---source
-|   +---10
-|   |   |   10 P 1.tif
-|   |   |   10 P 1_ch00.tif
-|   |   |   10 P 1_ch01.tif
-|   |   |   10 P 2.tif
-|   |   |   10 P 2_ch00.tif
-|   |   |   10 P 2_ch01.tif
-|   |   |   10 P 3.tif
-|   |   |   10 P 3_ch00.tif
-|   |   |   10 P 3_ch01.tif
-|   |   |   10 P 4.tif
-|   |   |   10 P 4_ch00.tif
-|   |   |   10 P 4_ch01.tif
-|   |   |   10 P 5.tif
-|   |   |   10 P 5_ch00.tif
-|   |   |   10 P 5_ch01.tif
-|   |   |   
-|   |   \---MetaData
-|   |           10 P 1.xml
-|   |           10 P 1_ch0_LUT_Gray.png
-|   |           10 P 1_ch1_LUT_Red.png
-|   |           10 P 1_Properties.xml
-|   |           10 P 1_Properties_WFIP_HWS3.xsl
-|   |           10 P 2.xml
-|   |           10 P 2_ch0_LUT_Gray.png
-|   |           10 P 2_ch1_LUT_Red.png
-|   |           10 P 2_Properties.xml
-|   |           10 P 2_Properties_WFIP_HWS3.xsl
-|   |           10 P 3.xml
-|   |           10 P 3_ch0_LUT_Gray.png
-|   |           10 P 3_ch1_LUT_Red.png
-|   |           10 P 3_Properties.xml
-|   |           10 P 3_Properties_WFIP_HWS3.xsl
-|   |           10 P 4.xml
-|   |           10 P 4_ch0_LUT_Gray.png
-|   |           10 P 4_ch1_LUT_Red.png
-|   |           10 P 4_Properties.xml
-|   |           10 P 4_Properties_WFIP_HWS3.xsl
-|   |           10 P 5.xml
-|   |           10 P 5_ch0_LUT_Gray.png
-|   |           10 P 5_ch1_LUT_Red.png
-|   |           10 P 5_Properties.xml
-|   |           10 P 5_Properties_WFIP_HWS3.xsl
-|   |           LeicaLogo.jpg
-|   |           
-|   +---11
-|   |   |   11 N NO 1.tif
-|   |   |   11 N NO 1_ch00.tif
-|   |   |   11 N NO 1_ch01.tif
-|   |   |   11 N NO 2.tif
-|   |   |   11 N NO 2_ch00.tif
-|   |   |   11 N NO 2_ch01.tif
-|   |   |   11 N NO 3.tif
-|   |   |   11 N NO 3_ch00.tif
-|   |   |   11 N NO 3_ch01.tif
-|   |   |   11 N NO 4.tif
-|   |   |   11 N NO 4_ch00.tif
-|   |   |   11 N NO 4_ch01.tif
-|   |   |   11 N NO 5.tif
-|   |   |   11 N NO 5_ch00.tif
-|   |   |   11 N NO 5_ch01.tif
-|   |   |   
-|   |   \---MetaData
-|   |           11 N NO 1.xml
-|   |           11 N NO 1_ch0_LUT_Gray.png
-|   |           11 N NO 1_ch1_LUT_Red.png
-|   |           11 N NO 1_Properties.xml
-|   |           11 N NO 1_Properties_WFIP_HWS3.xsl
-|   |           11 N NO 2.xml
-|   |           11 N NO 2_ch0_LUT_Gray.png
-|   |           11 N NO 2_ch1_LUT_Red.png
-|   |           11 N NO 2_Properties.xml
-|   |           11 N NO 2_Properties_WFIP_HWS3.xsl
-|   |           11 N NO 3.xml
-|   |           11 N NO 3_ch0_LUT_Gray.png
-|   |           11 N NO 3_ch1_LUT_Red.png
-|   |           11 N NO 3_Properties.xml
-|   |           11 N NO 3_Properties_WFIP_HWS3.xsl
-|   |           11 N NO 4.xml
-|   |           11 N NO 4_ch0_LUT_Gray.png
-|   |           11 N NO 4_ch1_LUT_Red.png
-|   |           11 N NO 4_Properties.xml
-|   |           11 N NO 4_Properties_WFIP_HWS3.xsl
-|   |           11 N NO 5.xml
-|   |           11 N NO 5_ch0_LUT_Gray.png
-|   |           11 N NO 5_ch1_LUT_Red.png
-|   |           11 N NO 5_Properties.xml
-|   |           11 N NO 5_Properties_WFIP_HWS3.xsl
-|   |           LeicaLogo.jpg
-|   |           
-|   +---12
-|   |   |   12 N NO 1.tif
-|   |   |   12 N NO 1_ch00.tif
-|   |   |   12 N NO 1_ch01.tif
-|   |   |   12 N NO 2.tif
-|   |   |   12 N NO 2_ch00.tif
-|   |   |   12 N NO 2_ch01.tif
-|   |   |   12 N NO 3.tif
-|   |   |   12 N NO 3_ch00.tif
-|   |   |   12 N NO 3_ch01.tif
-|   |   |   12 N NO 4.tif
-|   |   |   12 N NO 4_ch00.tif
-|   |   |   12 N NO 4_ch01.tif
-|   |   |   12 N NO 5.tif
-|   |   |   12 N NO 5_ch00.tif
-|   |   |   12 N NO 5_ch01.tif
-|   |   |   tree.md
-|   |   |   
-|   |   \---MetaData
-|   |           12 N NO 1.xml
-|   |           12 N NO 1_ch0_LUT_Gray.png
-|   |           12 N NO 1_ch1_LUT_Red.png
-|   |           12 N NO 1_Properties.xml
-|   |           12 N NO 1_Properties_WFIP_HWS3.xsl
-|   |           12 N NO 2.xml
-|   |           12 N NO 2_ch0_LUT_Gray.png
-|   |           12 N NO 2_ch1_LUT_Red.png
-|   |           12 N NO 2_Properties.xml
-|   |           12 N NO 2_Properties_WFIP_HWS3.xsl
-|   |           12 N NO 3.xml
-|   |           12 N NO 3_ch0_LUT_Gray.png
-|   |           12 N NO 3_ch1_LUT_Red.png
-|   |           12 N NO 3_Properties.xml
-|   |           12 N NO 3_Properties_WFIP_HWS3.xsl
-|   |           12 N NO 4.xml
-|   |           12 N NO 4_ch0_LUT_Gray.png
-|   |           12 N NO 4_ch1_LUT_Red.png
-|   |           12 N NO 4_Properties.xml
-|   |           12 N NO 4_Properties_WFIP_HWS3.xsl
-|   |           12 N NO 5.xml
-|   |           12 N NO 5_ch0_LUT_Gray.png
-|   |           12 N NO 5_ch1_LUT_Red.png
-|   |           12 N NO 5_Properties.xml
-|   |           12 N NO 5_Properties_WFIP_HWS3.xsl
-|   |           LeicaLogo.jpg
-|   |           
-|   +---13
-|   |   |   13 N NO 1.tif
-|   |   |   13 N NO 1_ch00.tif
-|   |   |   13 N NO 1_ch01.tif
-|   |   |   13 N NO 2.tif
-|   |   |   13 N NO 2_ch00.tif
-|   |   |   13 N NO 2_ch01.tif
-|   |   |   13 N NO 3.tif
-|   |   |   13 N NO 3_ch00.tif
-|   |   |   13 N NO 3_ch01.tif
-|   |   |   13 N NO 4.tif
-|   |   |   13 N NO 4_ch00.tif
-|   |   |   13 N NO 4_ch01.tif
-|   |   |   13 N NO 5.tif
-|   |   |   13 N NO 5_ch00.tif
-|   |   |   13 N NO 5_ch01.tif
-|   |   |   
-|   |   \---MetaData
-|   |           13 N NO 1.xml
-|   |           13 N NO 1_ch0_LUT_Gray.png
-|   |           13 N NO 1_ch1_LUT_Red.png
-|   |           13 N NO 1_Properties.xml
-|   |           13 N NO 1_Properties_WFIP_HWS3.xsl
-|   |           13 N NO 2.xml
-|   |           13 N NO 2_ch0_LUT_Gray.png
-|   |           13 N NO 2_ch1_LUT_Red.png
-|   |           13 N NO 2_Properties.xml
-|   |           13 N NO 2_Properties_WFIP_HWS3.xsl
-|   |           13 N NO 3.xml
-|   |           13 N NO 3_ch0_LUT_Gray.png
-|   |           13 N NO 3_ch1_LUT_Red.png
-|   |           13 N NO 3_Properties.xml
-|   |           13 N NO 3_Properties_WFIP_HWS3.xsl
-|   |           13 N NO 4.xml
-|   |           13 N NO 4_ch0_LUT_Gray.png
-|   |           13 N NO 4_ch1_LUT_Red.png
-|   |           13 N NO 4_Properties.xml
-|   |           13 N NO 4_Properties_WFIP_HWS3.xsl
-|   |           13 N NO 5.xml
-|   |           13 N NO 5_ch0_LUT_Gray.png
-|   |           13 N NO 5_ch1_LUT_Red.png
-|   |           13 N NO 5_Properties.xml
-|   |           13 N NO 5_Properties_WFIP_HWS3.xsl
-|   |           LeicaLogo.jpg
-|   |           
-|   +---14
-|   |   |   14 N NO 1.tif
-|   |   |   14 N NO 1_ch00.tif
-|   |   |   14 N NO 1_ch01.tif
-|   |   |   14 N NO 2.tif
-|   |   |   14 N NO 2_ch00.tif
-|   |   |   14 N NO 2_ch01.tif
-|   |   |   14 N NO 3.tif
-|   |   |   14 N NO 3_ch00.tif
-|   |   |   14 N NO 3_ch01.tif
-|   |   |   14 N NO 4.tif
-|   |   |   14 N NO 4_ch00.tif
-|   |   |   14 N NO 4_ch01.tif
-|   |   |   14 N NO 5.tif
-|   |   |   14 N NO 5_ch00.tif
-|   |   |   14 N NO 5_ch01.tif
-|   |   |   
-|   |   \---MetaData
-|   |           14 N NO 1.xml
-|   |           14 N NO 1_ch0_LUT_Gray.png
-|   |           14 N NO 1_ch1_LUT_Red.png
-|   |           14 N NO 1_Properties.xml
-|   |           14 N NO 1_Properties_WFIP_HWS3.xsl
-|   |           14 N NO 2.xml
-|   |           14 N NO 2_ch0_LUT_Gray.png
-|   |           14 N NO 2_ch1_LUT_Red.png
-|   |           14 N NO 2_Properties.xml
-|   |           14 N NO 2_Properties_WFIP_HWS3.xsl
-|   |           14 N NO 3.xml
-|   |           14 N NO 3_ch0_LUT_Gray.png
-|   |           14 N NO 3_ch1_LUT_Red.png
-|   |           14 N NO 3_Properties.xml
-|   |           14 N NO 3_Properties_WFIP_HWS3.xsl
-|   |           14 N NO 4.xml
-|   |           14 N NO 4_ch0_LUT_Gray.png
-|   |           14 N NO 4_ch1_LUT_Red.png
-|   |           14 N NO 4_Properties.xml
-|   |           14 N NO 4_Properties_WFIP_HWS3.xsl
-|   |           14 N NO 5.xml
-|   |           14 N NO 5_ch0_LUT_Gray.png
-|   |           14 N NO 5_ch1_LUT_Red.png
-|   |           14 N NO 5_Properties.xml
-|   |           14 N NO 5_Properties_WFIP_HWS3.xsl
-|   |           LeicaLogo.jpg
-|   |           
-|   +---15
-|   |   |   15 N NO 1 3rd.tif
-|   |   |   15 N NO 1 3rd_ch00.tif
-|   |   |   15 N NO 1 3rd_ch01.tif
-|   |   |   15 N NO 2 3rd.tif
-|   |   |   15 N NO 2 3rd_ch00.tif
-|   |   |   15 N NO 2 3rd_ch01.tif
-|   |   |   15 N NO 3 3rd.tif
-|   |   |   15 N NO 3 3rd_ch00.tif
-|   |   |   15 N NO 3 3rd_ch01.tif
-|   |   |   15 N NO 4 3rd.tif
-|   |   |   15 N NO 4 3rd_ch00.tif
-|   |   |   15 N NO 4 3rd_ch01.tif
-|   |   |   15 N NO 5 3rd.tif
-|   |   |   15 N NO 5 3rd_ch00.tif
-|   |   |   15 N NO 5 3rd_ch01.tif
-|   |   |   
-|   |   \---MetaData
-|   |           15 N NO 1 3rd.xml
-|   |           15 N NO 1 3rd_ch0_LUT_Gray.png
-|   |           15 N NO 1 3rd_ch1_LUT_Red.png
-|   |           15 N NO 1 3rd_Properties.xml
-|   |           15 N NO 1 3rd_Properties_WFIP_HWS3.xsl
-|   |           15 N NO 2 3rd.xml
-|   |           15 N NO 2 3rd_ch0_LUT_Gray.png
-|   |           15 N NO 2 3rd_ch1_LUT_Red.png
-|   |           15 N NO 2 3rd_Properties.xml
-|   |           15 N NO 2 3rd_Properties_WFIP_HWS3.xsl
-|   |           15 N NO 3 3rd.xml
-|   |           15 N NO 3 3rd_ch0_LUT_Gray.png
-|   |           15 N NO 3 3rd_ch1_LUT_Red.png
-|   |           15 N NO 3 3rd_Properties.xml
-|   |           15 N NO 3 3rd_Properties_WFIP_HWS3.xsl
-|   |           15 N NO 4 3rd.xml
-|   |           15 N NO 4 3rd_ch0_LUT_Gray.png
-|   |           15 N NO 4 3rd_ch1_LUT_Red.png
-|   |           15 N NO 4 3rd_Properties.xml
-|   |           15 N NO 4 3rd_Properties_WFIP_HWS3.xsl
-|   |           15 N NO 5 3rd.xml
-|   |           15 N NO 5 3rd_ch0_LUT_Gray.png
-|   |           15 N NO 5 3rd_ch1_LUT_Red.png
-|   |           15 N NO 5 3rd_Properties.xml
-|   |           15 N NO 5 3rd_Properties_WFIP_HWS3.xsl
-|   |           LeicaLogo.jpg
-|   |           
-|   +---16
-|   |   |   16 P DAY0 1.tif
-|   |   |   16 P DAY0 1_ch00.tif
-|   |   |   16 P DAY0 1_ch01.tif
-|   |   |   16 P DAY0 2.tif
-|   |   |   16 P DAY0 2_ch00.tif
-|   |   |   16 P DAY0 2_ch01.tif
-|   |   |   16 P DAY0 3.tif
-|   |   |   16 P DAY0 3_ch00.tif
-|   |   |   16 P DAY0 3_ch01.tif
-|   |   |   16 P DAY0 4.tif
-|   |   |   16 P DAY0 4_ch00.tif
-|   |   |   16 P DAY0 4_ch01.tif
-|   |   |   16 P DAY0 5.tif
-|   |   |   16 P DAY0 5_ch00.tif
-|   |   |   16 P DAY0 5_ch01.tif
-|   |   |   
-|   |   \---MetaData
-|   |           16 P DAY0 1.xml
-|   |           16 P DAY0 1_ch0_LUT_Gray.png
-|   |           16 P DAY0 1_ch1_LUT_Red.png
-|   |           16 P DAY0 1_Properties.xml
-|   |           16 P DAY0 1_Properties_WFIP_HWS3.xsl
-|   |           16 P DAY0 2.xml
-|   |           16 P DAY0 2_ch0_LUT_Gray.png
-|   |           16 P DAY0 2_ch1_LUT_Red.png
-|   |           16 P DAY0 2_Properties.xml
-|   |           16 P DAY0 2_Properties_WFIP_HWS3.xsl
-|   |           16 P DAY0 3.xml
-|   |           16 P DAY0 3_ch0_LUT_Gray.png
-|   |           16 P DAY0 3_ch1_LUT_Red.png
-|   |           16 P DAY0 3_Properties.xml
-|   |           16 P DAY0 3_Properties_WFIP_HWS3.xsl
-|   |           16 P DAY0 4.xml
-|   |           16 P DAY0 4_ch0_LUT_Gray.png
-|   |           16 P DAY0 4_ch1_LUT_Red.png
-|   |           16 P DAY0 4_Properties.xml
-|   |           16 P DAY0 4_Properties_WFIP_HWS3.xsl
-|   |           16 P DAY0 5.xml
-|   |           16 P DAY0 5_ch0_LUT_Gray.png
-|   |           16 P DAY0 5_ch1_LUT_Red.png
-|   |           16 P DAY0 5_Properties.xml
-|   |           16 P DAY0 5_Properties_WFIP_HWS3.xsl
-|   |           LeicaLogo.jpg
-|   |           
-|   +---17
-|   |   |   17 N NO 1.tif
-|   |   |   17 N NO 1_ch00.tif
-|   |   |   17 N NO 1_ch01.tif
-|   |   |   17 N NO 2.tif
-|   |   |   17 N NO 2_ch00.tif
-|   |   |   17 N NO 2_ch01.tif
-|   |   |   17 N NO 3.tif
-|   |   |   17 N NO 3_ch00.tif
-|   |   |   17 N NO 3_ch01.tif
-|   |   |   17 N NO 4.tif
-|   |   |   17 N NO 4_ch00.tif
-|   |   |   17 N NO 4_ch01.tif
-|   |   |   17 N NO 5.tif
-|   |   |   17 N NO 5_ch00.tif
-|   |   |   17 N NO 5_ch01.tif
-|   |   |   
-|   |   \---MetaData
-|   |           17 N NO 1.xml
-|   |           17 N NO 1_ch0_LUT_Gray.png
-|   |           17 N NO 1_ch1_LUT_Red.png
-|   |           17 N NO 1_Properties.xml
-|   |           17 N NO 1_Properties_WFIP_HWS3.xsl
-|   |           17 N NO 2.xml
-|   |           17 N NO 2_ch0_LUT_Gray.png
-|   |           17 N NO 2_ch1_LUT_Red.png
-|   |           17 N NO 2_Properties.xml
-|   |           17 N NO 2_Properties_WFIP_HWS3.xsl
-|   |           17 N NO 3.xml
-|   |           17 N NO 3_ch0_LUT_Gray.png
-|   |           17 N NO 3_ch1_LUT_Red.png
-|   |           17 N NO 3_Properties.xml
-|   |           17 N NO 3_Properties_WFIP_HWS3.xsl
-|   |           17 N NO 4.xml
-|   |           17 N NO 4_ch0_LUT_Gray.png
-|   |           17 N NO 4_ch1_LUT_Red.png
-|   |           17 N NO 4_Properties.xml
-|   |           17 N NO 4_Properties_WFIP_HWS3.xsl
-|   |           17 N NO 5.xml
-|   |           17 N NO 5_ch0_LUT_Gray.png
-|   |           17 N NO 5_ch1_LUT_Red.png
-|   |           17 N NO 5_Properties.xml
-|   |           17 N NO 5_Properties_WFIP_HWS3.xsl
-|   |           LeicaLogo.jpg
-|   |           
-|   +---18
-|   |   |   18 N NO 1.tif
-|   |   |   18 N NO 1_ch00.tif
-|   |   |   18 N NO 1_ch01.tif
-|   |   |   18 N NO 2.tif
-|   |   |   18 N NO 2_ch00.tif
-|   |   |   18 N NO 2_ch01.tif
-|   |   |   18 N NO 3.tif
-|   |   |   18 N NO 3_ch00.tif
-|   |   |   18 N NO 3_ch01.tif
-|   |   |   18 N NO 4.tif
-|   |   |   18 N NO 4_ch00.tif
-|   |   |   18 N NO 4_ch01.tif
-|   |   |   18 N NO 5.tif
-|   |   |   18 N NO 5_ch00.tif
-|   |   |   18 N NO 5_ch01.tif
-|   |   |   
-|   |   \---MetaData
-|   |           18 N NO 1.xml
-|   |           18 N NO 1_ch0_LUT_Gray.png
-|   |           18 N NO 1_ch1_LUT_Red.png
-|   |           18 N NO 1_Properties.xml
-|   |           18 N NO 1_Properties_WFIP_HWS3.xsl
-|   |           18 N NO 2.xml
-|   |           18 N NO 2_ch0_LUT_Gray.png
-|   |           18 N NO 2_ch1_LUT_Red.png
-|   |           18 N NO 2_Properties.xml
-|   |           18 N NO 2_Properties_WFIP_HWS3.xsl
-|   |           18 N NO 3.xml
-|   |           18 N NO 3_ch0_LUT_Gray.png
-|   |           18 N NO 3_ch1_LUT_Red.png
-|   |           18 N NO 3_Properties.xml
-|   |           18 N NO 3_Properties_WFIP_HWS3.xsl
-|   |           18 N NO 4.xml
-|   |           18 N NO 4_ch0_LUT_Gray.png
-|   |           18 N NO 4_ch1_LUT_Red.png
-|   |           18 N NO 4_Properties.xml
-|   |           18 N NO 4_Properties_WFIP_HWS3.xsl
-|   |           18 N NO 5.xml
-|   |           18 N NO 5_ch0_LUT_Gray.png
-|   |           18 N NO 5_ch1_LUT_Red.png
-|   |           18 N NO 5_Properties.xml
-|   |           18 N NO 5_Properties_WFIP_HWS3.xsl
-|   |           LeicaLogo.jpg
-|   |           
-|   +---19
-|   |   |   Day 1 19 N NO 1.tif
-|   |   |   Day 1 19 N NO 1_ch00.tif
-|   |   |   Day 1 19 N NO 1_ch01.tif
-|   |   |   Day 1 19 N NO 2.tif
-|   |   |   Day 1 19 N NO 2_ch00.tif
-|   |   |   Day 1 19 N NO 2_ch01.tif
-|   |   |   Day 1 19 N NO 3.tif
-|   |   |   Day 1 19 N NO 3_ch00.tif
-|   |   |   Day 1 19 N NO 3_ch01.tif
-|   |   |   Day 1 19 N NO 4.tif
-|   |   |   Day 1 19 N NO 4_ch00.tif
-|   |   |   Day 1 19 N NO 4_ch01.tif
-|   |   |   Day 1 19 N NO 5.tif
-|   |   |   Day 1 19 N NO 5_ch00.tif
-|   |   |   Day 1 19 N NO 5_ch01.tif
-|   |   |   
-|   |   \---MetaData
-|   |           Day 1 19 N NO 1.xml
-|   |           Day 1 19 N NO 1_ch0_LUT_Gray.png
-|   |           Day 1 19 N NO 1_ch1_LUT_Red.png
-|   |           Day 1 19 N NO 1_Properties.xml
-|   |           Day 1 19 N NO 1_Properties_WFIP_HWS3.xsl
-|   |           Day 1 19 N NO 2.xml
-|   |           Day 1 19 N NO 2_ch0_LUT_Gray.png
-|   |           Day 1 19 N NO 2_ch1_LUT_Red.png
-|   |           Day 1 19 N NO 2_Properties.xml
-|   |           Day 1 19 N NO 2_Properties_WFIP_HWS3.xsl
-|   |           Day 1 19 N NO 3.xml
-|   |           Day 1 19 N NO 3_ch0_LUT_Gray.png
-|   |           Day 1 19 N NO 3_ch1_LUT_Red.png
-|   |           Day 1 19 N NO 3_Properties.xml
-|   |           Day 1 19 N NO 3_Properties_WFIP_HWS3.xsl
-|   |           Day 1 19 N NO 4.xml
-|   |           Day 1 19 N NO 4_ch0_LUT_Gray.png
-|   |           Day 1 19 N NO 4_ch1_LUT_Red.png
-|   |           Day 1 19 N NO 4_Properties.xml
-|   |           Day 1 19 N NO 4_Properties_WFIP_HWS3.xsl
-|   |           Day 1 19 N NO 5.xml
-|   |           Day 1 19 N NO 5_ch0_LUT_Gray.png
-|   |           Day 1 19 N NO 5_ch1_LUT_Red.png
-|   |           Day 1 19 N NO 5_Properties.xml
-|   |           Day 1 19 N NO 5_Properties_WFIP_HWS3.xsl
-|   |           LeicaLogo.jpg
-|   |           
-|   \---Control group
-|       |   G+ microgel 1_ch00.tif
-|       |   G+ microgel 1_ch01.tif
-|       |   G+ microgel 2_ch00.tif
-|       |   G+ microgel 2_ch01.tif
-|       |   G+ microgel 3_ch00.tif
-|       |   G+ microgel 3_ch01.tif
-|       |   G+ microgel 4_ch00.tif
-|       |   G+ microgel 4_ch01.tif
-|       |   G+ microgel 5_ch00.tif
-|       |   G+ microgel 5_ch01.tif
-|       |   
-|       \---MetaData
-|               G+ microgel 1.xml
-|               G+ microgel 1_ch0_LUT_Gray.png
-|               G+ microgel 1_ch1_LUT_Red.png
-|               G+ microgel 1_Properties.xml
-|               G+ microgel 1_Properties_WFIP_HWS3.xsl
-|               G+ microgel 2.xml
-|               G+ microgel 2_ch0_LUT_Gray.png
-|               G+ microgel 2_ch1_LUT_Red.png
-|               G+ microgel 2_Properties.xml
-|               G+ microgel 2_Properties_WFIP_HWS3.xsl
-|               G+ microgel 3.xml
-|               G+ microgel 3_ch0_LUT_Gray.png
-|               G+ microgel 3_ch1_LUT_Red.png
-|               G+ microgel 3_Properties.xml
-|               G+ microgel 3_Properties_WFIP_HWS3.xsl
-|               G+ microgel 4.xml
-|               G+ microgel 4_ch0_LUT_Gray.png
-|               G+ microgel 4_ch1_LUT_Red.png
-|               G+ microgel 4_Properties.xml
-|               G+ microgel 4_Properties_WFIP_HWS3.xsl
-|               G+ microgel 5.xml
-|               G+ microgel 5_ch0_LUT_Gray.png
-|               G+ microgel 5_ch1_LUT_Red.png
-|               G+ microgel 5_Properties.xml
-|               G+ microgel 5_Properties_WFIP_HWS3.xsl
-|               LeicaLogo.jpg
-|               
-+---source_no_meta
-|   +---1
-|   |       1 N NO 1_ch00.tif
-|   |       1 N NO 1_ch01.tif
-|   |       1 N NO 2_ch00.tif
-|   |       1 N NO 2_ch01.tif
-|   |       1 N NO 3_ch00.tif
-|   |       1 N NO 3_ch01.tif
-|   |       1 N NO 4_ch00.tif
-|   |       1 N NO 4_ch01.tif
-|   |       1 N NO 5_ch00.tif
-|   |       1 N NO 5_ch01.tif
-|   |       
-|   +---2
-|   |       2 P 1_ch00.tif
-|   |       2 P 1_ch01.tif
-|   |       2 P 2_ch00.tif
-|   |       2 P 2_ch01.tif
-|   |       2 P 3_ch00.tif
-|   |       2 P 3_ch01.tif
-|   |       2 P 4_ch00.tif
-|   |       2 P 4_ch01.tif
-|   |       2 P 5_ch00.tif
-|   |       2 P 5_ch01.tif
-|   |       
-|   +---3
-|   |       3 N NO 1_ch00.tif
-|   |       3 N NO 1_ch01.tif
-|   |       3 N NO 2_ch00.tif
-|   |       3 N NO 2_ch01.tif
-|   |       3 N NO 3_ch00.tif
-|   |       3 N NO 3_ch01.tif
-|   |       3 N NO 4_ch00.tif
-|   |       3 N NO 4_ch01.tif
-|   |       3 N NO 5_ch00.tif
-|   |       3 N NO 5_ch01.tif
-|   |       
-|   +---4
-|   |       4 N NO 1_ch00.tif
-|   |       4 N NO 1_ch01.tif
-|   |       4 N NO 2_ch00.tif
-|   |       4 N NO 2_ch01.tif
-|   |       4 N NO 3_ch00.tif
-|   |       4 N NO 3_ch01.tif
-|   |       4 N NO 4_ch00.tif
-|   |       4 N NO 4_ch01.tif
-|   |       4 N NO 5_ch00.tif
-|   |       4 N NO 5_ch01.tif
-|   |       
-|   +---5
-|   |       5 N NO 1_ch00.tif
-|   |       5 N NO 1_ch01.tif
-|   |       5 N NO 2_ch00.tif
-|   |       5 N NO 2_ch01.tif
-|   |       5 N NO 3_ch00.tif
-|   |       5 N NO 3_ch01.tif
-|   |       5 N NO 4_ch00.tif
-|   |       5 N NO 4_ch01.tif
-|   |       5 N NO 5_ch00.tif
-|   |       5 N NO 5_ch01.tif
-|   |       
-|   +---6
-|   |       6 P 1_ch00.tif
-|   |       6 P 1_ch01.tif
-|   |       6 P 2_ch00.tif
-|   |       6 P 2_ch01.tif
-|   |       6 P 3_ch00.tif
-|   |       6 P 3_ch01.tif
-|   |       6 P 4_ch00.tif
-|   |       6 P 4_ch01.tif
-|   |       6 P 5_ch00.tif
-|   |       6 P 5_ch01.tif
-|   |       
-|   +---7
-|   |       7 P 1_ch00.tif
-|   |       7 P 1_ch01.tif
-|   |       7 P 2_ch00.tif
-|   |       7 P 2_ch01.tif
-|   |       7 P 3_ch00.tif
-|   |       7 P 3_ch01.tif
-|   |       7 P 4_ch00.tif
-|   |       7 P 4_ch01.tif
-|   |       7 P 5_ch00.tif
-|   |       7 P 5_ch01.tif
-|   |       
-|   +---8
-|   |       8 P 1_ch00.tif
-|   |       8 P 1_ch01.tif
-|   |       8 P 2_ch00.tif
-|   |       8 P 2_ch01.tif
-|   |       8 P 3_ch00.tif
-|   |       8 P 3_ch01.tif
-|   |       8 P 4_ch00.tif
-|   |       8 P 4_ch01.tif
-|   |       8 P 5_ch00.tif
-|   |       8 P 5_ch01.tif
-|   |       
-|   \---9
-|           9 N NO 1_ch00.tif
-|           9 N NO 1_ch01.tif
-|           9 N NO 2_ch00.tif
-|           9 N NO 2_ch01.tif
-|           9 N NO 3_ch00.tif
-|           9 N NO 3_ch01.tif
-|           9 N NO 4_ch00.tif
-|           9 N NO 4_ch01.tif
-|           9 N NO 5_ch00.tif
-|           9 N NO 5_ch01.tif
-|           
-+---src
-|   |   batch_pipeline.py
-|   |   brightfield_segmentation.py
-|   |   fluorescence_segmentation.py
-|   |   preprocessor.py
-|   |   utils.py
-|   |   __init__.py
-|   |   
-|   \---__pycache__
-|           brightfield_segmentation.cpython-312.pyc
-|           fluorescence_segmentation.cpython-312.pyc
-|           utils.cpython-312.pyc
-|           __init__.cpython-312.pyc
-|           
-\---__pycache__
-        cli_batch_export.cpython-312.pyc
-        config.cpython-312.pyc
-        exporter.cpython-312.pyc
-        export_utils.cpython-312.pyc
-        leica_xml_meta.cpython-312.pyc
-        loader.cpython-312.pyc
-        metadata.cpython-312.pyc
-        pairing.cpython-312.pyc
-        preprocess.cpython-312.pyc
-        preprocessor.cpython-312.pyc
-        qc.cpython-312.pyc
-        register_dataset.cpython-312.pyc
-        reporter.cpython-312.pyc
-        
+\---source
+    +---10
+    |   |   10 P 1.tif
+    |   |   10 P 1_ch00.tif
+    |   |   10 P 1_ch01.tif
+    |   |   10 P 2.tif
+    |   |   10 P 2_ch00.tif
+    |   |   10 P 2_ch01.tif
+    |   |   10 P 3.tif
+    |   |   10 P 3_ch00.tif
+    |   |   10 P 3_ch01.tif
+    |   |   10 P 4.tif
+    |   |   10 P 4_ch00.tif
+    |   |   10 P 4_ch01.tif
+    |   |   10 P 5.tif
+    |   |   10 P 5_ch00.tif
+    |   |   10 P 5_ch01.tif
+    |   |   
+    |   \---MetaData
+    |           10 P 1.xml
+    |           10 P 1_ch0_LUT_Gray.png
+    |           10 P 1_ch1_LUT_Red.png
+    |           10 P 1_Properties.xml
+    |           10 P 1_Properties_WFIP_HWS3.xsl
+    |           10 P 2.xml
+    |           10 P 2_ch0_LUT_Gray.png
+    |           10 P 2_ch1_LUT_Red.png
+    |           10 P 2_Properties.xml
+    |           10 P 2_Properties_WFIP_HWS3.xsl
+    |           10 P 3.xml
+    |           10 P 3_ch0_LUT_Gray.png
+    |           10 P 3_ch1_LUT_Red.png
+    |           10 P 3_Properties.xml
+    |           10 P 3_Properties_WFIP_HWS3.xsl
+    |           10 P 4.xml
+    |           10 P 4_ch0_LUT_Gray.png
+    |           10 P 4_ch1_LUT_Red.png
+    |           10 P 4_Properties.xml
+    |           10 P 4_Properties_WFIP_HWS3.xsl
+    |           10 P 5.xml
+    |           10 P 5_ch0_LUT_Gray.png
+    |           10 P 5_ch1_LUT_Red.png
+    |           10 P 5_Properties.xml
+    |           10 P 5_Properties_WFIP_HWS3.xsl
+    |           LeicaLogo.jpg
+    |           
+    +---11
+    |   |   11 N NO 1.tif
+    |   |   11 N NO 1_ch00.tif
+    |   |   11 N NO 1_ch01.tif
+    |   |   11 N NO 2.tif
+    |   |   11 N NO 2_ch00.tif
+    |   |   11 N NO 2_ch01.tif
+    |   |   11 N NO 3.tif
+    |   |   11 N NO 3_ch00.tif
+    |   |   11 N NO 3_ch01.tif
+    |   |   11 N NO 4.tif
+    |   |   11 N NO 4_ch00.tif
+    |   |   11 N NO 4_ch01.tif
+    |   |   11 N NO 5.tif
+    |   |   11 N NO 5_ch00.tif
+    |   |   11 N NO 5_ch01.tif
+    |   |   
+    |   \---MetaData
+    |           11 N NO 1.xml
+    |           11 N NO 1_ch0_LUT_Gray.png
+    |           11 N NO 1_ch1_LUT_Red.png
+    |           11 N NO 1_Properties.xml
+    |           11 N NO 1_Properties_WFIP_HWS3.xsl
+    |           11 N NO 2.xml
+    |           11 N NO 2_ch0_LUT_Gray.png
+    |           11 N NO 2_ch1_LUT_Red.png
+    |           11 N NO 2_Properties.xml
+    |           11 N NO 2_Properties_WFIP_HWS3.xsl
+    |           11 N NO 3.xml
+    |           11 N NO 3_ch0_LUT_Gray.png
+    |           11 N NO 3_ch1_LUT_Red.png
+    |           11 N NO 3_Properties.xml
+    |           11 N NO 3_Properties_WFIP_HWS3.xsl
+    |           11 N NO 4.xml
+    |           11 N NO 4_ch0_LUT_Gray.png
+    |           11 N NO 4_ch1_LUT_Red.png
+    |           11 N NO 4_Properties.xml
+    |           11 N NO 4_Properties_WFIP_HWS3.xsl
+    |           11 N NO 5.xml
+    |           11 N NO 5_ch0_LUT_Gray.png
+    |           11 N NO 5_ch1_LUT_Red.png
+    |           11 N NO 5_Properties.xml
+    |           11 N NO 5_Properties_WFIP_HWS3.xsl
+    |           LeicaLogo.jpg
+    |           
+    +---12
+    |   |   12 N NO 1.tif
+    |   |   12 N NO 1_ch00.tif
+    |   |   12 N NO 1_ch01.tif
+    |   |   12 N NO 2.tif
+    |   |   12 N NO 2_ch00.tif
+    |   |   12 N NO 2_ch01.tif
+    |   |   12 N NO 3.tif
+    |   |   12 N NO 3_ch00.tif
+    |   |   12 N NO 3_ch01.tif
+    |   |   12 N NO 4.tif
+    |   |   12 N NO 4_ch00.tif
+    |   |   12 N NO 4_ch01.tif
+    |   |   12 N NO 5.tif
+    |   |   12 N NO 5_ch00.tif
+    |   |   12 N NO 5_ch01.tif
+    |   |   tree.md
+    |   |   
+    |   \---MetaData
+    |           12 N NO 1.xml
+    |           12 N NO 1_ch0_LUT_Gray.png
+    |           12 N NO 1_ch1_LUT_Red.png
+    |           12 N NO 1_Properties.xml
+    |           12 N NO 1_Properties_WFIP_HWS3.xsl
+    |           12 N NO 2.xml
+    |           12 N NO 2_ch0_LUT_Gray.png
+    |           12 N NO 2_ch1_LUT_Red.png
+    |           12 N NO 2_Properties.xml
+    |           12 N NO 2_Properties_WFIP_HWS3.xsl
+    |           12 N NO 3.xml
+    |           12 N NO 3_ch0_LUT_Gray.png
+    |           12 N NO 3_ch1_LUT_Red.png
+    |           12 N NO 3_Properties.xml
+    |           12 N NO 3_Properties_WFIP_HWS3.xsl
+    |           12 N NO 4.xml
+    |           12 N NO 4_ch0_LUT_Gray.png
+    |           12 N NO 4_ch1_LUT_Red.png
+    |           12 N NO 4_Properties.xml
+    |           12 N NO 4_Properties_WFIP_HWS3.xsl
+    |           12 N NO 5.xml
+    |           12 N NO 5_ch0_LUT_Gray.png
+    |           12 N NO 5_ch1_LUT_Red.png
+    |           12 N NO 5_Properties.xml
+    |           12 N NO 5_Properties_WFIP_HWS3.xsl
+    |           LeicaLogo.jpg
+    |           
+    +---13
+    |   |   13 N NO 1.tif
+    |   |   13 N NO 1_ch00.tif
+    |   |   13 N NO 1_ch01.tif
+    |   |   13 N NO 2.tif
+    |   |   13 N NO 2_ch00.tif
+    |   |   13 N NO 2_ch01.tif
+    |   |   13 N NO 3.tif
+    |   |   13 N NO 3_ch00.tif
+    |   |   13 N NO 3_ch01.tif
+    |   |   13 N NO 4.tif
+    |   |   13 N NO 4_ch00.tif
+    |   |   13 N NO 4_ch01.tif
+    |   |   13 N NO 5.tif
+    |   |   13 N NO 5_ch00.tif
+    |   |   13 N NO 5_ch01.tif
+    |   |   
+    |   \---MetaData
+    |           13 N NO 1.xml
+    |           13 N NO 1_ch0_LUT_Gray.png
+    |           13 N NO 1_ch1_LUT_Red.png
+    |           13 N NO 1_Properties.xml
+    |           13 N NO 1_Properties_WFIP_HWS3.xsl
+    |           13 N NO 2.xml
+    |           13 N NO 2_ch0_LUT_Gray.png
+    |           13 N NO 2_ch1_LUT_Red.png
+    |           13 N NO 2_Properties.xml
+    |           13 N NO 2_Properties_WFIP_HWS3.xsl
+    |           13 N NO 3.xml
+    |           13 N NO 3_ch0_LUT_Gray.png
+    |           13 N NO 3_ch1_LUT_Red.png
+    |           13 N NO 3_Properties.xml
+    |           13 N NO 3_Properties_WFIP_HWS3.xsl
+    |           13 N NO 4.xml
+    |           13 N NO 4_ch0_LUT_Gray.png
+    |           13 N NO 4_ch1_LUT_Red.png
+    |           13 N NO 4_Properties.xml
+    |           13 N NO 4_Properties_WFIP_HWS3.xsl
+    |           13 N NO 5.xml
+    |           13 N NO 5_ch0_LUT_Gray.png
+    |           13 N NO 5_ch1_LUT_Red.png
+    |           13 N NO 5_Properties.xml
+    |           13 N NO 5_Properties_WFIP_HWS3.xsl
+    |           LeicaLogo.jpg
+    |           
+    +---14
+    |   |   14 N NO 1.tif
+    |   |   14 N NO 1_ch00.tif
+    |   |   14 N NO 1_ch01.tif
+    |   |   14 N NO 2.tif
+    |   |   14 N NO 2_ch00.tif
+    |   |   14 N NO 2_ch01.tif
+    |   |   14 N NO 3.tif
+    |   |   14 N NO 3_ch00.tif
+    |   |   14 N NO 3_ch01.tif
+    |   |   14 N NO 4.tif
+    |   |   14 N NO 4_ch00.tif
+    |   |   14 N NO 4_ch01.tif
+    |   |   14 N NO 5.tif
+    |   |   14 N NO 5_ch00.tif
+    |   |   14 N NO 5_ch01.tif
+    |   |   
+    |   \---MetaData
+    |           14 N NO 1.xml
+    |           14 N NO 1_ch0_LUT_Gray.png
+    |           14 N NO 1_ch1_LUT_Red.png
+    |           14 N NO 1_Properties.xml
+    |           14 N NO 1_Properties_WFIP_HWS3.xsl
+    |           14 N NO 2.xml
+    |           14 N NO 2_ch0_LUT_Gray.png
+    |           14 N NO 2_ch1_LUT_Red.png
+    |           14 N NO 2_Properties.xml
+    |           14 N NO 2_Properties_WFIP_HWS3.xsl
+    |           14 N NO 3.xml
+    |           14 N NO 3_ch0_LUT_Gray.png
+    |           14 N NO 3_ch1_LUT_Red.png
+    |           14 N NO 3_Properties.xml
+    |           14 N NO 3_Properties_WFIP_HWS3.xsl
+    |           14 N NO 4.xml
+    |           14 N NO 4_ch0_LUT_Gray.png
+    |           14 N NO 4_ch1_LUT_Red.png
+    |           14 N NO 4_Properties.xml
+    |           14 N NO 4_Properties_WFIP_HWS3.xsl
+    |           14 N NO 5.xml
+    |           14 N NO 5_ch0_LUT_Gray.png
+    |           14 N NO 5_ch1_LUT_Red.png
+    |           14 N NO 5_Properties.xml
+    |           14 N NO 5_Properties_WFIP_HWS3.xsl
+    |           LeicaLogo.jpg
+    |           
+    +---15
+    |   |   15 N NO 1 3rd.tif
+    |   |   15 N NO 1 3rd_ch00.tif
+    |   |   15 N NO 1 3rd_ch01.tif
+    |   |   15 N NO 2 3rd.tif
+    |   |   15 N NO 2 3rd_ch00.tif
+    |   |   15 N NO 2 3rd_ch01.tif
+    |   |   15 N NO 3 3rd.tif
+    |   |   15 N NO 3 3rd_ch00.tif
+    |   |   15 N NO 3 3rd_ch01.tif
+    |   |   15 N NO 4 3rd.tif
+    |   |   15 N NO 4 3rd_ch00.tif
+    |   |   15 N NO 4 3rd_ch01.tif
+    |   |   15 N NO 5 3rd.tif
+    |   |   15 N NO 5 3rd_ch00.tif
+    |   |   15 N NO 5 3rd_ch01.tif
+    |   |   
+    |   \---MetaData
+    |           15 N NO 1 3rd.xml
+    |           15 N NO 1 3rd_ch0_LUT_Gray.png
+    |           15 N NO 1 3rd_ch1_LUT_Red.png
+    |           15 N NO 1 3rd_Properties.xml
+    |           15 N NO 1 3rd_Properties_WFIP_HWS3.xsl
+    |           15 N NO 2 3rd.xml
+    |           15 N NO 2 3rd_ch0_LUT_Gray.png
+    |           15 N NO 2 3rd_ch1_LUT_Red.png
+    |           15 N NO 2 3rd_Properties.xml
+    |           15 N NO 2 3rd_Properties_WFIP_HWS3.xsl
+    |           15 N NO 3 3rd.xml
+    |           15 N NO 3 3rd_ch0_LUT_Gray.png
+    |           15 N NO 3 3rd_ch1_LUT_Red.png
+    |           15 N NO 3 3rd_Properties.xml
+    |           15 N NO 3 3rd_Properties_WFIP_HWS3.xsl
+    |           15 N NO 4 3rd.xml
+    |           15 N NO 4 3rd_ch0_LUT_Gray.png
+    |           15 N NO 4 3rd_ch1_LUT_Red.png
+    |           15 N NO 4 3rd_Properties.xml
+    |           15 N NO 4 3rd_Properties_WFIP_HWS3.xsl
+    |           15 N NO 5 3rd.xml
+    |           15 N NO 5 3rd_ch0_LUT_Gray.png
+    |           15 N NO 5 3rd_ch1_LUT_Red.png
+    |           15 N NO 5 3rd_Properties.xml
+    |           15 N NO 5 3rd_Properties_WFIP_HWS3.xsl
+    |           LeicaLogo.jpg
+    |           
+    +---16
+    |   |   16 P DAY0 1.tif
+    |   |   16 P DAY0 1_ch00.tif
+    |   |   16 P DAY0 1_ch01.tif
+    |   |   16 P DAY0 2.tif
+    |   |   16 P DAY0 2_ch00.tif
+    |   |   16 P DAY0 2_ch01.tif
+    |   |   16 P DAY0 3.tif
+    |   |   16 P DAY0 3_ch00.tif
+    |   |   16 P DAY0 3_ch01.tif
+    |   |   16 P DAY0 4.tif
+    |   |   16 P DAY0 4_ch00.tif
+    |   |   16 P DAY0 4_ch01.tif
+    |   |   16 P DAY0 5.tif
+    |   |   16 P DAY0 5_ch00.tif
+    |   |   16 P DAY0 5_ch01.tif
+    |   |   
+    |   \---MetaData
+    |           16 P DAY0 1.xml
+    |           16 P DAY0 1_ch0_LUT_Gray.png
+    |           16 P DAY0 1_ch1_LUT_Red.png
+    |           16 P DAY0 1_Properties.xml
+    |           16 P DAY0 1_Properties_WFIP_HWS3.xsl
+    |           16 P DAY0 2.xml
+    |           16 P DAY0 2_ch0_LUT_Gray.png
+    |           16 P DAY0 2_ch1_LUT_Red.png
+    |           16 P DAY0 2_Properties.xml
+    |           16 P DAY0 2_Properties_WFIP_HWS3.xsl
+    |           16 P DAY0 3.xml
+    |           16 P DAY0 3_ch0_LUT_Gray.png
+    |           16 P DAY0 3_ch1_LUT_Red.png
+    |           16 P DAY0 3_Properties.xml
+    |           16 P DAY0 3_Properties_WFIP_HWS3.xsl
+    |           16 P DAY0 4.xml
+    |           16 P DAY0 4_ch0_LUT_Gray.png
+    |           16 P DAY0 4_ch1_LUT_Red.png
+    |           16 P DAY0 4_Properties.xml
+    |           16 P DAY0 4_Properties_WFIP_HWS3.xsl
+    |           16 P DAY0 5.xml
+    |           16 P DAY0 5_ch0_LUT_Gray.png
+    |           16 P DAY0 5_ch1_LUT_Red.png
+    |           16 P DAY0 5_Properties.xml
+    |           16 P DAY0 5_Properties_WFIP_HWS3.xsl
+    |           LeicaLogo.jpg
+    |           
+    +---17
+    |   |   17 N NO 1.tif
+    |   |   17 N NO 1_ch00.tif
+    |   |   17 N NO 1_ch01.tif
+    |   |   17 N NO 2.tif
+    |   |   17 N NO 2_ch00.tif
+    |   |   17 N NO 2_ch01.tif
+    |   |   17 N NO 3.tif
+    |   |   17 N NO 3_ch00.tif
+    |   |   17 N NO 3_ch01.tif
+    |   |   17 N NO 4.tif
+    |   |   17 N NO 4_ch00.tif
+    |   |   17 N NO 4_ch01.tif
+    |   |   17 N NO 5.tif
+    |   |   17 N NO 5_ch00.tif
+    |   |   17 N NO 5_ch01.tif
+    |   |   
+    |   \---MetaData
+    |           17 N NO 1.xml
+    |           17 N NO 1_ch0_LUT_Gray.png
+    |           17 N NO 1_ch1_LUT_Red.png
+    |           17 N NO 1_Properties.xml
+    |           17 N NO 1_Properties_WFIP_HWS3.xsl
+    |           17 N NO 2.xml
+    |           17 N NO 2_ch0_LUT_Gray.png
+    |           17 N NO 2_ch1_LUT_Red.png
+    |           17 N NO 2_Properties.xml
+    |           17 N NO 2_Properties_WFIP_HWS3.xsl
+    |           17 N NO 3.xml
+    |           17 N NO 3_ch0_LUT_Gray.png
+    |           17 N NO 3_ch1_LUT_Red.png
+    |           17 N NO 3_Properties.xml
+    |           17 N NO 3_Properties_WFIP_HWS3.xsl
+    |           17 N NO 4.xml
+    |           17 N NO 4_ch0_LUT_Gray.png
+    |           17 N NO 4_ch1_LUT_Red.png
+    |           17 N NO 4_Properties.xml
+    |           17 N NO 4_Properties_WFIP_HWS3.xsl
+    |           17 N NO 5.xml
+    |           17 N NO 5_ch0_LUT_Gray.png
+    |           17 N NO 5_ch1_LUT_Red.png
+    |           17 N NO 5_Properties.xml
+    |           17 N NO 5_Properties_WFIP_HWS3.xsl
+    |           LeicaLogo.jpg
+    |           
+    +---18
+    |   |   18 N NO 1.tif
+    |   |   18 N NO 1_ch00.tif
+    |   |   18 N NO 1_ch01.tif
+    |   |   18 N NO 2.tif
+    |   |   18 N NO 2_ch00.tif
+    |   |   18 N NO 2_ch01.tif
+    |   |   18 N NO 3.tif
+    |   |   18 N NO 3_ch00.tif
+    |   |   18 N NO 3_ch01.tif
+    |   |   18 N NO 4.tif
+    |   |   18 N NO 4_ch00.tif
+    |   |   18 N NO 4_ch01.tif
+    |   |   18 N NO 5.tif
+    |   |   18 N NO 5_ch00.tif
+    |   |   18 N NO 5_ch01.tif
+    |   |   
+    |   \---MetaData
+    |           18 N NO 1.xml
+    |           18 N NO 1_ch0_LUT_Gray.png
+    |           18 N NO 1_ch1_LUT_Red.png
+    |           18 N NO 1_Properties.xml
+    |           18 N NO 1_Properties_WFIP_HWS3.xsl
+    |           18 N NO 2.xml
+    |           18 N NO 2_ch0_LUT_Gray.png
+    |           18 N NO 2_ch1_LUT_Red.png
+    |           18 N NO 2_Properties.xml
+    |           18 N NO 2_Properties_WFIP_HWS3.xsl
+    |           18 N NO 3.xml
+    |           18 N NO 3_ch0_LUT_Gray.png
+    |           18 N NO 3_ch1_LUT_Red.png
+    |           18 N NO 3_Properties.xml
+    |           18 N NO 3_Properties_WFIP_HWS3.xsl
+    |           18 N NO 4.xml
+    |           18 N NO 4_ch0_LUT_Gray.png
+    |           18 N NO 4_ch1_LUT_Red.png
+    |           18 N NO 4_Properties.xml
+    |           18 N NO 4_Properties_WFIP_HWS3.xsl
+    |           18 N NO 5.xml
+    |           18 N NO 5_ch0_LUT_Gray.png
+    |           18 N NO 5_ch1_LUT_Red.png
+    |           18 N NO 5_Properties.xml
+    |           18 N NO 5_Properties_WFIP_HWS3.xsl
+    |           LeicaLogo.jpg
+    |           
+    +---19
+    |   |   Day 1 19 N NO 1.tif
+    |   |   Day 1 19 N NO 1_ch00.tif
+    |   |   Day 1 19 N NO 1_ch01.tif
+    |   |   Day 1 19 N NO 2.tif
+    |   |   Day 1 19 N NO 2_ch00.tif
+    |   |   Day 1 19 N NO 2_ch01.tif
+    |   |   Day 1 19 N NO 3.tif
+    |   |   Day 1 19 N NO 3_ch00.tif
+    |   |   Day 1 19 N NO 3_ch01.tif
+    |   |   Day 1 19 N NO 4.tif
+    |   |   Day 1 19 N NO 4_ch00.tif
+    |   |   Day 1 19 N NO 4_ch01.tif
+    |   |   Day 1 19 N NO 5.tif
+    |   |   Day 1 19 N NO 5_ch00.tif
+    |   |   Day 1 19 N NO 5_ch01.tif
+    |   |   
+    |   \---MetaData
+    |           Day 1 19 N NO 1.xml
+    |           Day 1 19 N NO 1_ch0_LUT_Gray.png
+    |           Day 1 19 N NO 1_ch1_LUT_Red.png
+    |           Day 1 19 N NO 1_Properties.xml
+    |           Day 1 19 N NO 1_Properties_WFIP_HWS3.xsl
+    |           Day 1 19 N NO 2.xml
+    |           Day 1 19 N NO 2_ch0_LUT_Gray.png
+    |           Day 1 19 N NO 2_ch1_LUT_Red.png
+    |           Day 1 19 N NO 2_Properties.xml
+    |           Day 1 19 N NO 2_Properties_WFIP_HWS3.xsl
+    |           Day 1 19 N NO 3.xml
+    |           Day 1 19 N NO 3_ch0_LUT_Gray.png
+    |           Day 1 19 N NO 3_ch1_LUT_Red.png
+    |           Day 1 19 N NO 3_Properties.xml
+    |           Day 1 19 N NO 3_Properties_WFIP_HWS3.xsl
+    |           Day 1 19 N NO 4.xml
+    |           Day 1 19 N NO 4_ch0_LUT_Gray.png
+    |           Day 1 19 N NO 4_ch1_LUT_Red.png
+    |           Day 1 19 N NO 4_Properties.xml
+    |           Day 1 19 N NO 4_Properties_WFIP_HWS3.xsl
+    |           Day 1 19 N NO 5.xml
+    |           Day 1 19 N NO 5_ch0_LUT_Gray.png
+    |           Day 1 19 N NO 5_ch1_LUT_Red.png
+    |           Day 1 19 N NO 5_Properties.xml
+    |           Day 1 19 N NO 5_Properties_WFIP_HWS3.xsl
+    |           LeicaLogo.jpg
+    |           
+    \---Control group
+        |   G+ microgel 1_ch00.tif
+        |   G+ microgel 1_ch01.tif
+        |   G+ microgel 2_ch00.tif
+        |   G+ microgel 2_ch01.tif
+        |   G+ microgel 3_ch00.tif
+        |   G+ microgel 3_ch01.tif
+        |   G+ microgel 4_ch00.tif
+        |   G+ microgel 4_ch01.tif
+        |   G+ microgel 5_ch00.tif
+        |   G+ microgel 5_ch01.tif
+        |   
+        \---MetaData
+                G+ microgel 1.xml
+                G+ microgel 1_ch0_LUT_Gray.png
+                G+ microgel 1_ch1_LUT_Red.png
+                G+ microgel 1_Properties.xml
+                G+ microgel 1_Properties_WFIP_HWS3.xsl
+                G+ microgel 2.xml
+                G+ microgel 2_ch0_LUT_Gray.png
+                G+ microgel 2_ch1_LUT_Red.png
+                G+ microgel 2_Properties.xml
+                G+ microgel 2_Properties_WFIP_HWS3.xsl
+                G+ microgel 3.xml
+                G+ microgel 3_ch0_LUT_Gray.png
+                G+ microgel 3_ch1_LUT_Red.png
+                G+ microgel 3_Properties.xml
+                G+ microgel 3_Properties_WFIP_HWS3.xsl
+                G+ microgel 4.xml
+                G+ microgel 4_ch0_LUT_Gray.png
+                G+ microgel 4_ch1_LUT_Red.png
+                G+ microgel 4_Properties.xml
+                G+ microgel 4_Properties_WFIP_HWS3.xsl
+                G+ microgel 5.xml
+                G+ microgel 5_ch0_LUT_Gray.png
+                G+ microgel 5_ch1_LUT_Red.png
+                G+ microgel 5_Properties.xml
+                G+ microgel 5_Properties_WFIP_HWS3.xsl
+                LeicaLogo.jpg
+                
