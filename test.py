@@ -1,3 +1,4 @@
+
 import cv2
 import numpy as np
 import sys
@@ -299,7 +300,7 @@ def get_run_mode() -> str:
       - 'single': process one selected numeric group plus Control group
     """
     print("\nSelect run mode:")
-    print("  [1] ALL groups 10–19 + Control (percentile only)")
+    print("  [1] ALL numeric groups + Control (percentile only)")
     print("  [2] Single group + Control")
 
     while True:
@@ -1062,8 +1063,6 @@ def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: floa
         )
 
         print(f"[OK] Pairwise plot saved for group {group_dir.name}: {pair_plot_path}")
-
-
 
 
 def embed_comparison_plots_into_all_excels(
@@ -1962,7 +1961,7 @@ def main() -> None:
     selected_group_name: Optional[str] = None
 
     if mode == "all_10_19":
-        dirs_to_process = [g for g in groups if 10 <= int(g.name) <= 19]
+        dirs_to_process = groups
         print(f"Selected numeric groups: {[d.name for d in dirs_to_process]}")
     else:
         selected = prompt_user_select_single_group_only(groups)

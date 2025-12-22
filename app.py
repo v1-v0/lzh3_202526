@@ -295,17 +295,17 @@ def prompt_user_select_single_group_only(groups: list[Path]) -> Path:
 def get_run_mode() -> str:
     """
     Choose processing mode:
-      - 'all_10_19': process numeric groups 10..19 plus Control group
+      - 'All groups': process numeric groups 10..19 plus Control group
       - 'single': process one selected numeric group plus Control group
     """
     print("\nSelect run mode:")
-    print("  [1] ALL groups 10–19 + Control (percentile only)")
+    print("  [1] ALL groups + Control (percentile only)")
     print("  [2] Single group + Control")
 
     while True:
         s = input("Enter number: ").strip()
         if s == "1":
-            return "all_10_19"
+            return "All groups"
         if s == "2":
             return "single"
         print("Invalid choice. Enter 1 or 2.")
@@ -1961,8 +1961,9 @@ def main() -> None:
 
     selected_group_name: Optional[str] = None
 
-    if mode == "all_10_19":
-        dirs_to_process = [g for g in groups if 10 <= int(g.name) <= 19]
+    if mode == "All groups":
+        # Select all numeric groups
+        dirs_to_process = [g for g in groups if re.fullmatch(r"\d+", g.name)]
         print(f"Selected numeric groups: {[d.name for d in dirs_to_process]}")
     else:
         selected = prompt_user_select_single_group_only(groups)
