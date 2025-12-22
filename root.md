@@ -2,14 +2,26 @@ Folder PATH listing
 Volume serial number is 5C81-200F
 C:.
 |   .gitignore
+|   01_gray_8bit.png
+|   app.py
 |   config.py
 |   debug-bf-8contour.py
 |   debug-meta.py
+|   dec-16.py
+|   dev-14.py
+|   dev-15.py
+|   dev-17.py
+|   dev-20.py
+|   dev12.py
+|   dev13.py
 |   dual_segmentation_pipeline.py
+|   exporter.py
 |   loader.py
 |   main.py
 |   root.md
+|   segment.md
 |   segmentation_brightfield.py
+|   test.py
 |   
 +---.venv
 |   |   pyvenv.cfg
@@ -25326,6 +25338,409 @@ C:.
 |   |       |   \---licenses
 |   |       |           COPYING
 |   |       |           
+|   |       +---reportlab
+|   |       |   |   rl_config.py
+|   |       |   |   rl_settings.py
+|   |       |   |   __init__.py
+|   |       |   |   
+|   |       |   +---fonts
+|   |       |   |       00readme.txt
+|   |       |   |       bitstream-vera-license.txt
+|   |       |   |       callig15.afm
+|   |       |   |       callig15.pfb
+|   |       |   |       cobo____.pfb
+|   |       |   |       cob_____.pfb
+|   |       |   |       com_____.pfb
+|   |       |   |       coo_____.pfb
+|   |       |   |       DarkGarden-changelog.txt
+|   |       |   |       DarkGarden-copying-gpl.txt
+|   |       |   |       DarkGarden-copying.txt
+|   |       |   |       DarkGarden-readme.txt
+|   |       |   |       DarkGarden.sfd
+|   |       |   |       DarkGardenMK.afm
+|   |       |   |       DarkGardenMK.pfb
+|   |       |   |       hb-test.ttf
+|   |       |   |       sy______.pfb
+|   |       |   |       Vera.ttf
+|   |       |   |       VeraBd.ttf
+|   |       |   |       VeraBI.ttf
+|   |       |   |       VeraIt.ttf
+|   |       |   |       zd______.pfb
+|   |       |   |       zx______.pfb
+|   |       |   |       zy______.pfb
+|   |       |   |       _abi____.pfb
+|   |       |   |       _ab_____.pfb
+|   |       |   |       _ai_____.pfb
+|   |       |   |       _a______.pfb
+|   |       |   |       _ebi____.pfb
+|   |       |   |       _eb_____.pfb
+|   |       |   |       _ei_____.pfb
+|   |       |   |       _er_____.pfb
+|   |       |   |       
+|   |       |   +---graphics
+|   |       |   |   |   renderbase.py
+|   |       |   |   |   renderPDF.py
+|   |       |   |   |   renderPM.py
+|   |       |   |   |   renderPS.py
+|   |       |   |   |   renderSVG.py
+|   |       |   |   |   shapes.py
+|   |       |   |   |   svgpath.py
+|   |       |   |   |   testdrawings.py
+|   |       |   |   |   testshapes.py
+|   |       |   |   |   transform.py
+|   |       |   |   |   utils.py
+|   |       |   |   |   widgetbase.py
+|   |       |   |   |   __init__.py
+|   |       |   |   |   
+|   |       |   |   +---barcode
+|   |       |   |   |   |   code128.py
+|   |       |   |   |   |   code39.py
+|   |       |   |   |   |   code93.py
+|   |       |   |   |   |   common.py
+|   |       |   |   |   |   dmtx.py
+|   |       |   |   |   |   eanbc.py
+|   |       |   |   |   |   ecc200datamatrix.py
+|   |       |   |   |   |   fourstate.py
+|   |       |   |   |   |   lto.py
+|   |       |   |   |   |   qr.py
+|   |       |   |   |   |   qrencoder.py
+|   |       |   |   |   |   test.py
+|   |       |   |   |   |   usps.py
+|   |       |   |   |   |   usps4s.py
+|   |       |   |   |   |   widgets.py
+|   |       |   |   |   |   __init__.py
+|   |       |   |   |   |   
+|   |       |   |   |   \---__pycache__
+|   |       |   |   |           code128.cpython-312.pyc
+|   |       |   |   |           code39.cpython-312.pyc
+|   |       |   |   |           code93.cpython-312.pyc
+|   |       |   |   |           common.cpython-312.pyc
+|   |       |   |   |           dmtx.cpython-312.pyc
+|   |       |   |   |           eanbc.cpython-312.pyc
+|   |       |   |   |           ecc200datamatrix.cpython-312.pyc
+|   |       |   |   |           fourstate.cpython-312.pyc
+|   |       |   |   |           lto.cpython-312.pyc
+|   |       |   |   |           qr.cpython-312.pyc
+|   |       |   |   |           qrencoder.cpython-312.pyc
+|   |       |   |   |           test.cpython-312.pyc
+|   |       |   |   |           usps.cpython-312.pyc
+|   |       |   |   |           usps4s.cpython-312.pyc
+|   |       |   |   |           widgets.cpython-312.pyc
+|   |       |   |   |           __init__.cpython-312.pyc
+|   |       |   |   |           
+|   |       |   |   +---charts
+|   |       |   |   |   |   areas.py
+|   |       |   |   |   |   axes.py
+|   |       |   |   |   |   barcharts.py
+|   |       |   |   |   |   dotbox.py
+|   |       |   |   |   |   doughnut.py
+|   |       |   |   |   |   legends.py
+|   |       |   |   |   |   linecharts.py
+|   |       |   |   |   |   lineplots.py
+|   |       |   |   |   |   markers.py
+|   |       |   |   |   |   piecharts.py
+|   |       |   |   |   |   slidebox.py
+|   |       |   |   |   |   spider.py
+|   |       |   |   |   |   textlabels.py
+|   |       |   |   |   |   utils.py
+|   |       |   |   |   |   utils3d.py
+|   |       |   |   |   |   __init__.py
+|   |       |   |   |   |   
+|   |       |   |   |   \---__pycache__
+|   |       |   |   |           areas.cpython-312.pyc
+|   |       |   |   |           axes.cpython-312.pyc
+|   |       |   |   |           barcharts.cpython-312.pyc
+|   |       |   |   |           dotbox.cpython-312.pyc
+|   |       |   |   |           doughnut.cpython-312.pyc
+|   |       |   |   |           legends.cpython-312.pyc
+|   |       |   |   |           linecharts.cpython-312.pyc
+|   |       |   |   |           lineplots.cpython-312.pyc
+|   |       |   |   |           markers.cpython-312.pyc
+|   |       |   |   |           piecharts.cpython-312.pyc
+|   |       |   |   |           slidebox.cpython-312.pyc
+|   |       |   |   |           spider.cpython-312.pyc
+|   |       |   |   |           textlabels.cpython-312.pyc
+|   |       |   |   |           utils.cpython-312.pyc
+|   |       |   |   |           utils3d.cpython-312.pyc
+|   |       |   |   |           __init__.cpython-312.pyc
+|   |       |   |   |           
+|   |       |   |   +---samples
+|   |       |   |   |   |   bubble.py
+|   |       |   |   |   |   clustered_bar.py
+|   |       |   |   |   |   clustered_column.py
+|   |       |   |   |   |   excelcolors.py
+|   |       |   |   |   |   exploded_pie.py
+|   |       |   |   |   |   filled_radar.py
+|   |       |   |   |   |   linechart_with_markers.py
+|   |       |   |   |   |   line_chart.py
+|   |       |   |   |   |   radar.py
+|   |       |   |   |   |   runall.py
+|   |       |   |   |   |   scatter.py
+|   |       |   |   |   |   scatter_lines.py
+|   |       |   |   |   |   scatter_lines_markers.py
+|   |       |   |   |   |   simple_pie.py
+|   |       |   |   |   |   stacked_bar.py
+|   |       |   |   |   |   stacked_column.py
+|   |       |   |   |   |   __init__.py
+|   |       |   |   |   |   
+|   |       |   |   |   \---__pycache__
+|   |       |   |   |           bubble.cpython-312.pyc
+|   |       |   |   |           clustered_bar.cpython-312.pyc
+|   |       |   |   |           clustered_column.cpython-312.pyc
+|   |       |   |   |           excelcolors.cpython-312.pyc
+|   |       |   |   |           exploded_pie.cpython-312.pyc
+|   |       |   |   |           filled_radar.cpython-312.pyc
+|   |       |   |   |           linechart_with_markers.cpython-312.pyc
+|   |       |   |   |           line_chart.cpython-312.pyc
+|   |       |   |   |           radar.cpython-312.pyc
+|   |       |   |   |           runall.cpython-312.pyc
+|   |       |   |   |           scatter.cpython-312.pyc
+|   |       |   |   |           scatter_lines.cpython-312.pyc
+|   |       |   |   |           scatter_lines_markers.cpython-312.pyc
+|   |       |   |   |           simple_pie.cpython-312.pyc
+|   |       |   |   |           stacked_bar.cpython-312.pyc
+|   |       |   |   |           stacked_column.cpython-312.pyc
+|   |       |   |   |           __init__.cpython-312.pyc
+|   |       |   |   |           
+|   |       |   |   +---widgets
+|   |       |   |   |   |   adjustableArrow.py
+|   |       |   |   |   |   eventcal.py
+|   |       |   |   |   |   flags.py
+|   |       |   |   |   |   grids.py
+|   |       |   |   |   |   markers.py
+|   |       |   |   |   |   signsandsymbols.py
+|   |       |   |   |   |   table.py
+|   |       |   |   |   |   __init__.py
+|   |       |   |   |   |   
+|   |       |   |   |   \---__pycache__
+|   |       |   |   |           adjustableArrow.cpython-312.pyc
+|   |       |   |   |           eventcal.cpython-312.pyc
+|   |       |   |   |           flags.cpython-312.pyc
+|   |       |   |   |           grids.cpython-312.pyc
+|   |       |   |   |           markers.cpython-312.pyc
+|   |       |   |   |           signsandsymbols.cpython-312.pyc
+|   |       |   |   |           table.cpython-312.pyc
+|   |       |   |   |           __init__.cpython-312.pyc
+|   |       |   |   |           
+|   |       |   |   \---__pycache__
+|   |       |   |           renderbase.cpython-312.pyc
+|   |       |   |           renderPDF.cpython-312.pyc
+|   |       |   |           renderPM.cpython-312.pyc
+|   |       |   |           renderPS.cpython-312.pyc
+|   |       |   |           renderSVG.cpython-312.pyc
+|   |       |   |           shapes.cpython-312.pyc
+|   |       |   |           svgpath.cpython-312.pyc
+|   |       |   |           testdrawings.cpython-312.pyc
+|   |       |   |           testshapes.cpython-312.pyc
+|   |       |   |           transform.cpython-312.pyc
+|   |       |   |           utils.cpython-312.pyc
+|   |       |   |           widgetbase.cpython-312.pyc
+|   |       |   |           __init__.cpython-312.pyc
+|   |       |   |           
+|   |       |   +---lib
+|   |       |   |   |   abag.py
+|   |       |   |   |   arciv.py
+|   |       |   |   |   attrmap.py
+|   |       |   |   |   boxstuff.py
+|   |       |   |   |   codecharts.py
+|   |       |   |   |   colors.py
+|   |       |   |   |   corp.py
+|   |       |   |   |   enums.py
+|   |       |   |   |   extformat.py
+|   |       |   |   |   fontfinder.py
+|   |       |   |   |   fonts.py
+|   |       |   |   |   formatters.py
+|   |       |   |   |   geomutils.py
+|   |       |   |   |   logger.py
+|   |       |   |   |   normalDate.py
+|   |       |   |   |   pagesizes.py
+|   |       |   |   |   pdfencrypt.py
+|   |       |   |   |   PyFontify.py
+|   |       |   |   |   pygments2xpre.py
+|   |       |   |   |   randomtext.py
+|   |       |   |   |   rltempfile.py
+|   |       |   |   |   rl_accel.py
+|   |       |   |   |   rl_safe_eval.py
+|   |       |   |   |   rparsexml.py
+|   |       |   |   |   sequencer.py
+|   |       |   |   |   styles.py
+|   |       |   |   |   testutils.py
+|   |       |   |   |   textsplit.py
+|   |       |   |   |   units.py
+|   |       |   |   |   utils.py
+|   |       |   |   |   validators.py
+|   |       |   |   |   yaml.py
+|   |       |   |   |   __init__.py
+|   |       |   |   |   
+|   |       |   |   \---__pycache__
+|   |       |   |           abag.cpython-312.pyc
+|   |       |   |           arciv.cpython-312.pyc
+|   |       |   |           attrmap.cpython-312.pyc
+|   |       |   |           boxstuff.cpython-312.pyc
+|   |       |   |           codecharts.cpython-312.pyc
+|   |       |   |           colors.cpython-312.pyc
+|   |       |   |           corp.cpython-312.pyc
+|   |       |   |           enums.cpython-312.pyc
+|   |       |   |           extformat.cpython-312.pyc
+|   |       |   |           fontfinder.cpython-312.pyc
+|   |       |   |           fonts.cpython-312.pyc
+|   |       |   |           formatters.cpython-312.pyc
+|   |       |   |           geomutils.cpython-312.pyc
+|   |       |   |           logger.cpython-312.pyc
+|   |       |   |           normalDate.cpython-312.pyc
+|   |       |   |           pagesizes.cpython-312.pyc
+|   |       |   |           pdfencrypt.cpython-312.pyc
+|   |       |   |           PyFontify.cpython-312.pyc
+|   |       |   |           pygments2xpre.cpython-312.pyc
+|   |       |   |           randomtext.cpython-312.pyc
+|   |       |   |           rltempfile.cpython-312.pyc
+|   |       |   |           rl_accel.cpython-312.pyc
+|   |       |   |           rl_safe_eval.cpython-312.pyc
+|   |       |   |           rparsexml.cpython-312.pyc
+|   |       |   |           sequencer.cpython-312.pyc
+|   |       |   |           styles.cpython-312.pyc
+|   |       |   |           testutils.cpython-312.pyc
+|   |       |   |           textsplit.cpython-312.pyc
+|   |       |   |           units.cpython-312.pyc
+|   |       |   |           utils.cpython-312.pyc
+|   |       |   |           validators.cpython-312.pyc
+|   |       |   |           yaml.cpython-312.pyc
+|   |       |   |           __init__.cpython-312.pyc
+|   |       |   |           
+|   |       |   +---pdfbase
+|   |       |   |   |   acroform.py
+|   |       |   |   |   cidfonts.py
+|   |       |   |   |   pdfdoc.py
+|   |       |   |   |   pdfform.py
+|   |       |   |   |   pdfmetrics.py
+|   |       |   |   |   pdfpattern.py
+|   |       |   |   |   pdfutils.py
+|   |       |   |   |   rl_codecs.py
+|   |       |   |   |   ttfonts.py
+|   |       |   |   |   _can_cmap_data.py
+|   |       |   |   |   _cidfontdata.py
+|   |       |   |   |   _fontdata.py
+|   |       |   |   |   _fontdata_enc_macexpert.py
+|   |       |   |   |   _fontdata_enc_macroman.py
+|   |       |   |   |   _fontdata_enc_pdfdoc.py
+|   |       |   |   |   _fontdata_enc_standard.py
+|   |       |   |   |   _fontdata_enc_symbol.py
+|   |       |   |   |   _fontdata_enc_winansi.py
+|   |       |   |   |   _fontdata_enc_zapfdingbats.py
+|   |       |   |   |   _fontdata_widths_courier.py
+|   |       |   |   |   _fontdata_widths_courierbold.py
+|   |       |   |   |   _fontdata_widths_courierboldoblique.py
+|   |       |   |   |   _fontdata_widths_courieroblique.py
+|   |       |   |   |   _fontdata_widths_helvetica.py
+|   |       |   |   |   _fontdata_widths_helveticabold.py
+|   |       |   |   |   _fontdata_widths_helveticaboldoblique.py
+|   |       |   |   |   _fontdata_widths_helveticaoblique.py
+|   |       |   |   |   _fontdata_widths_symbol.py
+|   |       |   |   |   _fontdata_widths_timesbold.py
+|   |       |   |   |   _fontdata_widths_timesbolditalic.py
+|   |       |   |   |   _fontdata_widths_timesitalic.py
+|   |       |   |   |   _fontdata_widths_timesroman.py
+|   |       |   |   |   _fontdata_widths_zapfdingbats.py
+|   |       |   |   |   _glyphlist.py
+|   |       |   |   |   __init__.py
+|   |       |   |   |   
+|   |       |   |   \---__pycache__
+|   |       |   |           acroform.cpython-312.pyc
+|   |       |   |           cidfonts.cpython-312.pyc
+|   |       |   |           pdfdoc.cpython-312.pyc
+|   |       |   |           pdfform.cpython-312.pyc
+|   |       |   |           pdfmetrics.cpython-312.pyc
+|   |       |   |           pdfpattern.cpython-312.pyc
+|   |       |   |           pdfutils.cpython-312.pyc
+|   |       |   |           rl_codecs.cpython-312.pyc
+|   |       |   |           ttfonts.cpython-312.pyc
+|   |       |   |           _can_cmap_data.cpython-312.pyc
+|   |       |   |           _cidfontdata.cpython-312.pyc
+|   |       |   |           _fontdata.cpython-312.pyc
+|   |       |   |           _fontdata_enc_macexpert.cpython-312.pyc
+|   |       |   |           _fontdata_enc_macroman.cpython-312.pyc
+|   |       |   |           _fontdata_enc_pdfdoc.cpython-312.pyc
+|   |       |   |           _fontdata_enc_standard.cpython-312.pyc
+|   |       |   |           _fontdata_enc_symbol.cpython-312.pyc
+|   |       |   |           _fontdata_enc_winansi.cpython-312.pyc
+|   |       |   |           _fontdata_enc_zapfdingbats.cpython-312.pyc
+|   |       |   |           _fontdata_widths_courier.cpython-312.pyc
+|   |       |   |           _fontdata_widths_courierbold.cpython-312.pyc
+|   |       |   |           _fontdata_widths_courierboldoblique.cpython-312.pyc
+|   |       |   |           _fontdata_widths_courieroblique.cpython-312.pyc
+|   |       |   |           _fontdata_widths_helvetica.cpython-312.pyc
+|   |       |   |           _fontdata_widths_helveticabold.cpython-312.pyc
+|   |       |   |           _fontdata_widths_helveticaboldoblique.cpython-312.pyc
+|   |       |   |           _fontdata_widths_helveticaoblique.cpython-312.pyc
+|   |       |   |           _fontdata_widths_symbol.cpython-312.pyc
+|   |       |   |           _fontdata_widths_timesbold.cpython-312.pyc
+|   |       |   |           _fontdata_widths_timesbolditalic.cpython-312.pyc
+|   |       |   |           _fontdata_widths_timesitalic.cpython-312.pyc
+|   |       |   |           _fontdata_widths_timesroman.cpython-312.pyc
+|   |       |   |           _fontdata_widths_zapfdingbats.cpython-312.pyc
+|   |       |   |           _glyphlist.cpython-312.pyc
+|   |       |   |           __init__.cpython-312.pyc
+|   |       |   |           
+|   |       |   +---pdfgen
+|   |       |   |   |   canvas.py
+|   |       |   |   |   pathobject.py
+|   |       |   |   |   pdfgeom.py
+|   |       |   |   |   pdfimages.py
+|   |       |   |   |   textobject.py
+|   |       |   |   |   __init__.py
+|   |       |   |   |   
+|   |       |   |   \---__pycache__
+|   |       |   |           canvas.cpython-312.pyc
+|   |       |   |           pathobject.cpython-312.pyc
+|   |       |   |           pdfgeom.cpython-312.pyc
+|   |       |   |           pdfimages.cpython-312.pyc
+|   |       |   |           textobject.cpython-312.pyc
+|   |       |   |           __init__.cpython-312.pyc
+|   |       |   |           
+|   |       |   +---platypus
+|   |       |   |   |   doctemplate.py
+|   |       |   |   |   figures.py
+|   |       |   |   |   flowables.py
+|   |       |   |   |   frames.py
+|   |       |   |   |   multicol.py
+|   |       |   |   |   para.py
+|   |       |   |   |   paragraph.py
+|   |       |   |   |   paraparser.py
+|   |       |   |   |   tableofcontents.py
+|   |       |   |   |   tables.py
+|   |       |   |   |   xpreformatted.py
+|   |       |   |   |   __init__.py
+|   |       |   |   |   
+|   |       |   |   \---__pycache__
+|   |       |   |           doctemplate.cpython-312.pyc
+|   |       |   |           figures.cpython-312.pyc
+|   |       |   |           flowables.cpython-312.pyc
+|   |       |   |           frames.cpython-312.pyc
+|   |       |   |           multicol.cpython-312.pyc
+|   |       |   |           para.cpython-312.pyc
+|   |       |   |           paragraph.cpython-312.pyc
+|   |       |   |           paraparser.cpython-312.pyc
+|   |       |   |           tableofcontents.cpython-312.pyc
+|   |       |   |           tables.cpython-312.pyc
+|   |       |   |           xpreformatted.cpython-312.pyc
+|   |       |   |           __init__.cpython-312.pyc
+|   |       |   |           
+|   |       |   \---__pycache__
+|   |       |           rl_config.cpython-312.pyc
+|   |       |           rl_settings.cpython-312.pyc
+|   |       |           __init__.cpython-312.pyc
+|   |       |           
+|   |       +---reportlab-4.4.6.dist-info
+|   |       |   |   INSTALLER
+|   |       |   |   METADATA
+|   |       |   |   RECORD
+|   |       |   |   REQUESTED
+|   |       |   |   top_level.txt
+|   |       |   |   WHEEL
+|   |       |   |   
+|   |       |   \---licenses
+|   |       |           LICENSE
+|   |       |           
 |   |       +---requests
 |   |       |   |   adapters.py
 |   |       |   |   api.py
@@ -28364,6 +28779,146 @@ C:.
 |   |       |       
 |   |       +---scipy.libs
 |   |       |       libscipy_openblas-48c358d105077551cc9cc3ba79387ed5.dll
+|   |       |       
+|   |       +---seaborn
+|   |       |   |   algorithms.py
+|   |       |   |   axisgrid.py
+|   |       |   |   categorical.py
+|   |       |   |   cm.py
+|   |       |   |   distributions.py
+|   |       |   |   matrix.py
+|   |       |   |   miscplot.py
+|   |       |   |   objects.py
+|   |       |   |   palettes.py
+|   |       |   |   rcmod.py
+|   |       |   |   regression.py
+|   |       |   |   relational.py
+|   |       |   |   utils.py
+|   |       |   |   widgets.py
+|   |       |   |   _base.py
+|   |       |   |   _compat.py
+|   |       |   |   _docstrings.py
+|   |       |   |   _statistics.py
+|   |       |   |   _testing.py
+|   |       |   |   __init__.py
+|   |       |   |   
+|   |       |   +---colors
+|   |       |   |   |   crayons.py
+|   |       |   |   |   xkcd_rgb.py
+|   |       |   |   |   __init__.py
+|   |       |   |   |   
+|   |       |   |   \---__pycache__
+|   |       |   |           crayons.cpython-312.pyc
+|   |       |   |           xkcd_rgb.cpython-312.pyc
+|   |       |   |           __init__.cpython-312.pyc
+|   |       |   |           
+|   |       |   +---external
+|   |       |   |   |   appdirs.py
+|   |       |   |   |   docscrape.py
+|   |       |   |   |   husl.py
+|   |       |   |   |   kde.py
+|   |       |   |   |   version.py
+|   |       |   |   |   __init__.py
+|   |       |   |   |   
+|   |       |   |   \---__pycache__
+|   |       |   |           appdirs.cpython-312.pyc
+|   |       |   |           docscrape.cpython-312.pyc
+|   |       |   |           husl.cpython-312.pyc
+|   |       |   |           kde.cpython-312.pyc
+|   |       |   |           version.cpython-312.pyc
+|   |       |   |           __init__.cpython-312.pyc
+|   |       |   |           
+|   |       |   +---_core
+|   |       |   |   |   data.py
+|   |       |   |   |   exceptions.py
+|   |       |   |   |   groupby.py
+|   |       |   |   |   moves.py
+|   |       |   |   |   plot.py
+|   |       |   |   |   properties.py
+|   |       |   |   |   rules.py
+|   |       |   |   |   scales.py
+|   |       |   |   |   subplots.py
+|   |       |   |   |   typing.py
+|   |       |   |   |   __init__.py
+|   |       |   |   |   
+|   |       |   |   \---__pycache__
+|   |       |   |           data.cpython-312.pyc
+|   |       |   |           exceptions.cpython-312.pyc
+|   |       |   |           groupby.cpython-312.pyc
+|   |       |   |           moves.cpython-312.pyc
+|   |       |   |           plot.cpython-312.pyc
+|   |       |   |           properties.cpython-312.pyc
+|   |       |   |           rules.cpython-312.pyc
+|   |       |   |           scales.cpython-312.pyc
+|   |       |   |           subplots.cpython-312.pyc
+|   |       |   |           typing.cpython-312.pyc
+|   |       |   |           __init__.cpython-312.pyc
+|   |       |   |           
+|   |       |   +---_marks
+|   |       |   |   |   area.py
+|   |       |   |   |   bar.py
+|   |       |   |   |   base.py
+|   |       |   |   |   dot.py
+|   |       |   |   |   line.py
+|   |       |   |   |   text.py
+|   |       |   |   |   __init__.py
+|   |       |   |   |   
+|   |       |   |   \---__pycache__
+|   |       |   |           area.cpython-312.pyc
+|   |       |   |           bar.cpython-312.pyc
+|   |       |   |           base.cpython-312.pyc
+|   |       |   |           dot.cpython-312.pyc
+|   |       |   |           line.cpython-312.pyc
+|   |       |   |           text.cpython-312.pyc
+|   |       |   |           __init__.cpython-312.pyc
+|   |       |   |           
+|   |       |   +---_stats
+|   |       |   |   |   aggregation.py
+|   |       |   |   |   base.py
+|   |       |   |   |   counting.py
+|   |       |   |   |   density.py
+|   |       |   |   |   order.py
+|   |       |   |   |   regression.py
+|   |       |   |   |   __init__.py
+|   |       |   |   |   
+|   |       |   |   \---__pycache__
+|   |       |   |           aggregation.cpython-312.pyc
+|   |       |   |           base.cpython-312.pyc
+|   |       |   |           counting.cpython-312.pyc
+|   |       |   |           density.cpython-312.pyc
+|   |       |   |           order.cpython-312.pyc
+|   |       |   |           regression.cpython-312.pyc
+|   |       |   |           __init__.cpython-312.pyc
+|   |       |   |           
+|   |       |   \---__pycache__
+|   |       |           algorithms.cpython-312.pyc
+|   |       |           axisgrid.cpython-312.pyc
+|   |       |           categorical.cpython-312.pyc
+|   |       |           cm.cpython-312.pyc
+|   |       |           distributions.cpython-312.pyc
+|   |       |           matrix.cpython-312.pyc
+|   |       |           miscplot.cpython-312.pyc
+|   |       |           objects.cpython-312.pyc
+|   |       |           palettes.cpython-312.pyc
+|   |       |           rcmod.cpython-312.pyc
+|   |       |           regression.cpython-312.pyc
+|   |       |           relational.cpython-312.pyc
+|   |       |           utils.cpython-312.pyc
+|   |       |           widgets.cpython-312.pyc
+|   |       |           _base.cpython-312.pyc
+|   |       |           _compat.cpython-312.pyc
+|   |       |           _docstrings.cpython-312.pyc
+|   |       |           _statistics.cpython-312.pyc
+|   |       |           _testing.cpython-312.pyc
+|   |       |           __init__.cpython-312.pyc
+|   |       |           
+|   |       +---seaborn-0.13.2.dist-info
+|   |       |       INSTALLER
+|   |       |       LICENSE.md
+|   |       |       METADATA
+|   |       |       RECORD
+|   |       |       REQUESTED
+|   |       |       WHEEL
 |   |       |       
 |   |       +---send2trash
 |   |       |   |   compat.py
@@ -33177,269 +33732,1280 @@ C:.
 |       pipeline_config.json
 |       
 +---debug
-|   |   01c_red_enhanced.png
-|   |   02_enhanced.png
-|   |   03_enhanced_blur.png
-|   |   04_thresh_raw.png
-|   |   05_closed.png
-|   |   06_solid.png
-|   |   07a_bf_contours.png
-|   |   07b_red_contours.png
-|   |   07c_overlay_contours.png
-|   |   07d_intensity_coded.png
-|   |   fluorescence_statistics.xlsx
-|   |   
-|   \---session_20251213_022323
-|       |   session_summary.json
+|   +---10
+|   |   |   10_master.xlsx
+|   |   |   error_bar_jitter_comparison_SD_vs_Control.png
+|   |   |   
+|   |   +---10 P 1_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---10 P 2_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---10 P 3_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---10 P 4_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   \---10 P 5_ch00
+|   |           01_gray_8bit.png
+|   |           02_enhanced.png
+|   |           03_enhanced_blur.png
+|   |           04_thresh_raw.png
+|   |           05_closed.png
+|   |           10_contours_all.png
+|   |           11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |           12_mask_all.png
+|   |           13_mask_accepted.png
+|   |           13_mask_accepted_ids.png
+|   |           20_fluorescence_8bit.png
+|   |           20_fluorescence_aligned_raw.png
+|   |           21_fluorescence_overlay.png
+|   |           22_fluorescence_mask_global.png
+|   |           22_fluorescence_mask_global_ids.png
+|   |           23_fluorescence_contours_global.png
+|   |           23_fluorescence_contours_global_ids.png
+|   |           24_bf_fluor_matching_overlay.png
+|   |           24_bf_fluor_matching_overlay_ids.png
+|   |           object_stats.csv
+|   |           
+|   +---11
+|   |   |   11_master.xlsx
+|   |   |   error_bar_jitter_comparison_SD_vs_Control.png
+|   |   |   
+|   |   +---11 N NO 1_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---11 N NO 2_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---11 N NO 3_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---11 N NO 4_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   \---11 N NO 5_ch00
+|   |           01_gray_8bit.png
+|   |           02_enhanced.png
+|   |           03_enhanced_blur.png
+|   |           04_thresh_raw.png
+|   |           05_closed.png
+|   |           10_contours_all.png
+|   |           11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |           12_mask_all.png
+|   |           13_mask_accepted.png
+|   |           13_mask_accepted_ids.png
+|   |           20_fluorescence_8bit.png
+|   |           20_fluorescence_aligned_raw.png
+|   |           21_fluorescence_overlay.png
+|   |           22_fluorescence_mask_global.png
+|   |           22_fluorescence_mask_global_ids.png
+|   |           23_fluorescence_contours_global.png
+|   |           23_fluorescence_contours_global_ids.png
+|   |           24_bf_fluor_matching_overlay.png
+|   |           24_bf_fluor_matching_overlay_ids.png
+|   |           object_stats.csv
+|   |           
+|   +---12
+|   |   |   12_master.xlsx
+|   |   |   error_bar_jitter_comparison_SD_vs_Control.png
+|   |   |   
+|   |   +---12 N NO 1_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---12 N NO 2_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---12 N NO 3_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---12 N NO 4_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   \---12 N NO 5_ch00
+|   |           01_gray_8bit.png
+|   |           02_enhanced.png
+|   |           03_enhanced_blur.png
+|   |           04_thresh_raw.png
+|   |           05_closed.png
+|   |           10_contours_all.png
+|   |           11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |           12_mask_all.png
+|   |           13_mask_accepted.png
+|   |           13_mask_accepted_ids.png
+|   |           20_fluorescence_8bit.png
+|   |           20_fluorescence_aligned_raw.png
+|   |           21_fluorescence_overlay.png
+|   |           22_fluorescence_mask_global.png
+|   |           22_fluorescence_mask_global_ids.png
+|   |           23_fluorescence_contours_global.png
+|   |           23_fluorescence_contours_global_ids.png
+|   |           24_bf_fluor_matching_overlay.png
+|   |           24_bf_fluor_matching_overlay_ids.png
+|   |           object_stats.csv
+|   |           
+|   +---13
+|   |   |   13_master.xlsx
+|   |   |   error_bar_jitter_comparison_SD_vs_Control.png
+|   |   |   
+|   |   +---13 N NO 1_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---13 N NO 2_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---13 N NO 3_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---13 N NO 4_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   \---13 N NO 5_ch00
+|   |           01_gray_8bit.png
+|   |           02_enhanced.png
+|   |           03_enhanced_blur.png
+|   |           04_thresh_raw.png
+|   |           05_closed.png
+|   |           10_contours_all.png
+|   |           11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |           12_mask_all.png
+|   |           13_mask_accepted.png
+|   |           13_mask_accepted_ids.png
+|   |           20_fluorescence_8bit.png
+|   |           20_fluorescence_aligned_raw.png
+|   |           21_fluorescence_overlay.png
+|   |           22_fluorescence_mask_global.png
+|   |           22_fluorescence_mask_global_ids.png
+|   |           23_fluorescence_contours_global.png
+|   |           23_fluorescence_contours_global_ids.png
+|   |           24_bf_fluor_matching_overlay.png
+|   |           24_bf_fluor_matching_overlay_ids.png
+|   |           object_stats.csv
+|   |           
+|   +---14
+|   |   |   14_master.xlsx
+|   |   |   error_bar_jitter_comparison_SD_vs_Control.png
+|   |   |   
+|   |   +---14 N NO 1_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---14 N NO 2_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---14 N NO 3_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---14 N NO 4_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   \---14 N NO 5_ch00
+|   |           01_gray_8bit.png
+|   |           02_enhanced.png
+|   |           03_enhanced_blur.png
+|   |           04_thresh_raw.png
+|   |           05_closed.png
+|   |           10_contours_all.png
+|   |           11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |           12_mask_all.png
+|   |           13_mask_accepted.png
+|   |           13_mask_accepted_ids.png
+|   |           20_fluorescence_8bit.png
+|   |           20_fluorescence_aligned_raw.png
+|   |           21_fluorescence_overlay.png
+|   |           22_fluorescence_mask_global.png
+|   |           22_fluorescence_mask_global_ids.png
+|   |           23_fluorescence_contours_global.png
+|   |           23_fluorescence_contours_global_ids.png
+|   |           24_bf_fluor_matching_overlay.png
+|   |           24_bf_fluor_matching_overlay_ids.png
+|   |           object_stats.csv
+|   |           
+|   +---15
+|   |   |   15_master.xlsx
+|   |   |   error_bar_jitter_comparison_SD_vs_Control.png
+|   |   |   
+|   |   +---15 N NO 1 3rd_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---15 N NO 2 3rd_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---15 N NO 3 3rd_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---15 N NO 4 3rd_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---15 N NO 5 3rd_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   \---MetaData
+|   +---16
+|   |   |   16_master.xlsx
+|   |   |   error_bar_jitter_comparison_SD_vs_Control.png
+|   |   |   
+|   |   +---16 P DAY0 1_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---16 P DAY0 2_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---16 P DAY0 3_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---16 P DAY0 4_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   \---16 P DAY0 5_ch00
+|   |           01_gray_8bit.png
+|   |           02_enhanced.png
+|   |           03_enhanced_blur.png
+|   |           04_thresh_raw.png
+|   |           05_closed.png
+|   |           10_contours_all.png
+|   |           11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |           12_mask_all.png
+|   |           13_mask_accepted.png
+|   |           13_mask_accepted_ids.png
+|   |           20_fluorescence_8bit.png
+|   |           20_fluorescence_aligned_raw.png
+|   |           21_fluorescence_overlay.png
+|   |           22_fluorescence_mask_global.png
+|   |           22_fluorescence_mask_global_ids.png
+|   |           23_fluorescence_contours_global.png
+|   |           23_fluorescence_contours_global_ids.png
+|   |           24_bf_fluor_matching_overlay.png
+|   |           24_bf_fluor_matching_overlay_ids.png
+|   |           object_stats.csv
+|   |           
+|   +---17
+|   |   |   17_master.xlsx
+|   |   |   error_bar_jitter_comparison_SD_vs_Control.png
+|   |   |   
+|   |   +---17 N NO 1_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---17 N NO 2_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---17 N NO 3_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---17 N NO 4_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   \---17 N NO 5_ch00
+|   |           01_gray_8bit.png
+|   |           02_enhanced.png
+|   |           03_enhanced_blur.png
+|   |           04_thresh_raw.png
+|   |           05_closed.png
+|   |           10_contours_all.png
+|   |           11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |           12_mask_all.png
+|   |           13_mask_accepted.png
+|   |           13_mask_accepted_ids.png
+|   |           20_fluorescence_8bit.png
+|   |           20_fluorescence_aligned_raw.png
+|   |           21_fluorescence_overlay.png
+|   |           22_fluorescence_mask_global.png
+|   |           22_fluorescence_mask_global_ids.png
+|   |           23_fluorescence_contours_global.png
+|   |           23_fluorescence_contours_global_ids.png
+|   |           24_bf_fluor_matching_overlay.png
+|   |           24_bf_fluor_matching_overlay_ids.png
+|   |           object_stats.csv
+|   |           
+|   +---18
+|   |   |   18_master.xlsx
+|   |   |   error_bar_jitter_comparison_SD_vs_Control.png
+|   |   |   
+|   |   +---18 N NO 1_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---18 N NO 2_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---18 N NO 3_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---18 N NO 4_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   \---18 N NO 5_ch00
+|   |           01_gray_8bit.png
+|   |           02_enhanced.png
+|   |           03_enhanced_blur.png
+|   |           04_thresh_raw.png
+|   |           05_closed.png
+|   |           10_contours_all.png
+|   |           11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |           12_mask_all.png
+|   |           13_mask_accepted.png
+|   |           13_mask_accepted_ids.png
+|   |           20_fluorescence_8bit.png
+|   |           20_fluorescence_aligned_raw.png
+|   |           21_fluorescence_overlay.png
+|   |           22_fluorescence_mask_global.png
+|   |           22_fluorescence_mask_global_ids.png
+|   |           23_fluorescence_contours_global.png
+|   |           23_fluorescence_contours_global_ids.png
+|   |           24_bf_fluor_matching_overlay.png
+|   |           24_bf_fluor_matching_overlay_ids.png
+|   |           object_stats.csv
+|   |           
+|   +---19
+|   |   |   19_master.xlsx
+|   |   |   error_bar_jitter_comparison_SD_vs_Control.png
+|   |   |   
+|   |   +---Day 1 19 N NO 1_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---Day 1 19 N NO 2_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---Day 1 19 N NO 3_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   +---Day 1 19 N NO 4_ch00
+|   |   |       01_gray_8bit.png
+|   |   |       02_enhanced.png
+|   |   |       03_enhanced_blur.png
+|   |   |       04_thresh_raw.png
+|   |   |       05_closed.png
+|   |   |       10_contours_all.png
+|   |   |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |   |       12_mask_all.png
+|   |   |       13_mask_accepted.png
+|   |   |       13_mask_accepted_ids.png
+|   |   |       20_fluorescence_8bit.png
+|   |   |       20_fluorescence_aligned_raw.png
+|   |   |       21_fluorescence_overlay.png
+|   |   |       22_fluorescence_mask_global.png
+|   |   |       22_fluorescence_mask_global_ids.png
+|   |   |       23_fluorescence_contours_global.png
+|   |   |       23_fluorescence_contours_global_ids.png
+|   |   |       24_bf_fluor_matching_overlay.png
+|   |   |       24_bf_fluor_matching_overlay_ids.png
+|   |   |       object_stats.csv
+|   |   |       
+|   |   \---Day 1 19 N NO 5_ch00
+|   |           01_gray_8bit.png
+|   |           02_enhanced.png
+|   |           03_enhanced_blur.png
+|   |           04_thresh_raw.png
+|   |           05_closed.png
+|   |           10_contours_all.png
+|   |           11_contours_rejected_orange_accepted_yellow_ids_green.png
+|   |           12_mask_all.png
+|   |           13_mask_accepted.png
+|   |           13_mask_accepted_ids.png
+|   |           20_fluorescence_8bit.png
+|   |           20_fluorescence_aligned_raw.png
+|   |           21_fluorescence_overlay.png
+|   |           22_fluorescence_mask_global.png
+|   |           22_fluorescence_mask_global_ids.png
+|   |           23_fluorescence_contours_global.png
+|   |           23_fluorescence_contours_global_ids.png
+|   |           24_bf_fluor_matching_overlay.png
+|   |           24_bf_fluor_matching_overlay_ids.png
+|   |           object_stats.csv
+|   |           
+|   \---Control group
+|       |   Control group_master.xlsx
+|       |   error_bar_jitter_comparison_SD_all_groups.png
 |       |   
-|       +---images
-|       |       12 N NO 1_BF_01_raw.png
-|       |       12 N NO 1_BF_02_grayscale.png
-|       |       12 N NO 1_BF_03_8bit.png
-|       |       12 N NO 1_BF_04_denoised.png
-|       |       12 N NO 1_BF_05_final.png
-|       |       12 N NO 1_FL_01_raw.png
-|       |       12 N NO 1_FL_02_grayscale.png
-|       |       12 N NO 1_FL_03_8bit.png
-|       |       12 N NO 1_FL_04_denoised.png
-|       |       12 N NO 1_FL_05_final_clahe.png
-|       |       12 N NO 1_FL_06_red_visual.png
-|       |       12 N NO 2_BF_01_raw.png
-|       |       12 N NO 2_BF_02_grayscale.png
-|       |       12 N NO 2_BF_03_8bit.png
-|       |       12 N NO 2_BF_04_denoised.png
-|       |       12 N NO 2_BF_05_final.png
-|       |       12 N NO 2_FL_01_raw.png
-|       |       12 N NO 2_FL_02_grayscale.png
-|       |       12 N NO 2_FL_03_8bit.png
-|       |       12 N NO 2_FL_04_denoised.png
-|       |       12 N NO 2_FL_05_final_clahe.png
-|       |       12 N NO 2_FL_06_red_visual.png
-|       |       12 N NO 3_BF_01_raw.png
-|       |       12 N NO 3_BF_02_grayscale.png
-|       |       12 N NO 3_BF_03_8bit.png
-|       |       12 N NO 3_BF_04_denoised.png
-|       |       12 N NO 3_BF_05_final.png
-|       |       12 N NO 3_FL_01_raw.png
-|       |       12 N NO 3_FL_02_grayscale.png
-|       |       12 N NO 3_FL_03_8bit.png
-|       |       12 N NO 3_FL_04_denoised.png
-|       |       12 N NO 3_FL_05_final_clahe.png
-|       |       12 N NO 3_FL_06_red_visual.png
-|       |       12 N NO 4_BF_01_raw.png
-|       |       12 N NO 4_BF_02_grayscale.png
-|       |       12 N NO 4_BF_03_8bit.png
-|       |       12 N NO 4_BF_04_denoised.png
-|       |       12 N NO 4_BF_05_final.png
-|       |       12 N NO 4_FL_01_raw.png
-|       |       12 N NO 4_FL_02_grayscale.png
-|       |       12 N NO 4_FL_03_8bit.png
-|       |       12 N NO 4_FL_04_denoised.png
-|       |       12 N NO 4_FL_05_final_clahe.png
-|       |       12 N NO 4_FL_06_red_visual.png
-|       |       12 N NO 5_BF_01_raw.png
-|       |       12 N NO 5_BF_02_grayscale.png
-|       |       12 N NO 5_BF_03_8bit.png
-|       |       12 N NO 5_BF_04_denoised.png
-|       |       12 N NO 5_BF_05_final.png
-|       |       12 N NO 5_FL_01_raw.png
-|       |       12 N NO 5_FL_02_grayscale.png
-|       |       12 N NO 5_FL_03_8bit.png
-|       |       12 N NO 5_FL_04_denoised.png
-|       |       12 N NO 5_FL_05_final_clahe.png
-|       |       12 N NO 5_FL_06_red_visual.png
-|       |       G+ microgel 1_BF_01_raw.png
-|       |       G+ microgel 1_BF_02_grayscale.png
-|       |       G+ microgel 1_BF_03_8bit.png
-|       |       G+ microgel 1_BF_04_denoised.png
-|       |       G+ microgel 1_BF_05_final.png
-|       |       G+ microgel 1_FL_01_raw.png
-|       |       G+ microgel 1_FL_02_grayscale.png
-|       |       G+ microgel 1_FL_03_8bit.png
-|       |       G+ microgel 1_FL_04_denoised.png
-|       |       G+ microgel 1_FL_05_final_clahe.png
-|       |       G+ microgel 1_FL_06_red_visual.png
-|       |       G+ microgel 2_BF_01_raw.png
-|       |       G+ microgel 2_BF_02_grayscale.png
-|       |       G+ microgel 2_BF_03_8bit.png
-|       |       G+ microgel 2_BF_04_denoised.png
-|       |       G+ microgel 2_BF_05_final.png
-|       |       G+ microgel 2_FL_01_raw.png
-|       |       G+ microgel 2_FL_02_grayscale.png
-|       |       G+ microgel 2_FL_03_8bit.png
-|       |       G+ microgel 2_FL_04_denoised.png
-|       |       G+ microgel 2_FL_05_final_clahe.png
-|       |       G+ microgel 2_FL_06_red_visual.png
-|       |       G+ microgel 3_BF_01_raw.png
-|       |       G+ microgel 3_BF_02_grayscale.png
-|       |       G+ microgel 3_BF_03_8bit.png
-|       |       G+ microgel 3_BF_04_denoised.png
-|       |       G+ microgel 3_BF_05_final.png
-|       |       G+ microgel 3_FL_01_raw.png
-|       |       G+ microgel 3_FL_02_grayscale.png
-|       |       G+ microgel 3_FL_03_8bit.png
-|       |       G+ microgel 3_FL_04_denoised.png
-|       |       G+ microgel 3_FL_05_final_clahe.png
-|       |       G+ microgel 3_FL_06_red_visual.png
-|       |       G+ microgel 4_BF_01_raw.png
-|       |       G+ microgel 4_BF_02_grayscale.png
-|       |       G+ microgel 4_BF_03_8bit.png
-|       |       G+ microgel 4_BF_04_denoised.png
-|       |       G+ microgel 4_BF_05_final.png
-|       |       G+ microgel 4_FL_01_raw.png
-|       |       G+ microgel 4_FL_02_grayscale.png
-|       |       G+ microgel 4_FL_03_8bit.png
-|       |       G+ microgel 4_FL_04_denoised.png
-|       |       G+ microgel 4_FL_05_final_clahe.png
-|       |       G+ microgel 4_FL_06_red_visual.png
-|       |       G+ microgel 5_BF_01_raw.png
-|       |       G+ microgel 5_BF_02_grayscale.png
-|       |       G+ microgel 5_BF_03_8bit.png
-|       |       G+ microgel 5_BF_04_denoised.png
-|       |       G+ microgel 5_BF_05_final.png
-|       |       G+ microgel 5_FL_01_raw.png
-|       |       G+ microgel 5_FL_02_grayscale.png
-|       |       G+ microgel 5_FL_03_8bit.png
-|       |       G+ microgel 5_FL_04_denoised.png
-|       |       G+ microgel 5_FL_05_final_clahe.png
-|       |       G+ microgel 5_FL_06_red_visual.png
+|       +---G+ microgel 1_ch00
+|       |       01_gray_8bit.png
+|       |       02_enhanced.png
+|       |       03_enhanced_blur.png
+|       |       04_thresh_raw.png
+|       |       05_closed.png
+|       |       10_contours_all.png
+|       |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|       |       12_mask_all.png
+|       |       13_mask_accepted.png
+|       |       13_mask_accepted_ids.png
+|       |       20_fluorescence_8bit.png
+|       |       20_fluorescence_aligned_raw.png
+|       |       21_fluorescence_overlay.png
+|       |       22_fluorescence_mask_global.png
+|       |       22_fluorescence_mask_global_ids.png
+|       |       23_fluorescence_contours_global.png
+|       |       23_fluorescence_contours_global_ids.png
+|       |       24_bf_fluor_matching_overlay.png
+|       |       24_bf_fluor_matching_overlay_ids.png
+|       |       object_stats.csv
 |       |       
-|       +---logs
-|       |       12 N NO 1_BF_conversion.json
-|       |       12 N NO 1_FL_conversion.json
-|       |       12 N NO 2_BF_conversion.json
-|       |       12 N NO 2_FL_conversion.json
-|       |       12 N NO 3_BF_conversion.json
-|       |       12 N NO 3_FL_conversion.json
-|       |       12 N NO 4_BF_conversion.json
-|       |       12 N NO 4_FL_conversion.json
-|       |       12 N NO 5_BF_conversion.json
-|       |       12 N NO 5_FL_conversion.json
-|       |       G+ microgel 1_BF_conversion.json
-|       |       G+ microgel 1_FL_conversion.json
-|       |       G+ microgel 2_BF_conversion.json
-|       |       G+ microgel 2_FL_conversion.json
-|       |       G+ microgel 3_BF_conversion.json
-|       |       G+ microgel 3_FL_conversion.json
-|       |       G+ microgel 4_BF_conversion.json
-|       |       G+ microgel 4_FL_conversion.json
-|       |       G+ microgel 5_BF_conversion.json
-|       |       G+ microgel 5_FL_conversion.json
-|       |       preprocessing.log
+|       +---G+ microgel 2_ch00
+|       |       01_gray_8bit.png
+|       |       02_enhanced.png
+|       |       03_enhanced_blur.png
+|       |       04_thresh_raw.png
+|       |       05_closed.png
+|       |       10_contours_all.png
+|       |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|       |       12_mask_all.png
+|       |       13_mask_accepted.png
+|       |       13_mask_accepted_ids.png
+|       |       20_fluorescence_8bit.png
+|       |       20_fluorescence_aligned_raw.png
+|       |       21_fluorescence_overlay.png
+|       |       22_fluorescence_mask_global.png
+|       |       22_fluorescence_mask_global_ids.png
+|       |       23_fluorescence_contours_global.png
+|       |       23_fluorescence_contours_global_ids.png
+|       |       24_bf_fluor_matching_overlay.png
+|       |       24_bf_fluor_matching_overlay_ids.png
+|       |       object_stats.csv
 |       |       
-|       \---statistics
-|               12 N NO 1_BF_01_raw_stats.json
-|               12 N NO 1_BF_02_grayscale_stats.json
-|               12 N NO 1_BF_03_8bit_stats.json
-|               12 N NO 1_BF_04_denoised_stats.json
-|               12 N NO 1_BF_05_final_stats.json
-|               12 N NO 1_FL_01_raw_stats.json
-|               12 N NO 1_FL_02_grayscale_stats.json
-|               12 N NO 1_FL_03_8bit_stats.json
-|               12 N NO 1_FL_04_denoised_stats.json
-|               12 N NO 1_FL_05_final_clahe_stats.json
-|               12 N NO 1_FL_06_red_visual_stats.json
-|               12 N NO 2_BF_01_raw_stats.json
-|               12 N NO 2_BF_02_grayscale_stats.json
-|               12 N NO 2_BF_03_8bit_stats.json
-|               12 N NO 2_BF_04_denoised_stats.json
-|               12 N NO 2_BF_05_final_stats.json
-|               12 N NO 2_FL_01_raw_stats.json
-|               12 N NO 2_FL_02_grayscale_stats.json
-|               12 N NO 2_FL_03_8bit_stats.json
-|               12 N NO 2_FL_04_denoised_stats.json
-|               12 N NO 2_FL_05_final_clahe_stats.json
-|               12 N NO 2_FL_06_red_visual_stats.json
-|               12 N NO 3_BF_01_raw_stats.json
-|               12 N NO 3_BF_02_grayscale_stats.json
-|               12 N NO 3_BF_03_8bit_stats.json
-|               12 N NO 3_BF_04_denoised_stats.json
-|               12 N NO 3_BF_05_final_stats.json
-|               12 N NO 3_FL_01_raw_stats.json
-|               12 N NO 3_FL_02_grayscale_stats.json
-|               12 N NO 3_FL_03_8bit_stats.json
-|               12 N NO 3_FL_04_denoised_stats.json
-|               12 N NO 3_FL_05_final_clahe_stats.json
-|               12 N NO 3_FL_06_red_visual_stats.json
-|               12 N NO 4_BF_01_raw_stats.json
-|               12 N NO 4_BF_02_grayscale_stats.json
-|               12 N NO 4_BF_03_8bit_stats.json
-|               12 N NO 4_BF_04_denoised_stats.json
-|               12 N NO 4_BF_05_final_stats.json
-|               12 N NO 4_FL_01_raw_stats.json
-|               12 N NO 4_FL_02_grayscale_stats.json
-|               12 N NO 4_FL_03_8bit_stats.json
-|               12 N NO 4_FL_04_denoised_stats.json
-|               12 N NO 4_FL_05_final_clahe_stats.json
-|               12 N NO 4_FL_06_red_visual_stats.json
-|               12 N NO 5_BF_01_raw_stats.json
-|               12 N NO 5_BF_02_grayscale_stats.json
-|               12 N NO 5_BF_03_8bit_stats.json
-|               12 N NO 5_BF_04_denoised_stats.json
-|               12 N NO 5_BF_05_final_stats.json
-|               12 N NO 5_FL_01_raw_stats.json
-|               12 N NO 5_FL_02_grayscale_stats.json
-|               12 N NO 5_FL_03_8bit_stats.json
-|               12 N NO 5_FL_04_denoised_stats.json
-|               12 N NO 5_FL_05_final_clahe_stats.json
-|               12 N NO 5_FL_06_red_visual_stats.json
-|               G+ microgel 1_BF_01_raw_stats.json
-|               G+ microgel 1_BF_02_grayscale_stats.json
-|               G+ microgel 1_BF_03_8bit_stats.json
-|               G+ microgel 1_BF_04_denoised_stats.json
-|               G+ microgel 1_BF_05_final_stats.json
-|               G+ microgel 1_FL_01_raw_stats.json
-|               G+ microgel 1_FL_02_grayscale_stats.json
-|               G+ microgel 1_FL_03_8bit_stats.json
-|               G+ microgel 1_FL_04_denoised_stats.json
-|               G+ microgel 1_FL_05_final_clahe_stats.json
-|               G+ microgel 1_FL_06_red_visual_stats.json
-|               G+ microgel 2_BF_01_raw_stats.json
-|               G+ microgel 2_BF_02_grayscale_stats.json
-|               G+ microgel 2_BF_03_8bit_stats.json
-|               G+ microgel 2_BF_04_denoised_stats.json
-|               G+ microgel 2_BF_05_final_stats.json
-|               G+ microgel 2_FL_01_raw_stats.json
-|               G+ microgel 2_FL_02_grayscale_stats.json
-|               G+ microgel 2_FL_03_8bit_stats.json
-|               G+ microgel 2_FL_04_denoised_stats.json
-|               G+ microgel 2_FL_05_final_clahe_stats.json
-|               G+ microgel 2_FL_06_red_visual_stats.json
-|               G+ microgel 3_BF_01_raw_stats.json
-|               G+ microgel 3_BF_02_grayscale_stats.json
-|               G+ microgel 3_BF_03_8bit_stats.json
-|               G+ microgel 3_BF_04_denoised_stats.json
-|               G+ microgel 3_BF_05_final_stats.json
-|               G+ microgel 3_FL_01_raw_stats.json
-|               G+ microgel 3_FL_02_grayscale_stats.json
-|               G+ microgel 3_FL_03_8bit_stats.json
-|               G+ microgel 3_FL_04_denoised_stats.json
-|               G+ microgel 3_FL_05_final_clahe_stats.json
-|               G+ microgel 3_FL_06_red_visual_stats.json
-|               G+ microgel 4_BF_01_raw_stats.json
-|               G+ microgel 4_BF_02_grayscale_stats.json
-|               G+ microgel 4_BF_03_8bit_stats.json
-|               G+ microgel 4_BF_04_denoised_stats.json
-|               G+ microgel 4_BF_05_final_stats.json
-|               G+ microgel 4_FL_01_raw_stats.json
-|               G+ microgel 4_FL_02_grayscale_stats.json
-|               G+ microgel 4_FL_03_8bit_stats.json
-|               G+ microgel 4_FL_04_denoised_stats.json
-|               G+ microgel 4_FL_05_final_clahe_stats.json
-|               G+ microgel 4_FL_06_red_visual_stats.json
-|               G+ microgel 5_BF_01_raw_stats.json
-|               G+ microgel 5_BF_02_grayscale_stats.json
-|               G+ microgel 5_BF_03_8bit_stats.json
-|               G+ microgel 5_BF_04_denoised_stats.json
-|               G+ microgel 5_BF_05_final_stats.json
-|               G+ microgel 5_FL_01_raw_stats.json
-|               G+ microgel 5_FL_02_grayscale_stats.json
-|               G+ microgel 5_FL_03_8bit_stats.json
-|               G+ microgel 5_FL_04_denoised_stats.json
-|               G+ microgel 5_FL_05_final_clahe_stats.json
-|               G+ microgel 5_FL_06_red_visual_stats.json
+|       +---G+ microgel 3_ch00
+|       |       01_gray_8bit.png
+|       |       02_enhanced.png
+|       |       03_enhanced_blur.png
+|       |       04_thresh_raw.png
+|       |       05_closed.png
+|       |       10_contours_all.png
+|       |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|       |       12_mask_all.png
+|       |       13_mask_accepted.png
+|       |       13_mask_accepted_ids.png
+|       |       20_fluorescence_8bit.png
+|       |       20_fluorescence_aligned_raw.png
+|       |       21_fluorescence_overlay.png
+|       |       22_fluorescence_mask_global.png
+|       |       22_fluorescence_mask_global_ids.png
+|       |       23_fluorescence_contours_global.png
+|       |       23_fluorescence_contours_global_ids.png
+|       |       24_bf_fluor_matching_overlay.png
+|       |       24_bf_fluor_matching_overlay_ids.png
+|       |       object_stats.csv
+|       |       
+|       +---G+ microgel 4_ch00
+|       |       01_gray_8bit.png
+|       |       02_enhanced.png
+|       |       03_enhanced_blur.png
+|       |       04_thresh_raw.png
+|       |       05_closed.png
+|       |       10_contours_all.png
+|       |       11_contours_rejected_orange_accepted_yellow_ids_green.png
+|       |       12_mask_all.png
+|       |       13_mask_accepted.png
+|       |       13_mask_accepted_ids.png
+|       |       20_fluorescence_8bit.png
+|       |       20_fluorescence_aligned_raw.png
+|       |       21_fluorescence_overlay.png
+|       |       22_fluorescence_mask_global.png
+|       |       22_fluorescence_mask_global_ids.png
+|       |       23_fluorescence_contours_global.png
+|       |       23_fluorescence_contours_global_ids.png
+|       |       24_bf_fluor_matching_overlay.png
+|       |       24_bf_fluor_matching_overlay_ids.png
+|       |       object_stats.csv
+|       |       
+|       \---G+ microgel 5_ch00
+|               01_gray_8bit.png
+|               02_enhanced.png
+|               03_enhanced_blur.png
+|               04_thresh_raw.png
+|               05_closed.png
+|               10_contours_all.png
+|               11_contours_rejected_orange_accepted_yellow_ids_green.png
+|               12_mask_all.png
+|               13_mask_accepted.png
+|               13_mask_accepted_ids.png
+|               20_fluorescence_8bit.png
+|               20_fluorescence_aligned_raw.png
+|               21_fluorescence_overlay.png
+|               22_fluorescence_mask_global.png
+|               22_fluorescence_mask_global_ids.png
+|               23_fluorescence_contours_global.png
+|               23_fluorescence_contours_global_ids.png
+|               24_bf_fluor_matching_overlay.png
+|               24_bf_fluor_matching_overlay_ids.png
+|               object_stats.csv
 |               
-+---docs
++---logs
+|       run_20251220_195334_test.txt
+|       run_20251220_204223_test.txt
+|       run_20251220_214245.txt
+|       run_20251220_215033.txt
+|       run_20251220_215903.txt
+|       run_20251220_223649.txt
+|       run_20251220_224708.txt
+|       run_20251220_230242.txt
+|       run_20251220_231323_test.txt
+|       run_20251220_231413_test.txt
+|       run_20251220_231748_test.txt
+|       run_20251220_235414_test.txt
+|       run_20251220_235823_test.txt
+|       run_20251221_000347_test.txt
+|       run_20251221_001059_test.txt
+|       run_20251222_182432_app.txt
+|       run_20251222_182649_test.txt
+|       
 +---modules
 |   |   analyzer.py
 |   |   file_handler.py
@@ -33460,6 +35026,14 @@ C:.
 |       testing.ipynb
 |       
 +---output
+|   +---analysis_20251214_032410
+|   |   \---charts
+|   +---analysis_20251214_032735
+|   |   \---charts
+|   +---analysis_20251214_033537
+|   |   \---charts
+|   \---analysis_20251214_033627
+|       \---charts
 +---phase1
 |       app-excel.py
 |       app.py
@@ -33547,47 +35121,34 @@ C:.
 |           dev_loop.ipynb
 |           extract_all_metadata.py
 |           
-+---processed
-|   +---images
-|   |       batch10_10 P 1.tif
-|   |       batch10_10 P 2.tif
-|   |       batch10_10 P 3.tif
-|   |       batch10_10 P 4.tif
-|   |       batch10_10 P 5.tif
-|   |       batch11_11 N NO 1.tif
-|   |       batch11_11 N NO 2.tif
-|   |       batch11_11 N NO 3.tif
-|   |       batch11_11 N NO 4.tif
-|   |       batch11_11 N NO 5.tif
++---reference_outputs
+|   +---12-1
+|   |       01c_red_enhanced.png
+|   |       07a_bf_contours.png
+|   |       07b_red_contours.png
+|   |       07c_overlay_contours.png
+|   |       07d_intensity_coded.png
+|   |       fluorescence_statistics.xlsx
 |   |       
-|   +---labels
-|   |       batch10_10 P 1.txt
-|   |       batch10_10 P 2.txt
-|   |       batch10_10 P 3.txt
-|   |       batch10_10 P 4.txt
-|   |       batch10_10 P 5.txt
-|   |       batch11_11 N NO 1.txt
-|   |       batch11_11 N NO 2.txt
-|   |       batch11_11 N NO 3.txt
-|   |       batch11_11 N NO 4.txt
-|   |       batch11_11 N NO 5.txt
-|   |       
-|   \---meta
-|           batch10_10 P 1.json
-|           batch10_10 P 2.json
-|           batch10_10 P 3.json
-|           batch10_10 P 4.json
-|           batch10_10 P 5.json
-|           batch11_11 N NO 1.json
-|           batch11_11 N NO 2.json
-|           batch11_11 N NO 3.json
-|           batch11_11 N NO 4.json
-|           batch11_11 N NO 5.json
+|   \---G+ microgel 1_ch00
+|           01_gray_8bit.png
+|           02_inv.png
+|           03_inv_blur.png
+|           04_inv_blur_clahe.png
+|           05_tophat - use_clahe.png
+|           05_tophat.png
+|           06_thresh_adaptive - use clahe.png
+|           06_thresh_adaptive.png
+|           07_open.png
+|           08_close.png
+|           09_filled.png
+|           10_contours_all.png
+|           11_contours_rejected_orange_accepted_red_ids_green.png
+|           12_mask_all.png
+|           13_mask_accepted.png
+|           object_stats.csv
 |           
-+---results
 +---source
-|   |   tree.md
-|   |   
 |   +---10
 |   |   |   10 P 1.tif
 |   |   |   10 P 1_ch00.tif
@@ -33815,48 +35376,48 @@ C:.
 |   |           LeicaLogo.jpg
 |   |           
 |   +---15
-|   |   |   15 P 1.tif
-|   |   |   15 P 1_ch00.tif
-|   |   |   15 P 1_ch01.tif
-|   |   |   15 P 2.tif
-|   |   |   15 P 2_ch00.tif
-|   |   |   15 P 2_ch01.tif
-|   |   |   15 P 3.tif
-|   |   |   15 P 3_ch00.tif
-|   |   |   15 P 3_ch01.tif
-|   |   |   15 P 4.tif
-|   |   |   15 P 4_ch00.tif
-|   |   |   15 P 4_ch01.tif
-|   |   |   15 P 5.tif
-|   |   |   15 P 5_ch00.tif
-|   |   |   15 P 5_ch01.tif
+|   |   |   15 N NO 1 3rd.tif
+|   |   |   15 N NO 1 3rd_ch00.tif
+|   |   |   15 N NO 1 3rd_ch01.tif
+|   |   |   15 N NO 2 3rd.tif
+|   |   |   15 N NO 2 3rd_ch00.tif
+|   |   |   15 N NO 2 3rd_ch01.tif
+|   |   |   15 N NO 3 3rd.tif
+|   |   |   15 N NO 3 3rd_ch00.tif
+|   |   |   15 N NO 3 3rd_ch01.tif
+|   |   |   15 N NO 4 3rd.tif
+|   |   |   15 N NO 4 3rd_ch00.tif
+|   |   |   15 N NO 4 3rd_ch01.tif
+|   |   |   15 N NO 5 3rd.tif
+|   |   |   15 N NO 5 3rd_ch00.tif
+|   |   |   15 N NO 5 3rd_ch01.tif
 |   |   |   
 |   |   \---MetaData
-|   |           15 P 1.xml
-|   |           15 P 1_ch0_LUT_Gray.png
-|   |           15 P 1_ch1_LUT_Red.png
-|   |           15 P 1_Properties.xml
-|   |           15 P 1_Properties_WFIP_HWS3.xsl
-|   |           15 P 2.xml
-|   |           15 P 2_ch0_LUT_Gray.png
-|   |           15 P 2_ch1_LUT_Red.png
-|   |           15 P 2_Properties.xml
-|   |           15 P 2_Properties_WFIP_HWS3.xsl
-|   |           15 P 3.xml
-|   |           15 P 3_ch0_LUT_Gray.png
-|   |           15 P 3_ch1_LUT_Red.png
-|   |           15 P 3_Properties.xml
-|   |           15 P 3_Properties_WFIP_HWS3.xsl
-|   |           15 P 4.xml
-|   |           15 P 4_ch0_LUT_Gray.png
-|   |           15 P 4_ch1_LUT_Red.png
-|   |           15 P 4_Properties.xml
-|   |           15 P 4_Properties_WFIP_HWS3.xsl
-|   |           15 P 5.xml
-|   |           15 P 5_ch0_LUT_Gray.png
-|   |           15 P 5_ch1_LUT_Red.png
-|   |           15 P 5_Properties.xml
-|   |           15 P 5_Properties_WFIP_HWS3.xsl
+|   |           15 N NO 1 3rd.xml
+|   |           15 N NO 1 3rd_ch0_LUT_Gray.png
+|   |           15 N NO 1 3rd_ch1_LUT_Red.png
+|   |           15 N NO 1 3rd_Properties.xml
+|   |           15 N NO 1 3rd_Properties_WFIP_HWS3.xsl
+|   |           15 N NO 2 3rd.xml
+|   |           15 N NO 2 3rd_ch0_LUT_Gray.png
+|   |           15 N NO 2 3rd_ch1_LUT_Red.png
+|   |           15 N NO 2 3rd_Properties.xml
+|   |           15 N NO 2 3rd_Properties_WFIP_HWS3.xsl
+|   |           15 N NO 3 3rd.xml
+|   |           15 N NO 3 3rd_ch0_LUT_Gray.png
+|   |           15 N NO 3 3rd_ch1_LUT_Red.png
+|   |           15 N NO 3 3rd_Properties.xml
+|   |           15 N NO 3 3rd_Properties_WFIP_HWS3.xsl
+|   |           15 N NO 4 3rd.xml
+|   |           15 N NO 4 3rd_ch0_LUT_Gray.png
+|   |           15 N NO 4 3rd_ch1_LUT_Red.png
+|   |           15 N NO 4 3rd_Properties.xml
+|   |           15 N NO 4 3rd_Properties_WFIP_HWS3.xsl
+|   |           15 N NO 5 3rd.xml
+|   |           15 N NO 5 3rd_ch0_LUT_Gray.png
+|   |           15 N NO 5 3rd_ch1_LUT_Red.png
+|   |           15 N NO 5 3rd_Properties.xml
+|   |           15 N NO 5 3rd_Properties_WFIP_HWS3.xsl
 |   |           LeicaLogo.jpg
 |   |           
 |   +---16
@@ -34040,7 +35601,6 @@ C:.
 |   |           LeicaLogo.jpg
 |   |           
 |   \---Control group
-|       |   control_group.md
 |       |   G+ microgel 1_ch00.tif
 |       |   G+ microgel 1_ch01.tif
 |       |   G+ microgel 2_ch00.tif
@@ -34197,44 +35757,16 @@ C:.
 |   |   utils.py
 |   |   __init__.py
 |   |   
-|   +---results
-|   |   |   brightfield_results.csv
-|   |   |   fluorescence_results.csv
-|   |   |   summary_statistics.csv
-|   |   |   
-|   |   +---brightfield_images
-|   |   |       control_Control group_G+ microgel 1_bf.png
-|   |   |       control_Control group_G+ microgel 2_bf.png
-|   |   |       control_Control group_G+ microgel 3_bf.png
-|   |   |       control_Control group_G+ microgel 4_bf.png
-|   |   |       control_Control group_G+ microgel 5_bf.png
-|   |   |       sample_12_12 N NO 1_bf.png
-|   |   |       sample_12_12 N NO 2_bf.png
-|   |   |       sample_12_12 N NO 3_bf.png
-|   |   |       sample_12_12 N NO 4_bf.png
-|   |   |       sample_12_12 N NO 5_bf.png
-|   |   |       
-|   |   \---fluorescence_images
-|   |           control_Control group_G+ microgel 1_fl.png
-|   |           control_Control group_G+ microgel 2_fl.png
-|   |           control_Control group_G+ microgel 3_fl.png
-|   |           control_Control group_G+ microgel 4_fl.png
-|   |           control_Control group_G+ microgel 5_fl.png
-|   |           sample_12_12 N NO 1_fl.png
-|   |           sample_12_12 N NO 2_fl.png
-|   |           sample_12_12 N NO 3_fl.png
-|   |           sample_12_12 N NO 4_fl.png
-|   |           sample_12_12 N NO 5_fl.png
-|   |           
 |   \---__pycache__
 |           brightfield_segmentation.cpython-312.pyc
 |           fluorescence_segmentation.cpython-312.pyc
 |           utils.cpython-312.pyc
+|           __init__.cpython-312.pyc
 |           
-+---tests
 \---__pycache__
         cli_batch_export.cpython-312.pyc
         config.cpython-312.pyc
+        exporter.cpython-312.pyc
         export_utils.cpython-312.pyc
         leica_xml_meta.cpython-312.pyc
         loader.cpython-312.pyc
@@ -34244,4 +35776,5 @@ C:.
         preprocessor.cpython-312.pyc
         qc.cpython-312.pyc
         register_dataset.cpython-312.pyc
+        reporter.cpython-312.pyc
         

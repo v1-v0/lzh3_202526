@@ -1,7 +1,0 @@
-{
-  "gaussian_sigma": 1.5,
-  "threshold_method": "li",
-  "min_signal_size": 50,
-  "background_percentile": 5,
-  "local_background_radius": 50
-}
