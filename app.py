@@ -328,6 +328,29 @@ def get_percentile_option() -> float:
             return 0.3
         print("Invalid choice. Please enter 1, 2, or 3, or press Enter.")
 
+def get_dataset_identifier() -> str:
+    """Prompt user to input a custom dataset identifier for plot titles."""
+    print("\nEnter dataset identifier for plot titles (e.g., 'PD G-', 'Spike G+'):")
+    print("  - This will appear at the start of all plot titles")
+    print("  - Press Enter to skip (no dataset label)")
+    
+    while True:
+        dataset_id = input("Dataset label: ").strip()
+        
+        # Allow empty input (skip dataset label)
+        if dataset_id == "":
+            print("  → No dataset label will be added")
+            return ""
+        
+        # Confirm non-empty input
+        print(f"  → Using dataset label: '{dataset_id}'")
+        confirm = input("    Confirm? (y/n, or press Enter for yes): ").strip().lower()
+        
+        if confirm in ["", "y", "yes"]:
+            return dataset_id
+        else:
+            print("    Let's try again...")
+
 
 def find_metadata_paths(img_path: Path) -> tuple[Optional[Path], Optional[Path]]:
     base = img_path.stem
@@ -799,6 +822,7 @@ def generate_error_bar_comparison(
     restrict_to_groups: Optional[list[str]] = None,
     output_path: Optional[Path] = None,
     title_suffix: str = "",
+    dataset_id: str = "",
 ) -> Optional[Path]:
     """
     Generate error bar comparison plot with overlaid jitter (strip plot) - SD only.
@@ -949,14 +973,26 @@ def generate_error_bar_comparison(
     plt.xticks(fontsize=10, fontweight="bold")
     plt.yticks(fontsize=10, fontweight="bold")
     
-    # --- UPDATED TITLE LOGIC ---
+    # --- BUILD TITLE FROM LEFT TO RIGHT ---
     pct_display = int(percentile * 100)
-    raw_title = f"Comparison (Error Bars: Standard Deviation) — Typical = Middle {100 - 2*pct_display}% (Cut top/bottom {pct_display}%)"
-    if title_suffix:
-        raw_title += f" — {title_suffix}"
     
-    # Wrap title at 50 characters to prevent cutoff
-    wrapped_title = "\n".join(textwrap.wrap(raw_title, width=50))
+    # Start with dataset ID if provided
+    title_parts = []
+    if dataset_id:
+        title_parts.append(dataset_id)
+    
+    # Add main comparison text
+    title_parts.append(f"Comparison (Error Bars: Standard Deviation) — Typical = Middle {100 - 2*pct_display}% (Cut top/bottom {pct_display}%)")
+    
+    # Add suffix if provided
+    if title_suffix:
+        title_parts.append(title_suffix)
+    
+    # Join all parts with separator
+    raw_title = " — ".join(title_parts)
+    
+    # Wrap title at 60 characters (increased from 50 to accommodate dataset ID)
+    wrapped_title = "\n".join(textwrap.wrap(raw_title, width=60))
     plt.title(wrapped_title, fontsize=11, pad=10)
 
     for axis in ["top", "bottom", "left", "right"]:
@@ -978,14 +1014,11 @@ def generate_error_bar_comparison(
     return out_path
 
 
-def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: float) -> None:
+def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: float, dataset_id: str = "") -> None:  # <-- ADD dataset_id
     """
     ALL-GROUPS mode behavior:
       - Save an "all groups" plot only into the Control group folder
       - For each numeric group folder: compare ONLY that group vs Control and save plot into that group folder
-    Assumes per-group masters are in:
-      OUTPUT_ROOT/<group>/<group>_master.xlsx
-      OUTPUT_ROOT/Control group/Control group_master.xlsx
     """
     control_folder = output_root / "Control group"
     control_master = control_folder / "Control group_master.xlsx"
@@ -993,8 +1026,7 @@ def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: floa
         print(f"[WARN] Control master not found: {control_master}")
         return
 
-    # (2) Keep the all-groups filename ONLY under Control group folder
-    # Use output_root for searching all masters, but force output to Control folder filename
+    # All-groups plot
     all_groups_plot_path = control_folder / "error_bar_jitter_comparison_SD_all_groups.png"
     generate_error_bar_comparison(
         output_dir=output_root,
@@ -1002,9 +1034,10 @@ def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: floa
         restrict_to_groups=None,
         output_path=all_groups_plot_path,
         title_suffix="ALL groups",
+        dataset_id=dataset_id,  # <-- ADD THIS
     )
 
-    # (3) For each numeric group, compare only group vs control and save into that group folder
+    # Pairwise plots
     for group_dir in sorted(output_root.iterdir()):
         if not group_dir.is_dir():
             continue
@@ -1019,13 +1052,13 @@ def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: floa
             continue
 
         pair_plot_path = group_dir / "error_bar_jitter_comparison_SD_vs_Control.png"
-        # We want ONLY [this group, Control]
         generate_error_bar_comparison(
             output_dir=output_root,
             percentile=percentile,
             restrict_to_groups=[group_dir.name, "Control"],
             output_path=pair_plot_path,
             title_suffix=f"{group_dir.name} vs Control",
+            dataset_id=dataset_id,  # <-- ADD THIS
         )
 
         print(f"[OK] Pairwise plot saved for group {group_dir.name}: {pair_plot_path}")
@@ -1921,6 +1954,7 @@ def main() -> None:
     print(f"Input dir: {_project_root.resolve()}")
 
     percentile = get_percentile_option()
+    dataset_id = get_dataset_identifier()
     mode = get_run_mode()
 
     groups = list_sample_group_folders(SOURCE_DIR)
@@ -1989,6 +2023,7 @@ def main() -> None:
             restrict_to_groups=[selected_group_name, "Control"],
             output_path=selected_folder / "error_bar_jitter_comparison_SD_vs_Control.png",
             title_suffix=f"{selected_group_name} vs Control",
+            dataset_id=dataset_id,
         )
 
         if plot_path is not None:
@@ -2000,7 +2035,7 @@ def main() -> None:
         # ALL-GROUPS mode:
         #   - Control folder gets the ALL-GROUPS plot
         #   - Each numeric folder gets its own vs-Control plot
-        generate_pairwise_group_vs_control_plots(OUTPUT_DIR, percentile)
+        generate_pairwise_group_vs_control_plots(OUTPUT_DIR, percentile, dataset_id)
 
         print("Embedding per-group comparison plots into master Excel files...")
         for group_dir in sorted(OUTPUT_DIR.iterdir()):
