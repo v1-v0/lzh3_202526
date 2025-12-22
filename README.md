@@ -501,38 +501,6 @@ Before trusting results:
 
 ---
 
-## 📝 Workflow Tips
-
-### Best Practices
-
-1. **Start with single group:**
-
-   - Run mode [2] on one group first
-   - Verify segmentation quality
-   - Adjust parameters if needed
-
-2. **Check debug images:**
-
-   - Review all `*_ids.png` images
-   - Ensure object IDs match expectations
-
-3. **Validate measurements:**
-
-   - Spot-check values in Excel
-   - Compare to manual measurements
-
-4. **Use dataset labels:**
-   - Label your experiments (e.g., "PD G-")
-   - Makes plots self-documenting
-
-### Reproducibility
-
-- All parameters logged to `logs/run_*.txt`
-- Save configuration settings used
-- Document percentile choice in notes
-
----
-
 ## 🆘 Getting Help
 
 **Check these first:**
@@ -648,17 +616,3 @@ For issues or questions:
 4. Ensure all dependencies installed
 
 ---
-
-## ⚖️ License
-
-This pipeline uses open-source dependencies. Check individual library licenses:
-
-- OpenCV: Apache 2.0
-- NumPy: BSD
-- Pandas: BSD
-- Matplotlib: PSF-based
-- scikit-image: BSD
-
----
-
-**Happy analyzing! 🔬📊**
