@@ -119,6 +119,7 @@ FALLBACK_UM_PER_PX: Optional[float] = 0.109492
 # ==================================================
 # Helpers
 # ==================================================
+
 def clear_output_dir(folder: Path) -> None:
     for p in folder.glob("*"):
         try:
@@ -1941,6 +1942,53 @@ def process_image(img_path: Path, output_root: Path) -> None:
 
 
 
+def print_group_means(output_root: Path) -> None:
+    """Extract and print mean fluorescence density for each group from master Excel files"""
+    import pandas as pd
+    
+    print("\n" + "="*80)
+    print("GROUP MEANS - Fluorescence Density (a.u./µm²)")
+    print("="*80)
+    
+    group_means = {}
+    
+    for excel_path in sorted(output_root.glob("*/*_master.xlsx")):
+        group_name = excel_path.parent.name
+        
+        try:
+            # Read the Typical_Particles sheet
+            typical_sheet = f"{group_name}_Typical_Particles"
+            df = pd.read_excel(excel_path, sheet_name=typical_sheet)
+            
+            if "Fluor_Density_per_BF_Area" in df.columns:
+                mean_density = df["Fluor_Density_per_BF_Area"].mean()
+                std_density = df["Fluor_Density_per_BF_Area"].std()
+                n = len(df)
+                
+                group_means[group_name] = {
+                    'mean': mean_density,
+                    'std': std_density,
+                    'n': n
+                }
+        except Exception as e:
+            print(f"[WARN] Could not read {group_name}: {e}")
+    
+    # Sort: numeric groups first, Control last
+    sorted_groups = sorted(group_means.keys(), 
+                          key=lambda g: (0 if g.isdigit() else 1, 
+                                       int(g) if g.isdigit() else 999))
+    
+    print(f"\n{'Group':<15} {'Mean':<12} {'Std Dev':<12} {'N':<8}")
+    print("-" * 50)
+    
+    for group in sorted_groups:
+        stats = group_means[group]
+        display_name = "Control" if group == "Control group" else group
+        print(f"{display_name:<15} {stats['mean']:<12.2f} {stats['std']:<12.2f} {stats['n']:<8}")
+    
+    print("="*80 + "\n")
+
+
 def main() -> None:
     if CLEAR_OUTPUT_DIR_EACH_RUN:
         clear_output_dir(OUTPUT_DIR)
@@ -2046,6 +2094,9 @@ def main() -> None:
             if plot.exists():
                 embed_comparison_plots_into_all_excels(group_dir, percentile, plot_path=plot)
     
+    # Print group means summary
+    print_group_means(OUTPUT_DIR)
+
 
 if __name__ == "__main__":
     main()
