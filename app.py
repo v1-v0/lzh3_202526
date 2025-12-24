@@ -119,6 +119,7 @@ FALLBACK_UM_PER_PX: Optional[float] = 0.109492
 # ==================================================
 # Helpers
 # ==================================================
+
 def clear_output_dir(folder: Path) -> None:
     for p in folder.glob("*"):
         try:
@@ -1941,6 +1942,152 @@ def process_image(img_path: Path, output_root: Path) -> None:
 
 
 
+def print_group_means(output_root: Path) -> None:
+    """Extract and print mean fluorescence density for each group from master Excel files"""
+    import pandas as pd
+    
+    print("\n" + "="*80)
+    print("GROUP MEANS - Fluorescence Density (a.u./µm²)")
+    print("="*80)
+    
+    group_means = {}
+    
+    for excel_path in sorted(output_root.glob("*/*_master.xlsx")):
+        group_name = excel_path.parent.name
+        
+        try:
+            # Read the Typical_Particles sheet
+            typical_sheet = f"{group_name}_Typical_Particles"
+            df = pd.read_excel(excel_path, sheet_name=typical_sheet)
+            
+            if "Fluor_Density_per_BF_Area" in df.columns:
+                mean_density = df["Fluor_Density_per_BF_Area"].mean()
+                std_density = df["Fluor_Density_per_BF_Area"].std()
+                n = len(df)
+                
+                group_means[group_name] = {
+                    'mean': mean_density,
+                    'std': std_density,
+                    'n': n
+                }
+        except Exception as e:
+            print(f"[WARN] Could not read {group_name}: {e}")
+    
+    # Sort: numeric groups first, Control last
+    sorted_groups = sorted(group_means.keys(), 
+                          key=lambda g: (0 if g.isdigit() else 1, 
+                                       int(g) if g.isdigit() else 999))
+    
+    print(f"\n{'Group':<15} {'Mean':<12} {'Std Dev':<12} {'N':<8}")
+    print("-" * 50)
+    
+    for group in sorted_groups:
+        stats = group_means[group]
+        display_name = "Control" if group == "Control group" else group
+        print(f"{display_name:<15} {stats['mean']:<12.2f} {stats['std']:<12.2f} {stats['n']:<8}")
+    
+    print("="*80 + "\n")
+
+def export_group_statistics_to_csv(output_root: Path) -> None:
+    """Export detailed group-level statistics to CSV for statistical analysis"""
+    import pandas as pd
+    
+    print("\n" + "="*80)
+    print("EXPORTING GROUP STATISTICS TO CSV")
+    print("="*80)
+    
+    stats_list = []
+    
+    for excel_path in sorted(output_root.glob("*/*_master.xlsx")):
+        group_name = excel_path.parent.name
+        
+        try:
+            # Read the Typical_Particles sheet
+            typical_sheet = f"{group_name}_Typical_Particles"
+            df = pd.read_excel(excel_path, sheet_name=typical_sheet)
+                        
+            if "Fluor_Density_per_BF_Area" in df.columns:
+                # Ensure data is numeric first
+                values = pd.to_numeric(df["Fluor_Density_per_BF_Area"], errors='coerce').dropna()
+                
+                if values.empty:
+                    print(f"  [SKIP] Group {group_name} has no valid numeric data.")
+                    continue
+
+                # Calculate statistics - pandas returns Python-compatible numeric types
+                mean_val = float(values.mean())
+                std_val = float(values.std(ddof=1))
+                sem_val = values.sem()
+                median_val = float(values.median())
+                min_val = float(values.min())
+                max_val = float(values.max())
+                q25 = float(values.quantile(0.25))
+                q75 = float(values.quantile(0.75))
+                n = int(len(values))
+                
+                # 95% Confidence Interval
+                # ci_95 = 1.96 * float(sem_val)
+                
+                stats_list.append({
+                    'Group': "Control" if group_name == "Control group" else group_name,
+                    'N': n,
+                    'Mean': mean_val,
+                    'Std_Dev': std_val,
+                    'SEM': sem_val,
+                    # 'CI_95_Lower': mean_val - ci_95,
+                    # 'CI_95_Upper': mean_val + ci_95,
+                    'Median': median_val,
+                    'Q25': q25,
+                    'Q75': q75,
+                    'Min': min_val,
+                    'Max': max_val,
+                    'CV_percent': (std_val / mean_val * 100) if mean_val > 0 else 0,
+                })
+                
+                print(f"  ✓ Processed group: {group_name} (N={n})")                
+        except Exception as e:
+            print(f"  ✗ Failed to process {group_name}: {e}")
+    
+    if not stats_list:
+        print("[WARN] No statistics to export")
+        return
+    
+    # Create DataFrame
+    stats_df = pd.DataFrame(stats_list)
+    
+    # Sort: numeric groups first, Control last
+    stats_df['sort_key'] = stats_df['Group'].apply(
+        lambda x: (0, int(x)) if x.isdigit() else (1, 999)
+    )
+    stats_df = stats_df.sort_values('sort_key').drop('sort_key', axis=1)
+    
+    # Round to 2 decimal places for readability
+    numeric_cols = stats_df.select_dtypes(include=[np.number]).columns
+    stats_df[numeric_cols] = stats_df[numeric_cols].round(2)
+    
+    # Save to CSV
+    output_path = output_root / "group_statistics_summary.csv"
+    stats_df.to_csv(output_path, index=False)
+    
+    print(f"\n✓ Statistics exported to: {output_path}")
+    print("="*80 + "\n")
+    
+    # Also print to console for verification
+    print("\nPreview of exported statistics:")
+    print(stats_df.to_string(index=False))
+    print()
+    
+    # Additional summary
+    print("\nKey Insights:")
+    print(f"  • Total groups analyzed: {len(stats_df)}")
+    print(f"  • Smallest sample size: Group {stats_df.loc[stats_df['N'].idxmin(), 'Group']} (N={stats_df['N'].min()})")
+    print(f"  • Largest sample size: Group {stats_df.loc[stats_df['N'].idxmax(), 'Group']} (N={stats_df['N'].max()})")
+    print(f"  • Highest mean density: Group {stats_df.loc[stats_df['Mean'].idxmax(), 'Group']} ({stats_df['Mean'].max():.2f} a.u./µm²)")
+    print(f"  • Lowest mean density: Group {stats_df.loc[stats_df['Mean'].idxmin(), 'Group']} ({stats_df['Mean'].min():.2f} a.u./µm²)")
+    print()
+
+
+
 def main() -> None:
     if CLEAR_OUTPUT_DIR_EACH_RUN:
         clear_output_dir(OUTPUT_DIR)
@@ -2046,6 +2193,12 @@ def main() -> None:
             if plot.exists():
                 embed_comparison_plots_into_all_excels(group_dir, percentile, plot_path=plot)
     
+    # Print group means summary
+    print_group_means(OUTPUT_DIR)
+    
+    # Export statistics to CSV
+    export_group_statistics_to_csv(OUTPUT_DIR)
+
 
 if __name__ == "__main__":
     main()
