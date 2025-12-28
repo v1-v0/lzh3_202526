@@ -867,7 +867,6 @@ def generate_error_bar_comparison(
                 "mean": mean_val,
                 "std": std_val,
                 "sem": sem_val,
-                "ci_95": 1.96 * sem_val,
             }
 
             print(f"Loaded {len(values)} points for group: {display_name}")
@@ -2021,12 +2020,10 @@ def export_group_statistics_to_csv(output_root: Path) -> None:
                 median_val = float(values.median())
                 min_val = float(values.min())
                 max_val = float(values.max())
-                q25 = float(values.quantile(0.25))
-                q75 = float(values.quantile(0.75))
+                q30 = float(values.quantile(0.30))
+                q70 = float(values.quantile(0.70))
                 n = int(len(values))
                 
-                # 95% Confidence Interval
-                # ci_95 = 1.96 * float(sem_val)
                 
                 stats_list.append({
                     'Group': "Control" if group_name == "Control group" else group_name,
@@ -2034,11 +2031,9 @@ def export_group_statistics_to_csv(output_root: Path) -> None:
                     'Mean': mean_val,
                     'Std_Dev': std_val,
                     'SEM': sem_val,
-                    # 'CI_95_Lower': mean_val - ci_95,
-                    # 'CI_95_Upper': mean_val + ci_95,
                     'Median': median_val,
-                    'Q25': q25,
-                    'Q75': q75,
+                    'Q30': q30,
+                    'Q70': q70,
                     'Min': min_val,
                     'Max': max_val,
                     'CV_percent': (std_val / mean_val * 100) if mean_val > 0 else 0,
