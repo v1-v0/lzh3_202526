@@ -1,21 +1,19 @@
+
 import cv2
 import numpy as np
 import sys
 import csv
-import time
 
 import atexit
 import re
 from datetime import datetime
 from pathlib import Path
 import xml.etree.ElementTree as ET
-from typing import Optional, Tuple, Any, cast, Hashable
+from typing import Optional, Tuple, Any, cast
 
 from tqdm import tqdm
 import pandas as pd
-from numpy.typing import NDArray
 from scipy import stats as scipy_stats
-from scipy.stats import ttest_ind, f_oneway
 
 # --- NEW IMPORT FOR REGISTRATION ---
 from skimage.registration import phase_cross_correlation
@@ -33,7 +31,6 @@ from openpyxl.chart.series_factory import SeriesFactory
 from openpyxl import load_workbook
 from openpyxl.drawing.image import Image as XLImage
 
-import math
 
 # ==================================================
 # Logging: tee stdout/stderr to a file
@@ -49,22 +46,6 @@ class Tee:
     def flush(self) -> None:
         for s in self.streams:
             s.flush()
-
-
-# --- Brightfield Segmentation Parameters ---
-PIXEL_DILATION_FOR_MERGE_BF = 2
-MIN_PARTICLE_AREA_PX = 100
-MAX_PARTICLE_AREA_PX = 50000
-MIN_PARTICLE_CIRCULARITY = 0.3
-
-# --- Fluorescence Threshold Settings ---
-FLUOR_THRESHOLD_METHOD = "otsu_gaussian"  # Options: "otsu_gaussian", "manual"
-FLUOR_OTSU_GAUSSIAN_SIGMA = 1.5
-FLUOR_MANUAL_THRESHOLD = 30
-
-# --- Output Settings ---
-BF_SAVE_IMAGES = True
-PERCENTILE_TO_CUT = 0.2  # 20% by default
 
 
 _project_root = Path(__file__).resolve().parent
@@ -88,15 +69,10 @@ def _close_log_file() -> None:
         pass
 
 
-def foo() -> list[Path]:
-    return []
-
-
 # ==================================================
 # Configuration
 # ==================================================
-# --- FIX: Ensure this points to your actual data folder ---
-SOURCE_DIR = Path("./source") 
+SOURCE_DIR = Path("./source")
 CONTROL_DIR = SOURCE_DIR / "Control group"
 
 # Segment only brightfield channel
@@ -354,25 +330,24 @@ def get_percentile_option() -> float:
             return 0.3
         print("Invalid choice. Please enter 1, 2, or 3, or press Enter.")
 
-
 def get_dataset_identifier() -> str:
     """Prompt user to input a custom dataset identifier for plot titles."""
     print("\nEnter dataset identifier for plot titles (e.g., 'PD G-', 'Spike G+'):")
     print("  - This will appear at the start of all plot titles")
     print("  - Press Enter to skip (no dataset label)")
-
+    
     while True:
         dataset_id = input("Dataset label: ").strip()
-
+        
         # Allow empty input (skip dataset label)
         if dataset_id == "":
             print("  → No dataset label will be added")
             return ""
-
+        
         # Confirm non-empty input
         print(f"  → Using dataset label: '{dataset_id}'")
         confirm = input("    Confirm? (y/n, or press Enter for yes): ").strip().lower()
-
+        
         if confirm in ["", "y", "yes"]:
             return dataset_id
         else:
@@ -597,11 +572,11 @@ def save_debug_ids(
 def align_fluorescence_channel(bf_img: np.ndarray, fluor_img: np.ndarray) -> tuple[np.ndarray, tuple[float, float]]:
     """
     Aligns the fluorescence image to the brightfield image using Phase Correlation.
-
+    
     1. Inverts the Brightfield image (so dark cells become bright features).
     2. Calculates the shift between inverted BF and Fluorescence.
     3. Warps the Fluorescence image to match the BF.
-
+    
     Returns:
         (aligned_fluor_img, (shift_y, shift_x))
     """
@@ -617,20 +592,20 @@ def align_fluorescence_channel(bf_img: np.ndarray, fluor_img: np.ndarray) -> tup
         fluor_gray = fluor_img
 
     # Invert BF so dark cells become bright features (matching fluor spots)
-    bf_inverted_for_matching = cv2.bitwise_not(bf_gray)
+    bf_inverted = cv2.bitwise_not(bf_gray)
 
     # Calculate shift
     # upsample_factor=10 gives subpixel precision (0.1 px)
-    shift, error, diffphase = phase_cross_correlation(bf_inverted_for_matching, fluor_gray, upsample_factor=10)
+    shift, error, diffphase = phase_cross_correlation(bf_inverted, fluor_gray, upsample_factor=10)
     shift_y, shift_x = shift
 
     # Apply shift to the original fluor_img (preserving color/depth if any)
     rows, cols = fluor_img.shape[:2]
-
+    
     # To correct the shift, we move in the negative direction of the detected shift
     # FIX: Use np.array to create a matrix, not np.float32 (which creates a scalar)
-    M = np.array([[1, 0, shift_x], [0, 1, shift_y]], dtype=np.float32)
-
+    M = np.array([[1, 0, -shift_x], [0, 1, -shift_y]], dtype=np.float32)
+    
     aligned_fluor = cv2.warpAffine(fluor_img, M, (cols, rows))
 
     return aligned_fluor, (shift_y, shift_x)
@@ -644,18 +619,18 @@ def segment_fluorescence_global(fluor_img8: np.ndarray) -> np.ndarray:
     blur = cv2.GaussianBlur(
         fluor_img8, (0, 0), sigmaX=FLUOR_GAUSSIAN_SIGMA, sigmaY=FLUOR_GAUSSIAN_SIGMA
     )
-
+    
     # Calculate Otsu's threshold
     otsu_threshold = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[0]
-
+    
     # Lower threshold for faint signals
     THRESHOLD_MULTIPLIER = 0.5
     adjusted_threshold = otsu_threshold * THRESHOLD_MULTIPLIER
-
+    
     print(f"  Fluorescence threshold: Otsu={otsu_threshold:.1f}, Adjusted={adjusted_threshold:.1f}")
-
+    
     _, bw = cv2.threshold(blur, adjusted_threshold, 255, cv2.THRESH_BINARY)
-
+    
     k = np.ones((FLUOR_MORPH_KERNEL_SIZE, FLUOR_MORPH_KERNEL_SIZE), np.uint8)
     bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, k, iterations=1)
     bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, k, iterations=1)
@@ -677,64 +652,35 @@ def match_fluor_to_bf_by_overlap(
     fluor_contours: list[np.ndarray],
     img_shape_hw: tuple[int, int],
     min_intersection_px: float = FLUOR_MATCH_MIN_INTERSECTION_PX,
-    split_shared_fluor: bool = True,  # NEW: Option to split shared fluorescence
-) -> tuple[list[Optional[int]], dict[int, list[int]]]:
+) -> list[Optional[int]]:
     """
     For each BF contour, pick the fluorescence contour that maximizes overlap.
-    Many-to-one allowed.
-
-    Args:
-        bf_contours: List of brightfield particle contours
-        fluor_contours: List of fluorescence contours
-        img_shape_hw: Image shape (height, width)
-        min_intersection_px: Minimum overlap in pixels to count as match
-        split_shared_fluor: If True, track which BF particles share fluorescence
-
-    Returns:
-        matches: List of fluor indices for each BF contour (or None)
-        fluor_sharing_map: Dict mapping fluor_idx -> list of BF indices that share it
+    Many-to-one allowed. Overlap used ONLY for assignment.
     """
     matches: list[Optional[int]] = []
     fluor_boxes = [cv2.boundingRect(c) for c in fluor_contours]
 
-    # Track which BF contours match to each fluorescence contour
-    fluor_sharing_map: dict[int, list[int]] = {}
-
-    for bf_idx, bf in enumerate(bf_contours):
+    for bf in bf_contours:
         bx, by, bw, bh = cv2.boundingRect(bf)
 
         best_idx: Optional[int] = None
         best_inter = 0.0
 
         for j, (fx, fy, fw, fh) in enumerate(fluor_boxes):
-            # Quick bounding box check
             if (bx + bw < fx) or (fx + fw < bx) or (by + bh < fy) or (fy + fh < by):
                 continue
 
             inter = contour_intersection_area_px(bf, fluor_contours[j], img_shape_hw)
-
-            # Only consider matches above threshold
-            if inter >= float(min_intersection_px) and inter > best_inter:
+            if inter > best_inter:
                 best_inter = inter
                 best_idx = j
 
-        matches.append(best_idx)
+        if best_idx is not None and best_inter >= float(min_intersection_px):
+            matches.append(best_idx)
+        else:
+            matches.append(None)
 
-        # Track sharing
-        if best_idx is not None:
-            if best_idx not in fluor_sharing_map:
-                fluor_sharing_map[best_idx] = []
-            fluor_sharing_map[best_idx].append(bf_idx)
-
-    # Report sharing statistics
-    shared_fluor = [fidx for fidx, bf_list in fluor_sharing_map.items() if len(bf_list) > 1]
-    if shared_fluor:
-        print(f"  [INFO] {len(shared_fluor)} fluorescence regions shared by multiple BF particles:")
-        for fidx in shared_fluor:
-            bf_list = fluor_sharing_map[fidx]
-            print(f"    → Fluor #{fidx+1} shared by {len(bf_list)} BF particles: {[i+1 for i in bf_list]}")
-
-    return matches, fluor_sharing_map
+    return matches
 
 
 def measure_fluorescence_intensity_with_global_area(
@@ -742,45 +688,15 @@ def measure_fluorescence_intensity_with_global_area(
     bf_contours: list[np.ndarray],
     fluor_contours: list[np.ndarray],
     bf_to_fluor_match: list[Optional[int]],
-    fluor_sharing_map: dict[int, list[int]],  # NEW parameter
     um_per_px_x: float,
     um_per_px_y: float,
-    split_shared_fluor: bool = True,  # NEW: Control area splitting
 ) -> list[dict]:
     """
     Intensity stats: within BF contour.
-    Fluor area: from matched fluorescence contour (global), with optional proportional splitting.
-
-    Args:
-        fluor_img: Fluorescence image
-        bf_contours: Brightfield particle contours
-        fluor_contours: Fluorescence contours
-        bf_to_fluor_match: List of fluor indices for each BF (or None)
-        fluor_sharing_map: Dict mapping fluor_idx -> list of BF indices sharing it
-        um_per_px_x: Micrometers per pixel (X axis)
-        um_per_px_y: Micrometers per pixel (Y axis)
-        split_shared_fluor: If True, split shared fluorescence area proportionally
-
-    Returns:
-        List of measurement dictionaries for each BF particle
+    Fluor area: from matched fluorescence contour (global), can extend outside BF.
     """
     um2_per_px2 = float(um_per_px_x) * float(um_per_px_y)
     measurements: list[dict] = []
-
-    # Pre-calculate total overlap for shared fluorescence regions
-    shared_overlap_totals: dict[int, float] = {}
-    if split_shared_fluor:
-        for fidx, bf_indices in fluor_sharing_map.items():
-            if len(bf_indices) > 1:  # Only if shared
-                total_overlap = 0.0
-                for bf_idx in bf_indices:
-                    overlap = contour_intersection_area_px(
-                        bf_contours[bf_idx],
-                        fluor_contours[fidx],
-                        fluor_img.shape[:2]
-                    )
-                    total_overlap += overlap
-                shared_overlap_totals[fidx] = total_overlap
 
     for i, bf in enumerate(bf_contours, 1):
         bf_mask = np.zeros(fluor_img.shape[:2], dtype=np.uint8)
@@ -788,60 +704,10 @@ def measure_fluorescence_intensity_with_global_area(
         fluor_values = fluor_img[bf_mask > 0]
 
         j = bf_to_fluor_match[i - 1]
-
         if j is not None:
-            # Get total fluorescence area
-            s2_area_px_total = float(cv2.contourArea(fluor_contours[j]))
-
-            # Check if this fluorescence is shared
-            is_shared = j in fluor_sharing_map and len(fluor_sharing_map[j]) > 1
-
-            if split_shared_fluor and is_shared:
-                # Proportionally split area based on overlap
-                bf_overlap = contour_intersection_area_px(
-                    bf, fluor_contours[j], fluor_img.shape[:2]
-                )
-                total_overlap = shared_overlap_totals[j]
-
-                if total_overlap > 0:
-                    proportion = bf_overlap / total_overlap
-                    s2_area_px = s2_area_px_total * proportion
-
-                    # Store sharing info for reporting
-                    sharing_info = {
-                        "is_shared": True,
-                        "shared_with_n_particles": len(fluor_sharing_map[j]),
-                        "proportion_assigned": proportion,
-                        "total_fluor_area_px": s2_area_px_total,
-                    }
-                else:
-                    # Fallback: equal split if total_overlap is somehow 0
-                    n_sharers = len(fluor_sharing_map[j])
-                    s2_area_px = s2_area_px_total / n_sharers
-                    sharing_info = {
-                        "is_shared": True,
-                        "shared_with_n_particles": n_sharers,
-                        "proportion_assigned": 1.0 / n_sharers,
-                        "total_fluor_area_px": s2_area_px_total,
-                    }
-            else:
-                # Not shared OR user chose not to split
-                s2_area_px = s2_area_px_total
-                sharing_info = {
-                    "is_shared": is_shared,
-                    "shared_with_n_particles": len(fluor_sharing_map[j]) if is_shared else 1,
-                    "proportion_assigned": 1.0,
-                    "total_fluor_area_px": s2_area_px_total,
-                }
+            s2_area_px = float(cv2.contourArea(fluor_contours[j]))
         else:
             s2_area_px = 0.0
-            sharing_info = {
-                "is_shared": False,
-                "shared_with_n_particles": 0,
-                "proportion_assigned": 0.0,
-                "total_fluor_area_px": 0.0,
-            }
-
         s2_area_um2 = s2_area_px * um2_per_px2
 
         if fluor_values.size > 0:
@@ -856,7 +722,6 @@ def measure_fluorescence_intensity_with_global_area(
                     "fluor_min": float(np.min(fluor_values)),
                     "fluor_max": float(np.max(fluor_values)),
                     "fluor_integrated_density": float(np.sum(fluor_values)),
-                    **sharing_info,  # Include sharing metadata
                 }
             )
         else:
@@ -871,7 +736,6 @@ def measure_fluorescence_intensity_with_global_area(
                     "fluor_min": 0.0,
                     "fluor_max": 0.0,
                     "fluor_integrated_density": 0.0,
-                    **sharing_info,
                 }
             )
 
@@ -1031,9 +895,8 @@ def generate_error_bar_comparison(
         palette_colors = list(sns.color_palette("husl", len(group_order)))
 
     # Generate SD plot
-    n_groups = len(group_order)
-    fig_width = max(8, n_groups * 1.2)  # Scale with group count
-    plt.figure(figsize=(fig_width, 6))
+    plt.figure(figsize=(8, 6)) # Slightly increased height for wrapped title
+    sns.set_style("ticks")
 
     # Bar plot WITHOUT seaborn error bars (we add SD ourselves)
     try:
@@ -1104,27 +967,25 @@ def generate_error_bar_comparison(
     plt.xlabel("")
     plt.xticks(fontsize=10, fontweight="bold")
     plt.yticks(fontsize=10, fontweight="bold")
-
+    
     # --- BUILD TITLE FROM LEFT TO RIGHT ---
     pct_display = int(percentile * 100)
-
+    
     # Start with dataset ID if provided
     title_parts = []
     if dataset_id:
         title_parts.append(dataset_id)
-
+    
     # Add main comparison text
-    title_parts.append(
-        f"Comparison (Error Bars: Standard Deviation) — Typical = Middle {100 - 2*pct_display}% (Cut top/bottom {pct_display}%)"
-    )
-
+    title_parts.append(f"Comparison (Error Bars: Standard Deviation) — Typical = Middle {100 - 2*pct_display}% (Cut top/bottom {pct_display}%)")
+    
     # Add suffix if provided
     if title_suffix:
         title_parts.append(title_suffix)
-
+    
     # Join all parts with separator
     raw_title = " — ".join(title_parts)
-
+    
     # Wrap title at 60 characters (increased from 50 to accommodate dataset ID)
     wrapped_title = "\n".join(textwrap.wrap(raw_title, width=60))
     plt.title(wrapped_title, fontsize=11, pad=10)
@@ -1287,6 +1148,7 @@ def embed_comparison_plots_into_all_excels(
     print(f"Embedding complete. Updated {updated}/{len(excel_files)} workbooks.")
 
 
+
 def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -> None:
     """Consolidate all CSVs in a group folder into one Excel workbook with statistics and color coding"""
     csv_files = list(output_dir.glob("*/object_stats.csv"))
@@ -1311,11 +1173,11 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
 
         # --- Styles ---
         yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
-        red_fill = PatternFill(start_color="FFB6C1", end_color="FFB6C1", fill_type="solid")
+        red_fill = PatternFill(start_color="FFB6C1", end_color="FFB6C1", fill_type="solid")  # Light red for excluded
         header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
         header_font = Font(bold=True, color="FFFFFF")
         center_align = Alignment(horizontal="center", vertical="center")
-        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'),
+        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
                              top=Side(style='thin'), bottom=Side(style='thin'))
 
         # Helper to adjust column widths
@@ -1327,9 +1189,10 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                     try:
                         if cell.value:
                             max_length = max(max_length, len(str(cell.value)))
-                    except Exception:
+                    except:
                         pass
                 adjusted_width = (max_length + 2) * 1.1
+                # Cap width to prevent massive columns
                 if adjusted_width > 50:
                     adjusted_width = 50
                 ws.column_dimensions[column_letter].width = adjusted_width
@@ -1345,9 +1208,6 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
         all_valid_objects: list[pd.DataFrame] = []
         all_excluded_objects: list[dict] = []
 
-        # --- NEW: Track per-image data with Is_Typical flag ---
-        per_image_data_with_flags: dict[str, pd.DataFrame] = {}
-
         with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
             # --- README sheet ---
             readme_df = pd.DataFrame(
@@ -1360,8 +1220,6 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                         "Fluor_Area_px", "Fluor_Area_um2", "Fluor_Mean", "Fluor_Median",
                         "Fluor_Std", "Fluor_Min", "Fluor_Max", "Fluor_IntegratedDensity",
                         "Fluor_Density_per_BF_Area", "BF_to_Fluor_Area_Ratio",
-                        "Is_Typical",  # NEW
-                        "Exclusion_Reason",  # NEW
                     ],
                     "Description": [
                         "Unique particle identifier", "Brightfield particle area (pixels²)", "Brightfield particle area (µm²)",
@@ -1374,8 +1232,6 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                         "Avg fluorescence intensity", "Median fluorescence intensity", "Std Dev fluorescence",
                         "Min fluorescence", "Max fluorescence", "Total fluorescence signal",
                         "Fluor density / BF Area (Primary Metric)", "Ratio of BF area to Fluor area",
-                        "TRUE if particle is in typical range (middle percentiles), FALSE if excluded",  # NEW
-                        "Reason for exclusion (if not typical)",  # NEW
                     ],
                 }
             )
@@ -1388,7 +1244,7 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                 cell.alignment = center_align
             adjust_column_widths(ws_readme)
 
-            # --- FIRST PASS: Load all data and calculate derived metrics ---
+            # --- Per-image sheets ---
             for csv_file in sorted(csv_files):
                 image_name = csv_file.parent.name
                 df = pd.read_csv(csv_file)
@@ -1412,83 +1268,119 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
 
                 df = df.replace([np.inf, -np.inf], 0).fillna(0)
 
-                # Add placeholder columns (will be filled after group-level filtering)
-                df["Is_Typical"] = True  # Default: assume typical
-                df["Exclusion_Reason"] = ""  # Empty unless excluded
+                # --- NEW: Track excluded objects with reasons ---
+                for idx, row in df.iterrows():
+                    reason = None
+                    
+                    # Check exclusion criteria
+                    if row["Fluor_Area_px"] == 0 and row["Fluor_IntegratedDensity"] > 0:
+                        reason = "Zero fluorescence area with positive integrated density"
+                    elif row["Fluor_Area_px"] == 0:
+                        reason = "Zero fluorescence area"
+                    elif row["Fluor_IntegratedDensity"] == 0:
+                        reason = "Zero integrated density"
+                    
+                    if reason:
+                        all_excluded_objects.append({
+                            "Object_ID": row["Object_ID"],
+                            "Source_Image": image_name,
+                            "BF_Area_um2": row["BF_Area_um2"],
+                            "Fluor_Area_px": row["Fluor_Area_px"],
+                            "Fluor_IntegratedDensity": row["Fluor_IntegratedDensity"],
+                            "Exclusion_Reason": reason
+                        })
 
-                # --- Track excluded objects with initial reasons (vectorized; fixes Pylance) ---
-                mask_zero_area_pos_int = (df["Fluor_Area_px"] == 0) & (df["Fluor_IntegratedDensity"] > 0)
-                mask_zero_area = (df["Fluor_Area_px"] == 0) & ~mask_zero_area_pos_int
-                mask_zero_int = (df["Fluor_IntegratedDensity"] == 0) & ~(df["Fluor_Area_px"] == 0)
-
-                df.loc[mask_zero_area_pos_int, "Is_Typical"] = False
-                df.loc[mask_zero_area_pos_int, "Exclusion_Reason"] = "Zero fluorescence area with positive integrated density"
-
-                df.loc[mask_zero_area, "Is_Typical"] = False
-                df.loc[mask_zero_area, "Exclusion_Reason"] = "Zero fluorescence area"
-
-                df.loc[mask_zero_int, "Is_Typical"] = False
-                df.loc[mask_zero_int, "Exclusion_Reason"] = "Zero integrated density"
-
-                # Append to excluded list for reporting
-                excluded_mask = mask_zero_area_pos_int | mask_zero_area | mask_zero_int
-                if excluded_mask.any():
-                    excluded_rows = df.loc[excluded_mask, ["Object_ID", "BF_Area_um2", "Fluor_Area_px", "Fluor_IntegratedDensity", "Exclusion_Reason"]].copy()
-                    excluded_rows["Source_Image"] = image_name
-
-                    for r in excluded_rows.itertuples(index=False):
-                        all_excluded_objects.append(
-                            {
-                                "Object_ID": r.Object_ID,
-                                "Source_Image": r.Source_Image,
-                                "BF_Area_um2": r.BF_Area_um2,
-                                "Fluor_Area_px": r.Fluor_Area_px,
-                                "Fluor_IntegratedDensity": r.Fluor_IntegratedDensity,
-                                "Exclusion_Reason": r.Exclusion_Reason,
-                            }
-                        )
-
-                # Filter valid objects
+                # Filter valid objects (both area and intensity > 0)
                 df_valid = df[(df["Fluor_IntegratedDensity"] > 0) & (df["Fluor_Area_px"] > 0)].copy()
                 df_valid["Source_Image"] = image_name
-
+                
+                # Append ALL valid objects (no per-image percentile filtering)
                 if not df_valid.empty:
                     all_valid_objects.append(df_valid)
 
-                # Store for later sheet creation
-                per_image_data_with_flags[image_name] = df
+                sheet_name = image_name[:31]
+                
+                # Sort by density for display
+                if "Fluor_Density_per_BF_Area" in df.columns:
+                    df = df.sort_values("Fluor_Density_per_BF_Area", ascending=False)
+                
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+                ws = writer.sheets[sheet_name]
 
-            # --- GROUP-LEVEL Percentile Filtering ---
-            typical_object_ids: set[Hashable] = set()  # Track which objects are typical
-            typical_particles = pd.DataFrame()
+                # Formatting
+                for cell in ws[1]:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = center_align
+                
+                format_numbers(ws)
+                adjust_column_widths(ws)
+                ws.auto_filter.ref = ws.dimensions
 
+            # --- NEW: Excluded_Objects sheet ---
+            if all_excluded_objects:
+                excluded_df = pd.DataFrame(all_excluded_objects)
+                excluded_df.to_excel(writer, sheet_name="Excluded_Objects", index=False)
+                ws_excluded = writer.sheets["Excluded_Objects"]
+                
+                for cell in ws_excluded[1]:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = center_align
+                
+                # Highlight rows with light red
+                for row in ws_excluded.iter_rows(min_row=2, max_row=ws_excluded.max_row):
+                    for cell in row:
+                        cell.fill = red_fill
+                
+                adjust_column_widths(ws_excluded)
+                ws_excluded.auto_filter.ref = ws_excluded.dimensions
+                
+                print(f"[INFO] Excluded {len(all_excluded_objects)} objects (see 'Excluded_Objects' sheet)")
+
+            # --- All Valid Objects (unsorted, for reference) ---
             if all_valid_objects:
                 merged_all = pd.concat(all_valid_objects, ignore_index=True)
+                
+                # Sort by density
                 merged_all = merged_all.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
+                
+                all_valid_sheet_name = f"{group_name}_All_Valid_Objects"
+                merged_all.to_excel(writer, sheet_name=all_valid_sheet_name, index=False)
+                ws_all = writer.sheets[all_valid_sheet_name]
+                
+                for cell in ws_all[1]:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = center_align
+                
+                format_numbers(ws_all)
+                adjust_column_widths(ws_all)
+                ws_all.auto_filter.ref = ws_all.dimensions
 
-                merged_all["Exclusion_Reason"] = np.where(
-                    merged_all["Exclusion_Reason"].eq(""),
-                    merged_all["Exclusion_Reason_excl"].fillna("").astype(str),
-                    merged_all["Exclusion_Reason"].astype(str),
-                )
-
+            # --- GROUP-LEVEL Percentile Filtering: {group}_Typical_Particles ---
+            if all_valid_objects:
+                merged_all = pd.concat(all_valid_objects, ignore_index=True)
+                
+                # Sort by density
+                merged_all = merged_all.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
+                
+                # Apply percentile cut at GROUP level
                 n_total = len(merged_all)
                 n_cut = int(n_total * percentile)
-
+                
                 start_idx = n_cut
                 end_idx = n_total - n_cut
-
+                
                 if start_idx < end_idx and n_total > 3:
                     typical_particles = merged_all.iloc[start_idx:end_idx].copy()
-                    typical_object_ids = set(typical_particles["Object_ID"].values)
-
                     print(f"[INFO] Group-level filtering: {n_total} total → {len(typical_particles)} typical (cut top/bottom {int(percentile*100)}%)")
-
-                    # Track percentile exclusions
+                    
+                    # Track which objects were excluded due to percentile
                     excluded_top = merged_all.iloc[:start_idx]
                     excluded_bottom = merged_all.iloc[end_idx:]
-
-                    for _, row in excluded_top.iterrows():
+                    
+                    for idx, row in excluded_top.iterrows():
                         all_excluded_objects.append({
                             "Object_ID": row["Object_ID"],
                             "Source_Image": row["Source_Image"],
@@ -1497,8 +1389,8 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                             "Fluor_IntegratedDensity": row["Fluor_IntegratedDensity"],
                             "Exclusion_Reason": f"Outside typical particle range (top {int(percentile*100)}%)"
                         })
-
-                    for _, row in excluded_bottom.iterrows():
+                    
+                    for idx, row in excluded_bottom.iterrows():
                         all_excluded_objects.append({
                             "Object_ID": row["Object_ID"],
                             "Source_Image": row["Source_Image"],
@@ -1509,170 +1401,8 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                         })
                 else:
                     typical_particles = merged_all.copy()
-                    typical_object_ids = set(merged_all["Object_ID"].values)
                     print(f"[INFO] Group has ≤3 objects or percentile range invalid; using ALL {n_total} valid objects as typical")
 
-            # --- UPDATE Is_Typical flags in per-image data ---
-            # Pylance-safe: avoid df.loc[idx, ...] where idx is Hashable from iterrows
-            for image_name, df in per_image_data_with_flags.items():
-                # Build a mask of "should be excluded by percentile" among those still marked typical
-                # (keep earlier exclusions intact)
-                if "Object_ID" not in df.columns:
-                    continue
-
-                # `isin` returns a boolean Series; OK for .loc
-                not_in_typical = ~df["Object_ID"].isin(list(typical_object_ids))
-                still_typical = df["Is_Typical"] == True  # noqa: E712
-                percentile_excl = not_in_typical & still_typical
-
-                if percentile_excl.any():
-                    df.loc[percentile_excl, "Is_Typical"] = False
-
-                    # Only annotate reasons for objects that actually had valid fluor (mirrors your previous intent)
-                    valid_obj = df["Fluor_IntegratedDensity"] > 0
-                    annotate = percentile_excl & valid_obj
-
-                    if annotate.any() and (len(typical_particles) > 0):
-                        min_typical = float(typical_particles["Fluor_Density_per_BF_Area"].min())
-                        max_typical = float(typical_particles["Fluor_Density_per_BF_Area"].max())
-                        density_val = df["Fluor_Density_per_BF_Area"]
-
-                        top_mask = annotate & (density_val > max_typical)
-                        bot_mask = annotate & ~top_mask
-
-                        df.loc[top_mask, "Exclusion_Reason"] = f"Outside typical range (top {int(percentile*100)}%)"
-                        df.loc[bot_mask, "Exclusion_Reason"] = f"Outside typical range (bottom {int(percentile*100)}%)"
-
-            # --- SECOND PASS: Create per-image sheets with Is_Typical column ---
-            for image_name in sorted(per_image_data_with_flags.keys()):
-                df = per_image_data_with_flags[image_name]
-
-                # Sort by density for display
-                df = df.sort_values("Fluor_Density_per_BF_Area", ascending=False)
-
-                sheet_name = image_name[:31]
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
-                ws = writer.sheets[sheet_name]
-
-                # Formatting
-                for cell in ws[1]:
-                    cell.fill = header_fill
-                    cell.font = header_font
-                    cell.alignment = center_align
-
-                # Color-code rows based on Is_Typical
-                col_loc = df.columns.get_loc("Is_Typical")
-                if not isinstance(col_loc, int):
-                    raise TypeError("Unexpected non-int column location for Is_Typical")
-                is_typical_col = col_loc + 1  # Excel is 1-indexed
-
-                for row_idx in range(2, ws.max_row + 1):  # Start from row 2 (data rows)
-                    is_typical = ws.cell(row=row_idx, column=is_typical_col).value
-
-                    if is_typical is False:
-                        for col_idx in range(1, ws.max_column + 1):
-                            ws.cell(row=row_idx, column=col_idx).fill = red_fill
-                    elif is_typical is True:
-                        for col_idx in range(1, ws.max_column + 1):
-                            ws.cell(row=row_idx, column=col_idx).fill = yellow_fill
-
-                format_numbers(ws)
-                adjust_column_widths(ws)
-                ws.auto_filter.ref = ws.dimensions
-
-            # --- Excluded_Objects sheet ---
-            if all_excluded_objects:
-                excluded_df = pd.DataFrame(all_excluded_objects)
-                excluded_df.to_excel(writer, sheet_name="Excluded_Objects", index=False)
-                ws_excluded = writer.sheets["Excluded_Objects"]
-
-                for cell in ws_excluded[1]:
-                    cell.fill = header_fill
-                    cell.font = header_font
-                    cell.alignment = center_align
-
-                for row in ws_excluded.iter_rows(min_row=2, max_row=ws_excluded.max_row):
-                    for cell in row:
-                        cell.fill = red_fill
-
-                adjust_column_widths(ws_excluded)
-                ws_excluded.auto_filter.ref = ws_excluded.dimensions
-
-                print(f"[INFO] Excluded {len(all_excluded_objects)} objects (see 'Excluded_Objects' sheet)")
-
-            # --- All Valid Objects (with Is_Typical flag) ---
-            if all_valid_objects:
-                merged_all = pd.concat(all_valid_objects, ignore_index=True)
-
-                # Add Is_Typical flag
-                merged_all["Is_Typical"] = merged_all["Object_ID"].isin(list(typical_object_ids))
-                merged_all["Exclusion_Reason"] = ""
-
-                
-                # Add exclusion reasons for non-typical (vectorized; Pylance-safe)
-                if all_excluded_objects:
-                    excluded_df = pd.DataFrame(all_excluded_objects)
-
-                    # keep the first reason per (Object_ID, Source_Image) to avoid duplicates exploding the merge
-                    excluded_df = (
-                        excluded_df[["Object_ID", "Source_Image", "Exclusion_Reason"]]
-                        .dropna(subset=["Object_ID", "Source_Image"])
-                        .drop_duplicates(subset=["Object_ID", "Source_Image"], keep="first")
-                    )
-
-                    merged_all = merged_all.merge(
-                        excluded_df,
-                        on=["Object_ID", "Source_Image"],
-                        how="left",
-                        suffixes=("", "_excl"),
-                    )
-
-                    # If we already created merged_all["Exclusion_Reason"] as "", fill it from the merged column
-                    # merged_all["Exclusion_Reason"] = merged_all["Exclusion_Reason"].astype(str)
-                    fill_vals = merged_all["Exclusion_Reason_excl"].fillna("").astype(str)
-                    
-                    # --- FIX 1: Use list() to avoid Pylance __setitem__ confusion with Series vs ndarray ---
-                    merged_all["Exclusion_Reason"] = list(np.where(
-                        merged_all["Exclusion_Reason"].eq(""),
-                        fill_vals,
-                        merged_all["Exclusion_Reason"]
-                    ))
-
-                    merged_all = merged_all.drop(columns=["Exclusion_Reason_excl"])
-
-                merged_all = merged_all.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
-
-                all_valid_sheet_name = f"{group_name}_All_Valid_Objects"
-                merged_all.to_excel(writer, sheet_name=all_valid_sheet_name, index=False)
-                ws_all = writer.sheets[all_valid_sheet_name]
-
-                for cell in ws_all[1]:
-                    cell.fill = header_fill
-                    cell.font = header_font
-                    cell.alignment = center_align
-
-                # Color-code based on Is_Typical (Pylance-safe get_loc)
-                all_col_loc = merged_all.columns.get_loc("Is_Typical")
-                if not isinstance(all_col_loc, int):
-                    raise TypeError("Unexpected non-int column location for Is_Typical")
-                is_typical_col = all_col_loc + 1
-
-                for row_idx in range(2, ws_all.max_row + 1):
-                    is_typical = ws_all.cell(row=row_idx, column=is_typical_col).value
-
-                    if is_typical is False:
-                        for col_idx in range(1, ws_all.max_column + 1):
-                            ws_all.cell(row=row_idx, column=col_idx).fill = red_fill
-                    elif is_typical is True:
-                        for col_idx in range(1, ws_all.max_column + 1):
-                            ws_all.cell(row=row_idx, column=col_idx).fill = yellow_fill
-
-                format_numbers(ws_all)
-                adjust_column_widths(ws_all)
-                ws_all.auto_filter.ref = ws_all.dimensions
-
-            # --- Typical_Particles sheet (filtered view) ---
-            if all_valid_objects and len(typical_particles) > 0:
                 typical_sheet_name = f"{group_name}_Typical_Particles"
                 typical_particles.to_excel(writer, sheet_name=typical_sheet_name, index=False)
                 ws_typ = writer.sheets[typical_sheet_name]
@@ -1681,51 +1411,81 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                     cell.fill = header_fill
                     cell.font = header_font
                     cell.alignment = center_align
-
-                # Highlight all typical particles
+                
+                # Highlight typical particles with yellow
                 for row in ws_typ.iter_rows(min_row=2, max_row=ws_typ.max_row):
                     for cell in row:
                         cell.fill = yellow_fill
-
+                
                 format_numbers(ws_typ)
                 adjust_column_widths(ws_typ)
                 ws_typ.auto_filter.ref = ws_typ.dimensions
 
+            # --- Update Excluded_Objects sheet with percentile exclusions ---
+            if all_excluded_objects:
+                # Overwrite with complete list
+                wb = writer.book
+                if "Excluded_Objects" in wb.sheetnames:
+                    wb.remove(wb["Excluded_Objects"])
+                
+                excluded_df = pd.DataFrame(all_excluded_objects)
+                excluded_df.to_excel(writer, sheet_name="Excluded_Objects", index=False)
+                ws_excluded = writer.sheets["Excluded_Objects"]
+                
+                for cell in ws_excluded[1]:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = center_align
+                
+                for row in ws_excluded.iter_rows(min_row=2, max_row=ws_excluded.max_row):
+                    for cell in row:
+                        cell.fill = red_fill
+                
+                adjust_column_widths(ws_excluded)
+                ws_excluded.auto_filter.ref = ws_excluded.dimensions
+
             # --- Summary sheet ---
             try:
                 summary_data = []
-                for image_name in sorted(per_image_data_with_flags.keys()):
-                    df = per_image_data_with_flags[image_name]
+                for csv_file in sorted(csv_files):
+                    image_name = csv_file.parent.name
+                    df = pd.read_csv(csv_file)
 
+                    # Re-calculate metrics for summary consistency
+                    if "Fluor_IntegratedDensity" in df.columns and "BF_Area_um2" in df.columns:
+                        df["Fluor_Density_per_BF_Area"] = pd.to_numeric(df["Fluor_IntegratedDensity"], errors='coerce') / pd.to_numeric(df["BF_Area_um2"], errors='coerce')
+                    else:
+                        df["Fluor_Density_per_BF_Area"] = 0
+
+                    if "Fluor_Area_px" in df.columns:
+                        df["Fluor_Area_px"] = pd.to_numeric(df["Fluor_Area_px"], errors='coerce').fillna(0)
+                        
+                    df = df.replace([np.inf, -np.inf], 0).fillna(0)
+                    
                     # Stats on valid particles only
                     df_stats = df[(df["Fluor_Area_px"] > 0) & (df["Fluor_IntegratedDensity"] > 0)]
-                    df_typical = df[df["Is_Typical"] == True]  # noqa: E712
-
+                    
                     avg_fluor_density = df_stats["Fluor_Density_per_BF_Area"].mean() if not df_stats.empty else 0.0
-                    avg_fluor_density_typical = df_typical["Fluor_Density_per_BF_Area"].mean() if not df_typical.empty else 0.0
-
+                    
                     # Ratio calculation
                     avg_ratio = 0.0
                     if not df_stats.empty and "BF_Area_um2" in df_stats.columns and "Fluor_Area_um2" in df_stats.columns:
-                        ratios = df_stats["BF_Area_um2"] / df_stats["Fluor_Area_um2"]
-                        avg_ratio = ratios.replace([np.inf, -np.inf], 0).mean()
+                         ratios = df_stats["BF_Area_um2"] / df_stats["Fluor_Area_um2"]
+                         avg_ratio = ratios.replace([np.inf, -np.inf], 0).mean()
 
                     summary_data.append({
                         "Image": image_name,
                         "Total_Particles_Detected": len(df),
                         "Particles_With_Fluor": len(df_stats),
-                        "Typical_Particles": len(df_typical),
-                        "Excluded_Particles": len(df) - len(df_typical),
                         "Avg_BF_Area_um2": df["BF_Area_um2"].mean() if "BF_Area_um2" in df.columns else 0,
-                        "Avg_Fluor_Density_All": avg_fluor_density,
-                        "Avg_Fluor_Density_Typical": avg_fluor_density_typical,
+                        "Avg_Fluor_Density": avg_fluor_density,
                         "Avg_BF_to_Fluor_Ratio": avg_ratio,
                     })
 
                 summary_df = pd.DataFrame(summary_data)
 
-                if "Avg_Fluor_Density_Typical" in summary_df.columns:
-                    summary_df = summary_df.sort_values("Avg_Fluor_Density_Typical", ascending=False)
+                if "Avg_Fluor_Density" in summary_df.columns:
+                    summary_df = summary_df.sort_values("Avg_Fluor_Density", ascending=False)
 
                 summary_df.to_excel(writer, sheet_name="Summary", index=False)
                 ws_summary = writer.sheets["Summary"]
@@ -1734,14 +1494,14 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                     cell.fill = header_fill
                     cell.font = header_font
                     cell.alignment = center_align
-
+                
                 format_numbers(ws_summary)
                 adjust_column_widths(ws_summary)
 
             except Exception as e:
                 print(f"[WARN] Could not create Summary sheet: {e}")
 
-            # --- Ratios sheet (unchanged from original) ---
+            # --- Ratios sheet (unchanged) ---
             try:
                 wb = writer.book
                 ratios_name = "Ratios"
@@ -1753,8 +1513,7 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                 ws_qa["A1"].font = Font(bold=True, size=14)
 
                 def add_png(ws, path: Path, anchor_cell: str, width_px: int = 360) -> None:
-                    if not path.exists():
-                        return
+                    if not path.exists(): return
                     img = XLImage(str(path))
                     if getattr(img, "width", None) and getattr(img, "height", None):
                         scale = width_px / float(img.width)
@@ -1765,16 +1524,30 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                 row = 3
                 block_h = 34
 
-                for image_name in sorted(per_image_data_with_flags.keys()):
-                    df = per_image_data_with_flags[image_name]
+                for csv_file in sorted(csv_files):
+                    image_name = csv_file.parent.name
+                    df = pd.read_csv(csv_file)
+                    
+                    # Recalc metrics for plotting
+                    if "Fluor_IntegratedDensity" in df.columns and "BF_Area_um2" in df.columns:
+                        df["Fluor_Density_per_BF_Area"] = pd.to_numeric(df["Fluor_IntegratedDensity"], errors='coerce') / pd.to_numeric(df["BF_Area_um2"], errors='coerce')
+                    else:
+                        df["Fluor_Density_per_BF_Area"] = 0.0
+                    
+                    if "BF_Area_um2" in df.columns and "Fluor_Area_um2" in df.columns:
+                        df["BF_to_Fluor_Area_Ratio"] = pd.to_numeric(df["BF_Area_um2"], errors='coerce') / pd.to_numeric(df["Fluor_Area_um2"], errors='coerce')
+                    else:
+                        df["BF_to_Fluor_Area_Ratio"] = 0.0
+
+                    df = df.replace([np.inf, -np.inf], 0).fillna(0)
 
                     if "Fluor_Density_per_BF_Area" in df.columns:
                         df = df.sort_values("Fluor_Density_per_BF_Area", ascending=False).reset_index(drop=True)
 
                     ws_qa[f"A{row}"] = image_name
                     ws_qa[f"A{row}"].font = Font(bold=True, size=12)
-
-                    headers = ["Object_ID", "Fluor_Density_per_BF_Area", "Rank", "Is_Typical", "Object_ID", "BF_to_Fluor_Area_Ratio"]
+                    
+                    headers = ["Object_ID", "Fluor_Density_per_BF_Area", "Rank", "Object_ID", "BF_to_Fluor_Area_Ratio"]
                     for col_idx, header in enumerate(headers, 1):
                         cell = ws_qa.cell(row=row+1, column=col_idx, value=header)
                         cell.font = Font(bold=True)
@@ -1782,55 +1555,51 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
 
                     start_data_row = row + 2
                     n = len(df)
-
+                    
                     for k, r in enumerate(df.itertuples(index=False), 0):
                         ws_qa.cell(row=start_data_row+k, column=1, value=getattr(r, "Object_ID"))
                         ws_qa.cell(row=start_data_row+k, column=2, value=float(getattr(r, "Fluor_Density_per_BF_Area", 0.0))).number_format = '0.0000'
                         ws_qa.cell(row=start_data_row+k, column=3, value=k+1)
-                        ws_qa.cell(row=start_data_row+k, column=4, value=getattr(r, "Is_Typical"))
-                        ws_qa.cell(row=start_data_row+k, column=5, value=getattr(r, "Object_ID"))
-                        ws_qa.cell(row=start_data_row+k, column=6, value=float(getattr(r, "BF_to_Fluor_Area_Ratio", 0.0))).number_format = '0.0000'
+                        ws_qa.cell(row=start_data_row+k, column=4, value=getattr(r, "Object_ID"))
+                        ws_qa.cell(row=start_data_row+k, column=5, value=float(getattr(r, "BF_to_Fluor_Area_Ratio", 0.0))).number_format = '0.0000'
 
                     ws_qa.column_dimensions["A"].width = 20
                     ws_qa.column_dimensions["B"].width = 25
                     ws_qa.column_dimensions["C"].width = 10
-                    ws_qa.column_dimensions["D"].width = 15
-                    ws_qa.column_dimensions["E"].width = 20
-                    ws_qa.column_dimensions["F"].width = 25
+                    ws_qa.column_dimensions["D"].width = 20
+                    ws_qa.column_dimensions["E"].width = 25
 
                     if n > 0:
                         ch1 = ScatterChart()
                         ch1.title = "Fluor Density"
                         ch1.y_axis.title = "a.u./µm²"
                         ch1.x_axis.title = "Object Rank (Sorted)"
-
+                        
                         xref = Reference(ws_qa, min_col=3, min_row=start_data_row, max_row=start_data_row + n - 1)
                         yref = Reference(ws_qa, min_col=2, min_row=start_data_row, max_row=start_data_row + n - 1)
-
+                        
                         s1 = SeriesFactory(yref, xref, title="Density")
                         s1.marker = Marker(symbol="triangle", size=5)
                         ch1.series.append(s1)
-                        ws_qa.add_chart(ch1, f"H{row+1}")
+                        ws_qa.add_chart(ch1, f"G{row+1}")
 
                         ch2 = ScatterChart()
                         ch2.title = "Area Ratio"
                         ch2.y_axis.title = "Ratio"
                         ch2.x_axis.title = "Object Rank (Sorted)"
-
-                        yref2 = Reference(ws_qa, min_col=6, min_row=start_data_row, max_row=start_data_row + n - 1)
-
+                        
+                        yref2 = Reference(ws_qa, min_col=5, min_row=start_data_row, max_row=start_data_row + n - 1)
+                        
                         s2 = SeriesFactory(yref2, xref, title="Ratio")
                         s2.marker = Marker(symbol="circle", size=5)
                         ch2.series.append(s2)
-                        ws_qa.add_chart(ch2, f"H{row+18}")
+                        ws_qa.add_chart(ch2, f"G{row+18}")
 
-                    csv_file_path = output_dir / image_name / "object_stats.csv"
-                    if csv_file_path.exists():
-                        img_dir = csv_file_path.parent
-                        add_png(ws_qa, img_dir / "13_mask_accepted_ids.png", f"R{row+1}", width_px=330)
-                        add_png(ws_qa, img_dir / "22_fluorescence_mask_global_ids.png", f"R{row+18}", width_px=330)
-                        add_png(ws_qa, img_dir / "23_fluorescence_contours_global_ids.png", f"R{row+18}", width_px=330)
-                        add_png(ws_qa, img_dir / "24_bf_fluor_matching_overlay_ids.png", f"R{row+1}", width_px=330)
+                    img_dir = csv_file.parent
+                    add_png(ws_qa, img_dir / "13_mask_accepted_ids.png", f"Q{row+1}", width_px=330)
+                    add_png(ws_qa, img_dir / "22_fluorescence_mask_global_ids.png", f"Q{row+18}", width_px=330)
+                    add_png(ws_qa, img_dir / "23_fluorescence_contours_global_ids.png", f"Q{row+18}", width_px=330)
+                    add_png(ws_qa, img_dir / "24_bf_fluor_matching_overlay_ids.png", f"Q{row+1}", width_px=330)
 
                     row += block_h
 
@@ -1840,9 +1609,9 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
         # Reorder worksheets
         wb2 = load_workbook(excel_path)
         desired_order = [
-            "Summary",
-            "Ratios",
-            "README",
+            "Summary", 
+            "Ratios", 
+            "README", 
             f"{group_name}_Typical_Particles",
             f"{group_name}_All_Valid_Objects",
             "Excluded_Objects"
@@ -1856,9 +1625,8 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
         wb2.save(excel_path)
 
         print(f"Excel consolidation saved: {excel_path}")
-        print("  - Is_Typical column added to all sheets")
-        print("  - Color coding: Yellow = Typical, Red = Excluded")
-        print("  - Exclusion_Reason column documents why particles were excluded")
+        print("  - Group-level percentile filtering applied")
+        print("  - Excluded_Objects sheet with detailed reasons")
 
     except PermissionError:
         print(f"[ERROR] Cannot write to {excel_path} - file may be open")
@@ -1868,245 +1636,10 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
         traceback.print_exc()
 
 
+
 # ==================================================
 # Main processing
 # ==================================================
-def perform_statistical_tests(output_root: Path, percentile: float) -> None:
-    """
-    Perform statistical tests comparing groups to Control.
-
-    Tests performed:
-    - Normality tests (Shapiro-Wilk)
-    - Equal variance test (Levene's test)
-    - T-tests (or Mann-Whitney U if non-normal)
-    - ANOVA (if >2 groups)
-    - Bonferroni correction for multiple comparisons
-    """
-    import pandas as pd
-    from scipy import stats as scipy_stats
-
-    print("\n" + "="*80)
-    print("STATISTICAL ANALYSIS")
-    print("="*80)
-
-    # Collect data from all groups
-    group_data: dict[str, np.ndarray] = {}
-
-    for excel_path in sorted(output_root.glob("*/*_master.xlsx")):
-        group_name = excel_path.parent.name
-
-        try:
-            typical_sheet = f"{group_name}_Typical_Particles"
-            df = pd.read_excel(excel_path, sheet_name=typical_sheet)
-
-            if "Fluor_Density_per_BF_Area" in df.columns:
-                values_series = pd.to_numeric(df["Fluor_Density_per_BF_Area"], errors='coerce').dropna()
-                values = values_series.to_numpy(dtype=np.float64)
-
-                if len(values) > 0:
-                    display_name = "Control" if group_name == "Control group" else group_name
-                    group_data[display_name] = values
-                    print(f"  Loaded {len(values)} measurements for {display_name}")
-        except Exception as e:
-            print(f"  [WARN] Could not read {group_name}: {e}")
-
-    if len(group_data) < 2:
-        print("[WARN] Need at least 2 groups for statistical testing")
-        return
-
-    # Check if Control exists
-    if "Control" not in group_data:
-        print("[WARN] No Control group found; performing group-to-group comparisons")
-        control_name = None
-    else:
-        control_name = "Control"
-
-    # --- 1. NORMALITY TESTS ---
-    print("\n" + "-"*80)
-    print("1. NORMALITY TESTS (Shapiro-Wilk)")
-    print("-"*80)
-    print(f"{'Group':<15} {'N':<8} {'W-statistic':<15} {'p-value':<12} {'Normal?':<10}")
-    print("-"*80)
-
-    normality_results = {}
-    for group, values in sorted(group_data.items()):
-        if len(values) >= 3:  # Shapiro requires n>=3
-            w_stat, p_val = scipy_stats.shapiro(values)
-            is_normal = p_val > 0.05
-            normality_results[group] = is_normal
-
-            print(f"{group:<15} {len(values):<8} {w_stat:<15.4f} {p_val:<12.4f} {'Yes' if is_normal else 'No':<10}")
-        else:
-            print(f"{group:<15} {len(values):<8} {'N/A':<15} {'N/A':<12} {'N/A':<10}")
-            normality_results[group] = None
-
-    # --- 2. EQUAL VARIANCE TEST (Levene's test) ---
-    if control_name and len(group_data) > 1:
-        print("\n" + "-"*80)
-        print("2. EQUAL VARIANCE TEST (Levene's Test)")
-        print("-"*80)
-
-        all_values = [values for values in group_data.values()]
-        levene_stat, levene_p = scipy_stats.levene(*all_values)
-        equal_var = levene_p > 0.05
-
-        print(f"Levene statistic: {levene_stat:.4f}")
-        print(f"p-value: {levene_p:.4f}")
-        print(f"Equal variances: {'Yes' if equal_var else 'No'}")
-    else:
-        equal_var = True  # Default assumption
-
-    # --- 3. PAIRWISE COMPARISONS (vs Control or all pairs) ---
-    print("\n" + "-"*80)
-    print("3. PAIRWISE COMPARISONS")
-    print("-"*80)
-
-    comparisons = []
-
-    if control_name:
-        # Compare each group to Control
-        control_values = group_data[control_name]
-
-        for group, values in sorted(group_data.items()):
-            if group == control_name:
-                continue
-
-            # Choose test based on normality
-            both_normal = bool(normality_results.get(group, False)) and bool(normality_results.get(control_name, False))
-
-            if both_normal:
-                # Use t-test
-                t_stat, p_val = scipy_stats.ttest_ind(values, control_values, equal_var=equal_var)
-                test_name = "Independent t-test" if equal_var else "Welch's t-test"
-            else:
-                # Use Mann-Whitney U test (non-parametric)
-                u_stat, p_val = scipy_stats.mannwhitneyu(values, control_values, alternative='two-sided')
-                test_name = "Mann-Whitney U"
-                t_stat = u_stat
-
-            # Calculate effect size (Cohen's d)
-            mean_a = float(np.mean(values))
-            mean_b = float(np.mean(control_values))
-            mean_diff = mean_a - mean_b
-
-            std_a = float(np.std(values, ddof=1))
-            std_b = float(np.std(control_values, ddof=1))
-
-            pooled_var = (std_a * std_a + std_b * std_b) / 2.0
-            pooled_std = math.sqrt(pooled_var) if pooled_var > 0.0 else 0.0
-
-            cohens_d = (mean_diff / pooled_std) if pooled_std > 0.0 else 0.0
-
-
-            comparisons.append({
-                "Group_A": group,
-                "Group_B": control_name,
-                "Test": test_name,
-                "Statistic": t_stat,
-                "p_value": p_val,
-                "Mean_A": np.mean(values),
-                "Mean_B": np.mean(control_values),
-                "Mean_Diff": mean_diff,
-                "Cohen_d": cohens_d,
-            })
-    else:
-        # All pairwise comparisons
-        group_names = sorted(group_data.keys())
-        for i, group_a in enumerate(group_names):
-            for group_b in group_names[i+1:]:
-                values_a = group_data[group_a]
-                values_b = group_data[group_b]
-
-                both_normal = bool(normality_results.get(group_a, False)) and bool(normality_results.get(group_b, False))
-
-                if both_normal:
-                    t_stat, p_val = scipy_stats.ttest_ind(values_a, values_b, equal_var=equal_var)
-                    test_name = "Independent t-test" if equal_var else "Welch's t-test"
-                else:
-                    u_stat, p_val = scipy_stats.mannwhitneyu(values_a, values_b, alternative='two-sided')
-                    test_name = "Mann-Whitney U"
-                    t_stat = u_stat
-
-                mean_diff = np.mean(values_a) - np.mean(values_b)
-                pooled_std = np.sqrt((np.std(values_a, ddof=1)**2 + np.std(values_b, ddof=1)**2) / 2)
-                cohens_d = mean_diff / pooled_std if pooled_std > 0 else 0
-
-                comparisons.append({
-                    "Group_A": group_a,
-                    "Group_B": group_b,
-                    "Test": test_name,
-                    "Statistic": t_stat,
-                    "p_value": p_val,
-                    "Mean_A": np.mean(values_a),
-                    "Mean_B": np.mean(values_b),
-                    "Mean_Diff": mean_diff,
-                    "Cohen_d": cohens_d,
-                })
-
-    # --- 4. BONFERRONI CORRECTION ---
-    n_comparisons = len(comparisons)
-    alpha = 0.05
-    bonferroni_alpha = alpha / n_comparisons if n_comparisons > 0 else alpha
-
-    print(f"\nNumber of comparisons: {n_comparisons}")
-    print(f"Bonferroni-corrected α: {bonferroni_alpha:.4f}")
-    print()
-
-    print(f"{'Group A':<12} {'Group B':<12} {'Test':<20} {'Statistic':<12} {'p-value':<12} {'Adj. p':<12} {'Signif?':<10} {'Cohen d':<10}")
-    print("-"*120)
-
-    for comp in comparisons:
-        adj_p = min(comp["p_value"] * n_comparisons, 1.0)  # Bonferroni correction
-        print(f"{comp['Group_A']:<12} {comp['Group_B']:<12} {comp['Test']:<20} "
-              f"{comp['Statistic']:<12.4f} {comp['p_value']:<12.4f} {adj_p:<12.4f} "
-              f"{'***' if adj_p < 0.001 else '**' if adj_p < 0.01 else '*' if adj_p < 0.05 else 'ns':<10} "
-              f"{comp['Cohen_d']:<10.3f}")
-
-    # --- 5. ONE-WAY ANOVA (if >2 groups) ---
-    if len(group_data) > 2:
-        print("\n" + "-"*80)
-        print("4. ONE-WAY ANOVA")
-        print("-"*80)
-
-        all_values = [values for values in group_data.values()]
-        f_stat, anova_p = scipy_stats.f_oneway(*all_values)
-
-        print(f"F-statistic: {f_stat:.4f}")
-        print(f"p-value: {anova_p:.4f}")
-        print(f"Significant difference between groups: {'Yes' if anova_p < 0.05 else 'No'}")
-
-    # --- 6. EXPORT TO CSV ---
-    stats_df = pd.DataFrame(comparisons)
-    stats_df["Bonferroni_Adjusted_p"] = stats_df["p_value"] * n_comparisons
-    stats_df["Bonferroni_Adjusted_p"] = stats_df["Bonferroni_Adjusted_p"].clip(upper=1.0)
-    stats_df["Significant_after_correction"] = stats_df["Bonferroni_Adjusted_p"] < alpha
-
-    output_path = output_root / "statistical_tests_results.csv"
-    stats_df.to_csv(output_path, index=False)
-
-    print(f"\n✓ Statistical results saved to: {output_path}")
-    print("="*80 + "\n")
-
-    # --- 7. INTERPRETATION GUIDE ---
-    print("\nINTERPRETATION GUIDE:")
-    print("-" * 80)
-    print("p-value < 0.05: Significant difference (reject null hypothesis)")
-    print("p-value ≥ 0.05: No significant difference (fail to reject null)")
-    print()
-    print("Cohen's d effect size:")
-    print("  |d| < 0.2  : Small effect")
-    print("  0.2 ≤ |d| < 0.5 : Medium effect")
-    print("  |d| ≥ 0.5  : Large effect")
-    print()
-    print("Bonferroni correction accounts for multiple testing to reduce false positives.")
-    print("="*80 + "\n")
-
-
-def process_single_image_pair(bf_path: Path, fluor_path: Path, output_dir: Path, save_images: bool = True) -> None:
-    """Wrapper to process a single BF image (fluor is automatically found)"""
-    process_image(bf_path, output_dir)
-
-
 def process_image(img_path: Path, output_root: Path) -> None:
     print("\n" + "=" * 80)
     print(f"Processing: {img_path}")
@@ -2189,10 +1722,10 @@ def process_image(img_path: Path, output_root: Path) -> None:
 
     vis_acc = cv2.cvtColor(img8, cv2.COLOR_GRAY2BGR)
     cv2.drawContours(vis_acc, rejected, -1, (0, 165, 255), 1)
-
+    
     # --- MODIFICATION: Changed accepted contours to Yellow (0, 255, 255) ---
     cv2.drawContours(vis_acc, accepted, -1, (0, 255, 255), 1)
-
+    
     vis_acc = draw_object_ids(vis_acc, accepted)
     # Updated filename to reflect color change
     save_debug(img_out, "11_contours_rejected_orange_accepted_yellow_ids_green.png", vis_acc, um_per_px_avg)
@@ -2221,7 +1754,7 @@ def process_image(img_path: Path, output_root: Path) -> None:
             fluor_img, (sy, sx) = align_fluorescence_channel(img, fluor_img)
             print(f"  -> Detected shift: Y={-sy:.2f}px, X={-sx:.2f}px")
             print(f"  -> Applied correction: ΔY={-sy:.2f}px, ΔX={-sx:.2f}px")
-
+            
             # Save the aligned raw image for verification
             save_debug(img_out, "20_fluorescence_aligned_raw.png", normalize_to_8bit(fluor_img), um_per_px_avg)
             # --- END ALIGNMENT INTEGRATION ---
@@ -2247,9 +1780,7 @@ def process_image(img_path: Path, output_root: Path) -> None:
             cv2.drawContours(vis_fluor, fluor_contours, -1, (0, 255, 0), 1)
             save_debug(img_out, "23_fluorescence_contours_global.png", vis_fluor, um_per_px_avg)
 
-            matches, fluor_sharing_map = match_fluor_to_bf_by_overlap(
-                accepted, fluor_contours, fluor_img8.shape[:2]
-            )
+            matches = match_fluor_to_bf_by_overlap(accepted, fluor_contours, fluor_img8.shape[:2])
 
             unmatched = sum(1 for m in matches if m is None)
             print(f"Fluorescence matching: {len(accepted) - unmatched}/{len(accepted)} BF objects matched")
@@ -2258,13 +1789,7 @@ def process_image(img_path: Path, output_root: Path) -> None:
                 print(f"  → {unmatched} BF objects have NO fluorescence match (will have Fluor_Area_px=0)")
 
             fluor_measurements = measure_fluorescence_intensity_with_global_area(
-                fluor_img,
-                accepted,
-                fluor_contours,
-                matches,
-                fluor_sharing_map,
-                float(um_per_px_x),
-                float(um_per_px_y)
+                fluor_img, accepted, fluor_contours, matches, float(um_per_px_x), float(um_per_px_y)
             )
 
             vis_match = cv2.cvtColor(fluor_img8, cv2.COLOR_GRAY2BGR)
@@ -2355,9 +1880,8 @@ def process_image(img_path: Path, output_root: Path) -> None:
 
             M = cv2.moments(c)
             if M["m00"] != 0:
-                # --- FIX 2: Use cast(float, ...) to resolve Pylance ambiguity about complex/scalar types ---
-                cx = cast(float, M["m10"]) / cast(float, M["m00"])
-                cy = cast(float, M["m01"]) / cast(float, M["m00"])
+                cx = float(M["m10"] / M["m00"])
+                cy = float(M["m01"] / M["m00"])
             else:
                 cx, cy = 0.0, 0.0
 
@@ -2416,556 +1940,262 @@ def process_image(img_path: Path, output_root: Path) -> None:
     print("✓ Done")
 
 
-def export_group_statistics_to_csv(output_root: Path) -> None:
-    """Export detailed group-level statistics to CSV for statistical analysis"""
+
+def print_group_means(output_root: Path) -> None:
+    """Extract and print mean fluorescence density for each group from master Excel files"""
     import pandas as pd
-
-    print("\n" + "=" * 80)
-    print("EXPORTING GROUP STATISTICS TO CSV")
-    print("=" * 80)
-
-    stats_list: list[dict[str, object]] = []
-
+    
+    print("\n" + "="*80)
+    print("GROUP MEANS - Fluorescence Density (a.u./µm²)")
+    print("="*80)
+    
+    group_means = {}
+    
     for excel_path in sorted(output_root.glob("*/*_master.xlsx")):
         group_name = excel_path.parent.name
-
+        
         try:
             # Read the Typical_Particles sheet
             typical_sheet = f"{group_name}_Typical_Particles"
             df = pd.read_excel(excel_path, sheet_name=typical_sheet)
+            
+            if "Fluor_Density_per_BF_Area" in df.columns:
+                mean_density = df["Fluor_Density_per_BF_Area"].mean()
+                std_density = df["Fluor_Density_per_BF_Area"].std()
+                n = len(df)
+                
+                group_means[group_name] = {
+                    'mean': mean_density,
+                    'std': std_density,
+                    'n': n
+                }
+        except Exception as e:
+            print(f"[WARN] Could not read {group_name}: {e}")
+    
+    # Sort: numeric groups first, Control last
+    sorted_groups = sorted(group_means.keys(), 
+                          key=lambda g: (0 if g.isdigit() else 1, 
+                                       int(g) if g.isdigit() else 999))
+    
+    print(f"\n{'Group':<15} {'Mean':<12} {'Std Dev':<12} {'N':<8}")
+    print("-" * 50)
+    
+    for group in sorted_groups:
+        stats = group_means[group]
+        display_name = "Control" if group == "Control group" else group
+        print(f"{display_name:<15} {stats['mean']:<12.2f} {stats['std']:<12.2f} {stats['n']:<8}")
+    
+    print("="*80 + "\n")
 
+def export_group_statistics_to_csv(output_root: Path) -> None:
+    """Export detailed group-level statistics to CSV for statistical analysis"""
+    import pandas as pd
+    
+    print("\n" + "="*80)
+    print("EXPORTING GROUP STATISTICS TO CSV")
+    print("="*80)
+    
+    stats_list = []
+    
+    for excel_path in sorted(output_root.glob("*/*_master.xlsx")):
+        group_name = excel_path.parent.name
+        
+        try:
+            # Read the Typical_Particles sheet
+            typical_sheet = f"{group_name}_Typical_Particles"
+            df = pd.read_excel(excel_path, sheet_name=typical_sheet)
+                        
             if "Fluor_Density_per_BF_Area" in df.columns:
                 # Ensure data is numeric first
-                values = pd.to_numeric(df["Fluor_Density_per_BF_Area"], errors="coerce").dropna()
-
+                values = pd.to_numeric(df["Fluor_Density_per_BF_Area"], errors='coerce').dropna()
+                
                 if values.empty:
                     print(f"  [SKIP] Group {group_name} has no valid numeric data.")
                     continue
 
-                # Calculate statistics
-                mean_val = float(np.asarray(values.mean()).item())
-                std_val = float(np.asarray(values.std(ddof=1)).item())
-                sem_val = float(np.asarray(values.sem()).item())
-                median_val = float(np.asarray(values.median()).item())
-                min_val = float(np.asarray(values.min()).item())
-                max_val = float(np.asarray(values.max()).item())
-                q30 = float(np.asarray(values.quantile(0.30)).item())
-                q70 = float(np.asarray(values.quantile(0.70)).item())
+                # Calculate statistics - pandas returns Python-compatible numeric types
+                mean_val = float(values.mean())
+                std_val = float(values.std(ddof=1))
+                sem_val = values.sem()
+                median_val = float(values.median())
+                min_val = float(values.min())
+                max_val = float(values.max())
+                q30 = float(values.quantile(0.30))
+                q70 = float(values.quantile(0.70))
                 n = int(len(values))
-
-                stats_list.append(
-                    {
-                        "Group": "Control" if group_name == "Control group" else group_name,
-                        "N": n,
-                        "Mean": mean_val,
-                        "Std_Dev": std_val,
-                        "SEM": sem_val,
-                        "Median": median_val,
-                        "Q30": q30,
-                        "Q70": q70,
-                        "Min": min_val,
-                        "Max": max_val,
-                        "CV_percent": (std_val / mean_val * 100.0) if mean_val > 0.0 else 0.0,
-                    }
-                )
-
-                print(f"  ✓ Processed group: {group_name} (N={n})")
+                
+                
+                stats_list.append({
+                    'Group': "Control" if group_name == "Control group" else group_name,
+                    'N': n,
+                    'Mean': mean_val,
+                    'Std_Dev': std_val,
+                    'SEM': sem_val,
+                    'Median': median_val,
+                    'Q30': q30,
+                    'Q70': q70,
+                    'Min': min_val,
+                    'Max': max_val,
+                    'CV_percent': (std_val / mean_val * 100) if mean_val > 0 else 0,
+                })
+                
+                print(f"  ✓ Processed group: {group_name} (N={n})")                
         except Exception as e:
             print(f"  ✗ Failed to process {group_name}: {e}")
-
+    
     if not stats_list:
         print("[WARN] No statistics to export")
         return
-
+    
     # Create DataFrame
     stats_df = pd.DataFrame(stats_list)
-
+    
     # Sort: numeric groups first, Control last
-    stats_df["sort_key"] = stats_df["Group"].apply(
-        lambda x: (0, int(x)) if str(x).isdigit() else (1, 999)
+    stats_df['sort_key'] = stats_df['Group'].apply(
+        lambda x: (0, int(x)) if x.isdigit() else (1, 999)
     )
-    stats_df = stats_df.sort_values("sort_key").drop("sort_key", axis=1)
-
-    # Round to 2 decimal places for readability (Pylance-safe: no .to_numpy() assignment)
+    stats_df = stats_df.sort_values('sort_key').drop('sort_key', axis=1)
+    
+    # Round to 2 decimal places for readability
     numeric_cols = stats_df.select_dtypes(include=[np.number]).columns
-    stats_df[numeric_cols] = stats_df[numeric_cols].apply(lambda s: s.round(2))
-
+    stats_df[numeric_cols] = stats_df[numeric_cols].round(2)
+    
     # Save to CSV
     output_path = output_root / "group_statistics_summary.csv"
     stats_df.to_csv(output_path, index=False)
-
+    
     print(f"\n✓ Statistics exported to: {output_path}")
-    print("=" * 80 + "\n")
-
+    print("="*80 + "\n")
+    
     # Also print to console for verification
     print("\nPreview of exported statistics:")
     print(stats_df.to_string(index=False))
     print()
-
+    
     # Additional summary
     print("\nKey Insights:")
     print(f"  • Total groups analyzed: {len(stats_df)}")
-    print(
-        f"  • Smallest sample size: Group {stats_df.loc[stats_df['N'].idxmin(), 'Group']} "
-        f"(N={int(stats_df['N'].min())})"
-    )
-    print(
-        f"  • Largest sample size: Group {stats_df.loc[stats_df['N'].idxmax(), 'Group']} "
-        f"(N={int(stats_df['N'].max())})"
-    )
-    print(
-        f"  • Highest mean density: Group {stats_df.loc[stats_df['Mean'].idxmax(), 'Group']} "
-        f"({float(stats_df['Mean'].max()):.2f} a.u./µm²)"
-    )
-    print(
-        f"  • Lowest mean density: Group {stats_df.loc[stats_df['Mean'].idxmin(), 'Group']} "
-        f"({float(stats_df['Mean'].min()):.2f} a.u./µm²)"
-    )
+    print(f"  • Smallest sample size: Group {stats_df.loc[stats_df['N'].idxmin(), 'Group']} (N={stats_df['N'].min()})")
+    print(f"  • Largest sample size: Group {stats_df.loc[stats_df['N'].idxmax(), 'Group']} (N={stats_df['N'].max()})")
+    print(f"  • Highest mean density: Group {stats_df.loc[stats_df['Mean'].idxmax(), 'Group']} ({stats_df['Mean'].max():.2f} a.u./µm²)")
+    print(f"  • Lowest mean density: Group {stats_df.loc[stats_df['Mean'].idxmin(), 'Group']} ({stats_df['Mean'].min():.2f} a.u./µm²)")
     print()
 
 
 
 def main() -> None:
-    """
-    Main entry point for the particle analysis pipeline.
+    if CLEAR_OUTPUT_DIR_EACH_RUN:
+        clear_output_dir(OUTPUT_DIR)
 
-    Supports three modes:
-    1. single: Process one image pair
-    2. all: Process all images in a folder (flat structure)
-    3. all_10_19: Process grouped folders (e.g., 10%, 19%, Control)
-    """
-    global PIXEL_DILATION_FOR_MERGE_BF
-    global MIN_PARTICLE_AREA_PX
-    global MAX_PARTICLE_AREA_PX
-    global MIN_PARTICLE_CIRCULARITY
-    global FLUOR_THRESHOLD_METHOD
-    global FLUOR_OTSU_GAUSSIAN_SIGMA
-    global FLUOR_MANUAL_THRESHOLD
-    global FLUOR_MATCH_MIN_INTERSECTION_PX
-    global BF_SAVE_IMAGES
-    global PERCENTILE_TO_CUT
+    print(f"Input dir: {_project_root.resolve()}")
 
-    print("="*80)
-    print("PARTICLE ANALYSIS PIPELINE - MAIN EXECUTION")
-    print("="*80)
+    mode = get_run_mode()
+    dataset_id = get_dataset_identifier()
+    percentile = get_percentile_option()
+    #dataset_id = get_dataset_identifier()
+    #mode = get_run_mode()
 
-    # --- MODE SELECTION ---
-    mode = "all_10_19"  # Options: "single", "all", "all_10_19"
-    print(f"[CONFIG] Execution mode: {mode}")
+    groups = list_sample_group_folders(SOURCE_DIR)
 
-    # --- PATHS CONFIGURATION ---
-    # Initialize non-optional locals to satisfy Pylance in non-selected branches
-    output_dir: Path = OUTPUT_DIR
-    bf_image_path: Optional[Path] = None
-    fluor_image_path: Optional[Path] = None
-    input_folder: Optional[Path] = None
-    group_folders: list[Path] = []
+    selected_group_name: Optional[str] = None
 
-    if mode == "single":
-        bf_image_path = Path("path/to/brightfield_image.tif")
-        fluor_image_path = Path("path/to/fluorescence_image.tif")
-        output_dir = Path("output/single_image_analysis")
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-    elif mode == "all":
-        input_folder = Path("path/to/input_folder")
-        output_dir = OUTPUT_DIR
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-    elif mode == "all_10_19":
-        # Multiple group folders
-        # --- FIX: Point to SOURCE_DIR instead of non-existent 'input' ---
-        base_input = SOURCE_DIR
-        output_dir = OUTPUT_DIR
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Define group folders
-        group_folders = [
-            base_input / "10%",
-            base_input / "19%",
-            base_input / "Control group",
-        ]
-
+    if mode == "all_10_19":
+        dirs_to_process = groups
+        print(f"Selected numeric groups: {[d.name for d in dirs_to_process]}")
     else:
-        raise ValueError(f"Unknown mode: {mode}")
+        selected = prompt_user_select_single_group_only(groups)
+        selected_group_name = selected.name
+        dirs_to_process = [selected]
+        print(f"Selected single group: {selected_group_name}")
 
-    # --- PRINT CONFIGURATION ---
-    print("\n" + "-"*80)
-    print("ANALYSIS PARAMETERS")
-    print("-"*80)
-    print(f"Brightfield Processing:")
-    print(f"  Dilation for merge (px):        {PIXEL_DILATION_FOR_MERGE_BF}")
-    print(f"  Min particle area (px²):        {MIN_PARTICLE_AREA_PX}")
-    print(f"  Max particle area (px²):        {MAX_PARTICLE_AREA_PX}")
-    print(f"  Min circularity:                {MIN_PARTICLE_CIRCULARITY}")
-    print()
-    print(f"Fluorescence Processing:")
-    print(f"  Threshold method:               {FLUOR_THRESHOLD_METHOD}")
-    if FLUOR_THRESHOLD_METHOD == "otsu_gaussian":
-        print(f"  Gaussian sigma:                 {FLUOR_OTSU_GAUSSIAN_SIGMA}")
-    elif FLUOR_THRESHOLD_METHOD == "manual":
-        print(f"  Manual threshold:               {FLUOR_MANUAL_THRESHOLD}")
-    print(f"  Min intersection (px):          {FLUOR_MATCH_MIN_INTERSECTION_PX}")
-    print()
-    print(f"Data Filtering:")
-    print(f"  Percentile to cut (each side):  {PERCENTILE_TO_CUT*100:.1f}%")
-    print()
-    print(f"Output:")
-    print(f"  Save intermediate images:       {BF_SAVE_IMAGES}")
-    print(f"  Output directory:               {output_dir}")
-    print("-"*80 + "\n")
-
-    # --- EXECUTION BY MODE ---
-
-    if mode == "single":
-        # ==================== SINGLE IMAGE MODE ====================
-        print(f"\n{'='*80}")
-        print(f"PROCESSING SINGLE IMAGE PAIR")
-        print(f"{'='*80}")
-        print(f"Brightfield:    {bf_image_path}")
-        print(f"Fluorescence:   {fluor_image_path}")
-        print(f"Output:         {output_dir}")
-        print(f"{'='*80}\n")
-
-        if bf_image_path is None or not bf_image_path.exists():
-            print(f"[ERROR] Brightfield image not found: {bf_image_path}")
-            return
-        if fluor_image_path is None or not fluor_image_path.exists():
-            print(f"[ERROR] Fluorescence image not found: {fluor_image_path}")
-            return
-
-        start_time = time.time()
-
-        try:
-            image_output_dir = output_dir
-            process_image(
-                bf_image_path,
-                image_output_dir
-            )
-
-            elapsed = time.time() - start_time
-            print(f"\n✓ Single image processing completed in {elapsed:.2f}s")
-            print(f"  Results saved to: {output_dir}")
-
-        except Exception as e:
-            print(f"\n[ERROR] Processing failed: {e}")
-            import traceback
-            traceback.print_exc()
-
-    elif mode == "all":
-        # ==================== BATCH MODE (FLAT FOLDER) ====================
-        print(f"\n{'='*80}")
-        print(f"PROCESSING ALL IMAGES IN FOLDER (BATCH MODE)")
-        print(f"{'='*80}")
-        print(f"Input folder:   {input_folder}")
-        print(f"Output folder:  {output_dir}")
-        print(f"{'='*80}\n")
-
-        if input_folder is None or not input_folder.exists():
-            print(f"[ERROR] Input folder not found: {input_folder}")
-            return
-
-        # Find all BF images
-        bf_pattern = "*BF*.tif"
-        bf_images = sorted(input_folder.glob(bf_pattern))
-
-        if not bf_images:
-            print(f"[ERROR] No brightfield images found matching pattern: {bf_pattern}")
-            print(f"        in folder: {input_folder}")
-            return
-
-        print(f"[INFO] Found {len(bf_images)} brightfield images")
-
-        start_time = time.time()
-        processed_count = 0
-        error_count = 0
-
-        for i, bf_path in enumerate(bf_images, 1):
-            print(f"\n{'-'*80}")
-            print(f"Processing image {i}/{len(bf_images)}: {bf_path.name}")
-            print(f"{'-'*80}")
-
-            # Find corresponding fluorescence image
-            fluor_name = bf_path.name.replace("BF", "488nm")
-            fluor_path = bf_path.parent / fluor_name
-
-            if not fluor_path.exists():
-                print(f"[WARN] Fluorescence image not found: {fluor_name}")
-                print(f"       Skipping this pair...")
-                error_count += 1
-                continue
-
-            # Create output subdirectory
-            image_output_dir = output_dir / bf_path.stem
-            image_output_dir.mkdir(parents=True, exist_ok=True)
-
-            try:
-                process_image(
-                    bf_path,
-                    image_output_dir
-                )
-                processed_count += 1
-
-            except Exception as e:
-                print(f"[ERROR] Failed to process {bf_path.name}: {e}")
-                error_count += 1
-                import traceback
-                traceback.print_exc()
-                continue
-
-        # Consolidate results
-        print(f"\n{'='*80}")
-        print(f"CONSOLIDATING RESULTS")
-        print(f"{'='*80}")
-
-        try:
-            group_name = input_folder.name if input_folder.name else "batch_results"
-            consolidate_to_excel(output_dir, group_name, PERCENTILE_TO_CUT)
-
-        except Exception as e:
-            print(f"[ERROR] Consolidation failed: {e}")
-            import traceback
-            traceback.print_exc()
-
-        # Summary
-        elapsed = time.time() - start_time
-        print(f"\n{'='*80}")
-        print(f"BATCH PROCESSING COMPLETE")
-        print(f"{'='*80}")
-        print(f"Total images found:      {len(bf_images)}")
-        print(f"Successfully processed:  {processed_count}")
-        print(f"Errors:                  {error_count}")
-        print(f"Total time:              {elapsed:.2f}s")
-        print(f"Average time/image:      {elapsed/len(bf_images):.2f}s")
-        print(f"Results saved to:        {output_dir}")
-        print(f"{'='*80}\n")
-
-    elif mode == "all_10_19":
-        # ==================== GROUPED FOLDERS MODE ====================
-        print(f"\n{'='*80}")
-        print(f"PROCESSING GROUPED FOLDERS MODE")
-        print(f"{'='*80}")
-        print(f"Groups to process: {len(group_folders)}")
-        for gf in group_folders:
-            print(f"  - {gf}")
-        print(f"{'='*80}\n")
-
-        overall_start = time.time()
-        group_summaries = []
-
-        for group_idx, group_folder in enumerate(group_folders, 1):
-            group_name = group_folder.name
-
-            print(f"\n{'#'*80}")
-            print(f"# GROUP {group_idx}/{len(group_folders)}: {group_name}")
-            print(f"{'#'*80}")
-
-            if not group_folder.exists():
-                print(f"[ERROR] Group folder not found: {group_folder}")
-                print(f"        Skipping this group...")
-                continue
-
-            # Create group output directory
-            group_output_dir = output_dir / group_name
-            group_output_dir.mkdir(parents=True, exist_ok=True)
-
-            # Find all BF images in this group
-            bf_pattern = "*BF*.tif"
-            bf_images = sorted(group_folder.glob(bf_pattern))
-
-            if not bf_images:
-                print(f"[WARN] No brightfield images found in {group_folder}")
-                print(f"       Looking for pattern: {bf_pattern}")
-                continue
-
-            print(f"[INFO] Found {len(bf_images)} images in {group_name}")
-
-            group_start = time.time()
-            processed_count = 0
-            error_count = 0
-
-            # Process each image pair in the group
-            for i, bf_path in enumerate(bf_images, 1):
-                print(f"\n{'-'*80}")
-                print(f"[{group_name}] Processing {i}/{len(bf_images)}: {bf_path.name}")
-                print(f"{'-'*80}")
-
-                # Find corresponding fluorescence image
-                fluor_name = bf_path.name.replace("BF", "488nm")
-                fluor_path = bf_path.parent / fluor_name
-
-                if not fluor_path.exists():
-                    print(f"[WARN] Fluorescence image not found: {fluor_name}")
-                    print(f"       Skipping this pair...")
-                    error_count += 1
-                    continue
-
-                # Create output subdirectory for this image
-                image_output_dir = group_output_dir / bf_path.stem
-                image_output_dir.mkdir(parents=True, exist_ok=True)
-
-                try:
-                    process_image(
-                        bf_path,
-                        image_output_dir
-                    )
-                    processed_count += 1
-
-                except Exception as e:
-                    print(f"[ERROR] Failed to process {bf_path.name}: {e}")
-                    error_count += 1
-                    import traceback
-                    traceback.print_exc()
-                    continue
-
-            # Consolidate group results
-            print(f"\n{'='*80}")
-            print(f"CONSOLIDATING GROUP: {group_name}")
-            print(f"{'='*80}")
-
-            try:
-                consolidate_to_excel(group_output_dir, group_name, PERCENTILE_TO_CUT)
-
-            except Exception as e:
-                print(f"[ERROR] Group consolidation failed: {e}")
-                import traceback
-                traceback.print_exc()
-
-            # Group summary
-            group_elapsed = time.time() - group_start
-            avg_time = group_elapsed / len(bf_images) if bf_images else 0
-
-            group_summaries.append({
-                "Group": group_name,
-                "Total_Images": len(bf_images),
-                "Processed": processed_count,
-                "Errors": error_count,
-                "Time_s": group_elapsed,
-                "Avg_Time_s": avg_time
-            })
-
-            print(f"\n{'='*80}")
-            print(f"GROUP {group_name} COMPLETE")
-            print(f"{'='*80}")
-            print(f"Images processed:  {processed_count}/{len(bf_images)}")
-            print(f"Errors:            {error_count}")
-            print(f"Time:              {group_elapsed:.2f}s")
-            print(f"Avg time/image:    {avg_time:.2f}s")
-            print(f"{'='*80}\n")
-
-        # ==================== CROSS-GROUP ANALYSIS ====================
-        print(f"\n{'#'*80}")
-        print(f"# CROSS-GROUP ANALYSIS")
-        print(f"{'#'*80}\n")
-
-        # Generate comparison plots
-        print(f"Generating comparison plots...")
-        try:
-            dataset_id = get_dataset_identifier()
-            generate_pairwise_group_vs_control_plots(
-                output_dir,
-                PERCENTILE_TO_CUT,
-                dataset_id
-            )
-            print(f"✓ Comparison plots saved to: {output_dir}")
-
-        except Exception as e:
-            print(f"[ERROR] Failed to generate comparison plots: {e}")
-            import traceback
-            traceback.print_exc()
-
-        # Perform statistical tests
-        print(f"\nPerforming statistical tests...")
-        try:
-            perform_statistical_tests(output_dir, PERCENTILE_TO_CUT)
-
-        except Exception as e:
-            print(f"[ERROR] Failed to perform statistical tests: {e}")
-            import traceback
-            traceback.print_exc()
-
-        # Export statistics to CSV
-        print(f"\nExporting statistics to CSV...")
-        try:
-            export_group_statistics_to_csv(output_dir)
-
-        except Exception as e:
-            print(f"[ERROR] Failed to export statistics: {e}")
-            import traceback
-            traceback.print_exc()
-
-        # ==================== FINAL SUMMARY ====================
-        overall_elapsed = time.time() - overall_start
-
-        print(f"\n{'='*80}")
-        print(f"ALL GROUPS PROCESSING COMPLETE")
-        print(f"{'='*80}")
-        print(f"\nPer-Group Summary:")
-        print(f"{'-'*80}")
-        print(f"{'Group':<20} {'Images':<10} {'Processed':<12} {'Errors':<10} {'Time (s)':<12}")
-        print(f"{'-'*80}")
-
-        total_images = 0
-        total_processed = 0
-        total_errors = 0
-
-        for summary in group_summaries:
-            print(f"{summary['Group']:<20} {summary['Total_Images']:<10} "
-                  f"{summary['Processed']:<12} {summary['Errors']:<10} "
-                  f"{summary['Time_s']:<12.2f}")
-            total_images += summary['Total_Images']
-            total_processed += summary['Processed']
-            total_errors += summary['Errors']
-
-        print(f"{'-'*80}")
-        print(f"{'TOTAL':<20} {total_images:<10} {total_processed:<12} {total_errors:<10} "
-              f"{overall_elapsed:<12.2f}")
-        print(f"{'-'*80}")
-
-        print(f"\nOverall Statistics:")
-        print(f"  Total groups:           {len(group_folders)}")
-        print(f"  Total images:           {total_images}")
-        print(f"  Successfully processed: {total_processed}")
-        print(f"  Errors:                 {total_errors}")
-        print(f"  Success rate:           {(total_processed/total_images*100):.1f}%")
-        print(f"  Total time:             {overall_elapsed:.2f}s ({overall_elapsed/60:.2f} min)")
-        print(f"  Average time/image:     {overall_elapsed/total_images:.2f}s")
-
-        print(f"\nOutput Structure:")
-        print(f"  Main output directory:  {output_dir}")
-        print(f"  Group folders:          {len(group_folders)}")
-        print(f"  Excel consolidations:   {len(list(output_dir.glob('*/*_master.xlsx')))}")
-        print(f"  Comparison plots:       {output_dir / 'group_comparison_boxplot.png'}")
-        print(f"  Statistical results:    {output_dir / 'statistical_tests_results.csv'}")
-        print(f"  Summary statistics:     {output_dir / 'group_summary_statistics.csv'}")
-
-        print(f"\n{'='*80}")
-        print(f"ANALYSIS PIPELINE COMPLETE")
-        print(f"{'='*80}\n")
-
+    if CONTROL_DIR.exists():
+        dirs_to_process.append(CONTROL_DIR)
     else:
-        print(f"[ERROR] Unknown mode: {mode}")
-        print(f"        Valid modes: 'single', 'all', 'all_10_19'")
+        print("[WARN] Control group folder does not exist; proceeding without it.")
+
+    img_paths: list[Path] = []
+    for d in dirs_to_process:
+        img_paths.extend(sorted(d.rglob(IMAGE_GLOB)))
+
+    print(f"Found {len(img_paths)} brightfield images matching '{IMAGE_GLOB}'")
+    if not img_paths:
+        raise FileNotFoundError(f"No images found under {SOURCE_DIR} matching {IMAGE_GLOB}")
+
+    total_processed = 0
+    total_failed = 0
+
+    for p in tqdm(img_paths, desc="Processing images", unit="img"):
+        out_root = (OUTPUT_DIR / p.parent.name) if SEPARATE_OUTPUT_BY_GROUP else OUTPUT_DIR
+        ensure_dir(out_root)
+
+        try:
+            process_image(p, out_root)
+            total_processed += 1
+        except Exception as e:
+            tqdm.write(f"[ERROR] Failed processing {p}: {e}")
+            total_failed += 1
+
+    print(f"\n{'=' * 80}")
+    print(f"SUMMARY: {total_processed} succeeded, {total_failed} failed")
+
+    if not SEPARATE_OUTPUT_BY_GROUP:
+        print("[WARN] SEPARATE_OUTPUT_BY_GROUP is False; this script expects per-group output folders.")
         return
 
-    print(f"\n{'='*80}")
-    print(f"✓ EXECUTION FINISHED SUCCESSFULLY")
-    print(f"{'='*80}\n")
+    # Consolidate per group
+    for group_dir in OUTPUT_DIR.iterdir():
+        if group_dir.is_dir() and len(list(group_dir.glob("*/object_stats.csv"))) > 0:
+            consolidate_to_excel(group_dir, group_dir.name, percentile)
+
+    print(f"\n{'=' * 80}")
+    print("Generating error bar comparison plots...")
+
+    if mode == "single" and selected_group_name is not None:
+        # Save plot into OUTPUT_DIR/{selected_group_name}/
+        selected_folder = OUTPUT_DIR / selected_group_name
+        ensure_dir(selected_folder)
+
+        plot_path = generate_error_bar_comparison(
+            output_dir=OUTPUT_DIR,
+            percentile=percentile,
+            restrict_to_groups=[selected_group_name, "Control"],
+            output_path=selected_folder / "error_bar_jitter_comparison_SD_vs_Control.png",
+            title_suffix=f"{selected_group_name} vs Control",
+            dataset_id=dataset_id,
+        )
+
+        if plot_path is not None:
+            embed_comparison_plots_into_all_excels(selected_folder, percentile, plot_path=plot_path)
+        else:
+            print("[WARN] Comparison plot not generated; embedding skipped.")
+
+    else:
+        # ALL-GROUPS mode:
+        #   - Control folder gets the ALL-GROUPS plot
+        #   - Each numeric folder gets its own vs-Control plot
+        generate_pairwise_group_vs_control_plots(OUTPUT_DIR, percentile, dataset_id)
+
+        print("Embedding per-group comparison plots into master Excel files...")
+        for group_dir in sorted(OUTPUT_DIR.iterdir()):
+            if not group_dir.is_dir():
+                continue
+
+            if group_dir.name == "Control group":
+                plot = group_dir / "error_bar_jitter_comparison_SD_all_groups.png"
+            elif re.fullmatch(r"\d+", group_dir.name):
+                plot = group_dir / "error_bar_jitter_comparison_SD_vs_Control.png"
+            else:
+                continue
+
+            if plot.exists():
+                embed_comparison_plots_into_all_excels(group_dir, percentile, plot_path=plot)
+    
+    # Print group means summary
+    print_group_means(OUTPUT_DIR)
+    
+    # Export statistics to CSV
+    export_group_statistics_to_csv(OUTPUT_DIR)
 
 
-# ==================== ENTRY POINT ====================
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\n\n[INFO] Process interrupted by user (Ctrl+C)")
-        print("       Partial results may be available in the output directory")
-    except Exception as e:
-        print(f"\n\n[FATAL ERROR] Unexpected error in main execution:")
-        print(f"              {e}")
-        import traceback
-        traceback.print_exc()
-        print("\n       Please check the error message above and verify:")
-        print("       1. All input paths exist and are accessible")
-        print("       2. Required Python packages are installed")
-        print("       3. Input images are in the correct format")
+    main()

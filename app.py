@@ -2089,9 +2089,11 @@ def main() -> None:
 
     print(f"Input dir: {_project_root.resolve()}")
 
-    percentile = get_percentile_option()
-    dataset_id = get_dataset_identifier()
     mode = get_run_mode()
+    dataset_id = get_dataset_identifier()
+    percentile = get_percentile_option()
+    #dataset_id = get_dataset_identifier()
+    #mode = get_run_mode()
 
     groups = list_sample_group_folders(SOURCE_DIR)
 
