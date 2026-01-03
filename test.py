@@ -2192,9 +2192,16 @@ def main() -> None:
     
     # Print group means summary
     print_group_means(OUTPUT_DIR)
-    
+
+
+
     # Export statistics to CSV
     export_group_statistics_to_csv(OUTPUT_DIR)
+
+    # Print divider line
+    print("=" * 80)
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
 
 
 if __name__ == "__main__":
