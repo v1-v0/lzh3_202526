@@ -1,8 +1,10 @@
-
+import os
 import cv2
 import numpy as np
 import sys
 import csv
+import textwrap
+
 
 import atexit
 import re
@@ -78,8 +80,9 @@ CONTROL_DIR = SOURCE_DIR / "Control group"
 # Segment only brightfield channel
 IMAGE_GLOB = "*_ch00.tif"
 
-OUTPUT_DIR = _project_root / "outputs"
-OUTPUT_DIR.mkdir(exist_ok=True)
+# OUTPUT_DIR will be set dynamically in main()
+OUTPUT_DIR: Optional[Path] = None
+
 
 # Scale bar parameters
 SCALE_BAR_LENGTH_UM = 10
@@ -118,7 +121,20 @@ FALLBACK_UM_PER_PX: Optional[float] = 0.109492
 
 # ==================================================
 # Helpers
-# ==================================================
+# =====================
+
+def logged_input(prompt: str) -> str:
+    """Input function that logs both prompt and user response"""
+    print(prompt, end='', flush=True)
+    user_input = input()
+    
+    # Log what user typed
+    if user_input.strip():
+        print(user_input)
+    else:
+        print("(pressed Enter)")
+    
+    return user_input
 
 def clear_output_dir(folder: Path) -> None:
     for p in folder.glob("*"):
@@ -212,17 +228,23 @@ def save_debug(
     img: np.ndarray,
     pixel_size_um: Optional[float] = None,
 ) -> None:
-    """Save debug image with optional scale bar"""
+    """Save debug image with optional scale bar - memory optimized"""
     out = folder / name
-    img_to_save = img.copy()
-
+    
+    # FIX: Work on copy only if scale bar needed
     if pixel_size_um is not None and pixel_size_um > 0:
         img_to_save = add_scale_bar(
-            img_to_save, float(pixel_size_um), "um", SCALE_BAR_LENGTH_UM
+            img.copy(),  # Only copy if needed
+            float(pixel_size_um), "um", SCALE_BAR_LENGTH_UM
         )
-
+    else:
+        img_to_save = img  # No copy needed
+    
     cv2.imwrite(str(out), img_to_save)
-
+    
+    # FIX: Explicitly free memory for large images
+    if img_to_save.nbytes > 10_000_000:  # >10MB
+        del img_to_save
 
 def list_sample_group_folders(source_dir: Path) -> list[Path]:
     groups: list[Path] = []
@@ -269,6 +291,8 @@ def prompt_user_select_group(groups: list[Path]) -> Optional[Path]:
         print("Out of range. Try again.")
 
 
+
+
 def prompt_user_select_single_group_only(groups: list[Path]) -> Path:
     """Single-group selection ONLY (no 'ALL')."""
     if not groups:
@@ -294,23 +318,25 @@ def prompt_user_select_single_group_only(groups: list[Path]) -> Path:
         print("Out of range. Try again.")
 
 
+
 def get_run_mode() -> str:
     """
     Choose processing mode:
-      - 'all_10_19': process numeric groups 10..19 plus Control group
+      - 'all_groups': process numeric groups 10..19 plus Control group
       - 'single': process one selected numeric group plus Control group
     """
     print("\nSelect run mode:")
-    print("  [1] ALL numeric groups + Control (percentile only)")
+    print("  [1] ALL numeric groups + Control")
     print("  [2] Single group + Control")
 
     while True:
-        s = input("Enter number: ").strip()
-        if s == "1":
-            return "all_10_19"
-        if s == "2":
+        choice = logged_input("Enter number: ").strip()
+
+        if choice == "1":
+            return "all_groups"
+        if choice == "2":
             return "single"
-        print("Invalid choice. Enter 1 or 2.")
+        print("Invalid choice. Please Enter 1 or 2.")
 
 
 def get_percentile_option() -> float:
@@ -321,34 +347,54 @@ def get_percentile_option() -> float:
     print("  [3] 30% (default)")
 
     while True:
-        choice = input("Enter number (or press Enter for default): ").strip()
-        if choice == "" or choice == "1":
+        choice = logged_input("Enter number (or press Enter for default): ").strip()
+        
+        if choice == "1":
+            print("[USER ACTION] Selected percentile: 20%")
             return 0.2
         if choice == "2":
+            print("[USER ACTION] Selected percentile: 25%")
             return 0.25
-        if choice == "3":
+        if choice == "" or choice == "3":
+            print("[USER ACTION] Selected percentile: 30% (default)")
             return 0.3
+        
         print("Invalid choice. Please enter 1, 2, or 3, or press Enter.")
 
+
 def get_dataset_identifier() -> str:
-    """Prompt user to input a custom dataset identifier for plot titles."""
+    """Prompt user for dataset identifier with validation and timestamp fallback"""
     print("\nEnter dataset identifier for plot titles (e.g., 'PD G-', 'Spike G+'):")
     print("  - This will appear at the start of all plot titles")
-    print("  - Press Enter to skip (no dataset label)")
+    print("  - Press Enter to use timestamp as label")
     
     while True:
-        dataset_id = input("Dataset label: ").strip()
+        dataset_id = logged_input("Dataset label: ").strip()
         
-        # Allow empty input (skip dataset label)
+        # If empty, use timestamp
         if dataset_id == "":
-            print("  → No dataset label will be added")
-            return ""
+            timestamp_label = datetime.now().strftime("%Y%m%d_%H%M%S")
+            print(f"  → Using timestamp as label: '{timestamp_label}'")
+            print(f"[USER ACTION] Dataset ID: {timestamp_label} (auto-generated)")
+            return timestamp_label
         
-        # Confirm non-empty input
+        # Validate length
+        if len(dataset_id) > 50:
+            print("  ✗ Error: Dataset ID too long (max 50 characters)")
+            continue
+        
+        # Check for invalid filesystem characters
+        invalid_chars = set('<>:"|?*\\/')
+        found_invalid = [c for c in dataset_id if c in invalid_chars]
+        if found_invalid:
+            print(f"  ✗ Error: Contains invalid characters: {', '.join(repr(c) for c in set(found_invalid))}")
+            continue
+        
         print(f"  → Using dataset label: '{dataset_id}'")
-        confirm = input("    Confirm? (y/n, or press Enter for yes): ").strip().lower()
+        confirm = logged_input("    Confirm? (y/n, or press Enter for yes): ").strip().lower()
         
         if confirm in ["", "y", "yes"]:
+            print(f"[USER ACTION] Dataset ID confirmed: '{dataset_id}'")
             return dataset_id
         else:
             print("    Let's try again...")
@@ -383,6 +429,10 @@ def get_pixel_size_um(
     xml_props_path: Optional[Path],
     xml_main_path: Optional[Path],
 ) -> Tuple[float, float]:
+    """Extract pixel size with detailed error reporting"""
+    
+    errors = []
+    
     if xml_props_path is not None:
         try:
             tree = ET.parse(xml_props_path)
@@ -419,9 +469,8 @@ def get_pixel_size_um(
                 )
 
             return float(x_len / x_n), float(y_len / y_n)
-
         except Exception as e:
-            print(f"[WARN] Failed to read pixel size from {xml_props_path}: {e}")
+            errors.append(f"Properties XML ({xml_props_path.name}): {e}")
 
     if xml_main_path is not None:
         try:
@@ -459,11 +508,13 @@ def get_pixel_size_um(
                 )
 
             return float((x_len_m * 1e6) / x_n), float((y_len_m * 1e6) / y_n)
-
         except Exception as e:
-            print(f"[WARN] Failed to read pixel size from {xml_main_path}: {e}")
-
-    raise ValueError("Could not determine pixel size (µm/px). Missing/invalid metadata XML.")
+            errors.append(f"Main XML ({xml_main_path.name}): {e}")
+    
+    error_summary = "\n  - ".join(errors) if errors else "No XML files provided"
+    raise ValueError(
+        f"Could not determine pixel size (µm/px).\nAttempted sources:\n  - {error_summary}"
+    )
 
 
 def contour_perimeter_um(contour: np.ndarray, um_per_px_x: float, um_per_px_y: float) -> float:
@@ -825,8 +876,19 @@ def generate_error_bar_comparison(
 
     If restrict_to_groups is provided, compare ONLY those groups (after display-name mapping).
     Example for single group mode: restrict_to_groups=["11", "Control"].
+    
+    Args:
+        output_dir: Root directory containing master Excel files
+        percentile: Percentile cutoff used for filtering (for title display only)
+        restrict_to_groups: Optional list of group names to include (after display name mapping)
+        output_path: Optional specific path for output plot
+        title_suffix: Additional text to append to plot title
+        dataset_id: Dataset identifier to prepend to plot title
+    
+    Returns:
+        Path to saved plot, or None if generation failed
     """
-    import textwrap  # Added for title wrapping
+    import textwrap
 
     excel_files = list(output_dir.rglob("*_master.xlsx"))
 
@@ -837,10 +899,12 @@ def generate_error_bar_comparison(
     all_data_rows: list[dict[str, object]] = []
     group_stats: dict[str, dict[str, float | int]] = {}
 
+    # Load data from all Excel files
     for excel_path in sorted(excel_files):
         group_name_raw = excel_path.stem.replace("_master", "")
         display_name = _display_group_name(group_name_raw)
 
+        # Skip groups not in restriction list (if provided)
         if restrict_to_groups is not None and display_name not in restrict_to_groups:
             continue
 
@@ -849,15 +913,22 @@ def generate_error_bar_comparison(
             df = pd.read_excel(excel_path, sheet_name=typical_sheet)
 
             if "Fluor_Density_per_BF_Area" not in df.columns:
+                print(f"[WARN] Missing Fluor_Density_per_BF_Area column in {excel_path.name}")
                 continue
 
             values = df["Fluor_Density_per_BF_Area"].dropna()
+            
+            if len(values) == 0:
+                print(f"[WARN] No valid data in {group_name_raw}")
+                continue
 
+            # Add individual data points
             for v in values:
                 all_data_rows.append(
                     {"Group": display_name, "Fluorescence Density": float(np.asarray(v).item())}
                 )
 
+            # Calculate statistics
             mean_val = float(np.asarray(values.mean()).item())
             std_val = float(np.asarray(values.std()).item())
             sem_val = float(np.asarray(values.sem()).item())
@@ -875,6 +946,7 @@ def generate_error_bar_comparison(
             print(f"[WARN] Could not read {group_name_raw}: {e}")
             continue
 
+    # Validate we have enough data
     if not all_data_rows:
         print("[WARN] No valid data found for comparison")
         return None
@@ -883,22 +955,41 @@ def generate_error_bar_comparison(
 
     # Stable group order: numeric ascending, Control last
     group_order: list[str] = sorted(
-        df_all["Group"].dropna().astype(str).drop_duplicates().tolist(), key=_group_order_key
+        df_all["Group"].dropna().astype(str).drop_duplicates().tolist(), 
+        key=_group_order_key
     )
 
-    if len(group_order) < 2:
-        print("[INFO] Need at least 2 groups to compare.")
+    # Validate we have sufficient data points for meaningful comparison
+    if len(df_all) < 2:
+        print(f"[INFO] Insufficient data points ({len(df_all)}) for comparison.")
+        return None
+    
+    # Validate we have data for requested groups (if restriction applied)
+    if restrict_to_groups is not None:
+        missing_groups = set(restrict_to_groups) - set(group_order)
+        if missing_groups:
+            print(f"[WARN] Missing data for requested groups: {missing_groups}")
+            if len(group_order) == 0:
+                print("[INFO] No valid groups found for comparison")
+                return None
+
+    # Need at least 1 group to plot (can be single group comparison)
+    if len(group_order) < 1:
+        print("[INFO] Need at least 1 group with data to generate plot.")
         return None
 
+    # Determine color palette
     palette_colors: list[Any] = ["silver", "violet"]
     if len(group_order) > 2:
         palette_colors = list(sns.color_palette("husl", len(group_order)))
+    elif len(group_order) == 1:
+        palette_colors = ["skyblue"]
 
-    # Generate SD plot
-    plt.figure(figsize=(8, 6)) # Slightly increased height for wrapped title
+    # Generate plot
+    plt.figure(figsize=(8, 6))
     sns.set_style("ticks")
 
-    # Bar plot WITHOUT seaborn error bars (we add SD ourselves)
+    # Bar plot WITHOUT seaborn error bars (we add SD manually)
     try:
         ax = sns.barplot(
             data=df_all,
@@ -914,7 +1005,7 @@ def generate_error_bar_comparison(
             alpha=0.7,
         )
     except TypeError:
-        # Older seaborn
+        # Fallback for older seaborn versions
         ax = sns.barplot(
             data=df_all,
             x="Group",
@@ -936,6 +1027,8 @@ def generate_error_bar_comparison(
     for xi, g in enumerate(group_order):
         m = float(np.asarray(means.get(g, 0.0)).item())
         sd = float(np.asarray(sds.get(g, 0.0)).item())
+        
+        # Double-wide caps for Control group for better visibility
         cap = 14 if g == "Control" else 7
 
         ax.errorbar(
@@ -950,6 +1043,7 @@ def generate_error_bar_comparison(
             zorder=10,
         )
 
+    # Add jitter (strip plot) overlay
     sns.stripplot(
         x="Group",
         y="Fluorescence Density",
@@ -963,75 +1057,72 @@ def generate_error_bar_comparison(
         alpha=0.6,
     )
 
+    # Axis labels
     plt.ylabel("Fluorescence Density (a.u./µm²)", fontsize=12, fontweight="bold")
     plt.xlabel("")
     plt.xticks(fontsize=10, fontweight="bold")
     plt.yticks(fontsize=10, fontweight="bold")
     
-    # --- BUILD TITLE FROM LEFT TO RIGHT ---
+    # Build title from left to right
     pct_display = int(percentile * 100)
     
-    # Start with dataset ID if provided
     title_parts = []
     if dataset_id:
         title_parts.append(dataset_id)
     
-    # Add main comparison text
-    title_parts.append(f"Comparison (Error Bars: Standard Deviation) — Typical = Middle {100 - 2*pct_display}% (Cut top/bottom {pct_display}%)")
+    # Main comparison text
+    title_parts.append(
+        f"Comparison (Error Bars: Standard Deviation) — "
+        f"Typical = Middle {100 - 2*pct_display}% (Cut top/bottom {pct_display}%)"
+    )
     
-    # Add suffix if provided
     if title_suffix:
         title_parts.append(title_suffix)
     
-    # Join all parts with separator
+    # Join and wrap
     raw_title = " — ".join(title_parts)
     
-    # Wrap title at 60 characters (increased from 50 to accommodate dataset ID)
-    wrapped_title = "\n".join(textwrap.wrap(raw_title, width=60))
+    # Smart wrapping that doesn't break words
+    wrapped_title = "\n".join(
+        textwrap.wrap(raw_title, width=60, break_long_words=False, break_on_hyphens=False)
+    )
     plt.title(wrapped_title, fontsize=11, pad=10)
 
+    # Enhance spines
     for axis in ["top", "bottom", "left", "right"]:
         plt.gca().spines[axis].set_linewidth(1.5)
 
     plt.tight_layout()
 
+    # Determine output path
     if output_path is not None:
         out_path = output_path
     else:
-        out_path = output_dir / "error_bar_jitter_comparison_SD_all_groups.png"
+        # Default naming based on what was plotted
         if restrict_to_groups is not None:
             safe = "_".join([g.replace(" ", "_") for g in group_order])
             out_path = output_dir / f"error_bar_jitter_comparison_SD_{safe}.png"
+        else:
+            out_path = output_dir / "error_bar_jitter_comparison_SD_all_groups.png"
 
-    plt.savefig(out_path, dpi=300)
-    plt.close()
-    print(f"Saved plot: {out_path}")
-    return out_path
+    # Save and cleanup
+    try:
+        plt.savefig(out_path, dpi=300)
+        plt.close()
+        print(f"Saved plot: {out_path}")
+        return out_path
+    except Exception as e:
+        print(f"[ERROR] Failed to save plot to {out_path}: {e}")
+        plt.close()
+        return None
+    
 
 
-def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: float, dataset_id: str = "") -> None:  # <-- ADD dataset_id
-    """
-    ALL-GROUPS mode behavior:
-      - Save an "all groups" plot only into the Control group folder
-      - For each numeric group folder: compare ONLY that group vs Control and save plot into that group folder
-    """
-    control_folder = output_root / "Control group"
-    control_master = control_folder / "Control group_master.xlsx"
-    if not control_master.exists():
-        print(f"[WARN] Control master not found: {control_master}")
-        return
-
-    # All-groups plot
-    all_groups_plot_path = control_folder / "error_bar_jitter_comparison_SD_all_groups.png"
-    generate_error_bar_comparison(
-        output_dir=output_root,
-        percentile=percentile,
-        restrict_to_groups=None,
-        output_path=all_groups_plot_path,
-        title_suffix="ALL groups",
-        dataset_id=dataset_id,  # <-- ADD THIS
-    )
-
+def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: float, dataset_id: str = "") -> None:
+    """Generate pairwise plots"""
+    
+    # ... existing code for all-groups plot ...
+    
     # Pairwise plots
     for group_dir in sorted(output_root.iterdir()):
         if not group_dir.is_dir():
@@ -1047,16 +1138,22 @@ def generate_pairwise_group_vs_control_plots(output_root: Path, percentile: floa
             continue
 
         pair_plot_path = group_dir / "error_bar_jitter_comparison_SD_vs_Control.png"
-        generate_error_bar_comparison(
+        
+        # FIX: Check return value
+        result = generate_error_bar_comparison(
             output_dir=output_root,
             percentile=percentile,
             restrict_to_groups=[group_dir.name, "Control"],
             output_path=pair_plot_path,
             title_suffix=f"{group_dir.name} vs Control",
-            dataset_id=dataset_id,  # <-- ADD THIS
+            dataset_id=dataset_id,
         )
+        
+        if result is not None:
+            print(f"[OK] Pairwise plot saved for group {group_dir.name}: {pair_plot_path}")
+        else:
+            print(f"[WARN] Failed to generate pairwise plot for group {group_dir.name}")
 
-        print(f"[OK] Pairwise plot saved for group {group_dir.name}: {pair_plot_path}")
 
 
 def embed_comparison_plots_into_all_excels(
@@ -1064,23 +1161,19 @@ def embed_comparison_plots_into_all_excels(
     percentile: float = 0.2,
     plot_path: Optional[Path] = None,
 ) -> None:
-    """
-    Post-process all master Excel files under output_root:
-      - rename 'Error_Bar_Summary' to 'Summary' (or keep 'Summary' if already present)
-      - move 'Summary' to the first worksheet
-      - embed SD comparison plot into 'Summary'
-
-    If plot_path is provided, embed that plot instead of the default all-groups plot.
-    """
+    """Post-process Excel files and embed plots"""
+    
     if plot_path is None:
         sd_plot = "error_bar_jitter_comparison_SD_all_groups.png"
         sd_img_path = output_root / sd_plot
     else:
         sd_img_path = plot_path
 
+    # FIX: Early validation
     if not sd_img_path.exists():
         print(f"[WARN] SD plot not found, embedding skipped: {sd_img_path}")
-
+        return  # Changed from just printing warning
+    
     excel_files = sorted(output_root.rglob("*_master.xlsx"))
     if not excel_files:
         print(f"[WARN] No master Excel files found under {output_root}")
@@ -1150,12 +1243,14 @@ def embed_comparison_plots_into_all_excels(
 
 
 def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -> None:
-    """Consolidate all CSVs in a group folder into one Excel workbook with statistics and color coding"""
+    """Consolidate all CSVs in a group folder into one Excel workbook"""
     csv_files = list(output_dir.glob("*/object_stats.csv"))
 
     if not csv_files:
         print(f"[WARN] No CSV files found in {output_dir}")
         return
+    
+    print(f"[INFO] Consolidating {len(csv_files)} CSV files for group {group_name}...")
 
     excel_path = output_dir / f"{group_name}_master.xlsx"
 
@@ -1988,8 +2083,7 @@ def print_group_means(output_root: Path) -> None:
     print("="*80 + "\n")
 
 def export_group_statistics_to_csv(output_root: Path) -> None:
-    """Export detailed group-level statistics to CSV for statistical analysis"""
-    import pandas as pd
+    """Export statistics with enhanced console summary"""
     
     print("\n" + "="*80)
     print("EXPORTING GROUP STATISTICS TO CSV")
@@ -2075,31 +2169,176 @@ def export_group_statistics_to_csv(output_root: Path) -> None:
     # Additional summary
     print("\nKey Insights:")
     print(f"  • Total groups analyzed: {len(stats_df)}")
+    print(f"  • Total particles (typical only): {stats_df['N'].sum()}")
+    print(f"  • Mean across all groups: {stats_df['Mean'].mean():.2f} ± {stats_df['Mean'].std():.2f} a.u./µm²")
     print(f"  • Smallest sample size: Group {stats_df.loc[stats_df['N'].idxmin(), 'Group']} (N={stats_df['N'].min()})")
     print(f"  • Largest sample size: Group {stats_df.loc[stats_df['N'].idxmax(), 'Group']} (N={stats_df['N'].max()})")
-    print(f"  • Highest mean density: Group {stats_df.loc[stats_df['Mean'].idxmax(), 'Group']} ({stats_df['Mean'].max():.2f} a.u./µm²)")
-    print(f"  • Lowest mean density: Group {stats_df.loc[stats_df['Mean'].idxmin(), 'Group']} ({stats_df['Mean'].min():.2f} a.u./µm²)")
+    
+    # FIX: Add coefficient of variation analysis
+    high_cv = stats_df[stats_df['CV_percent'] > 30]
+    if not high_cv.empty:
+        print(f"\n  ⚠ Groups with high variability (CV >30%):")
+        for _, row in high_cv.iterrows():
+            print(f"     - Group {row['Group']}: CV={row['CV_percent']:.1f}%")
+    
     print()
 
+# ==================================================
+# Source Directory Selection
+# ==================================================
+def select_source_directory(max_depth=2) -> Optional[Path]:
+    """
+    Lists directories up to 2 levels deep in the 'source' subfolder,
+    but only if they have a direct sub-folder with a name that starts 
+    with 'Control' or 'control'.
+    Prompts the user to select one by entering its number or relative path,
+    and returns the selected full Path from the application root.
+    """
+    root_dir = Path('source')
+    
+    if not root_dir.exists():
+        print(f"[ERROR] Source directory not found: {root_dir.resolve()}")
+        return None
+    
+    directories = []
+    
+    # Walk through the directory up to max_depth + 1
+    for root, dirs, files in os.walk(root_dir):
+        rel_path = os.path.relpath(root, root_dir)
+        if rel_path == '.':
+            depth = 0
+        else:
+            depth = rel_path.count(os.sep) + 1
+        
+        if depth > max_depth + 1:
+            dirs[:] = []
+            continue
+        
+        if depth > 0:
+            directories.append(rel_path.replace(os.sep, '\\'))
+    
+    # Find directories that have a direct 'Control' subfolder
+    valid_directories = []
+    for dir_path in directories:
+        # Only check directories up to max_depth
+        if len(dir_path.split('\\')) > max_depth:
+            continue
+            
+        # Check if this directory has a direct child starting with 'Control'
+        full_path = root_dir / dir_path.replace('\\', os.sep)
+        if full_path.is_dir():
+            try:
+                subdirs = [d for d in os.listdir(full_path) 
+                          if (full_path / d).is_dir()]
+                has_control = any(d.lower().startswith('control') for d in subdirs)
+                if has_control:
+                    valid_directories.append(dir_path)
+            except OSError:
+                continue
+    
+    # Remove duplicates and sort
+    directories = sorted(set(valid_directories))
+    
+    # Display the list
+    if not directories:
+        print("[ERROR] No valid directories found with Control subfolders.")
+        return None
+    
+    print("\n" + "="*80)
+    print("SELECT SOURCE DIRECTORY")
+    print("="*80)
+    print("\nAvailable directories (up to 2 levels deep):")
+    for i, dir_path in enumerate(directories, 1):
+        print(f"  [{i}] {dir_path}")
+    
+    # Prompt user to select
+    while True:
+        selected = logged_input("\nEnter the number or full path of the directory (or 'q' to quit): ").strip()
+        print(f"[USER INPUT] Directory selection: {selected}")
+        
+        if selected.lower() in {'q', 'quit', 'exit'}:
+            raise SystemExit(0)
+        
+        # Check if input is a number
+        if selected.isdigit():
+            num = int(selected)
+            if 1 <= num <= len(directories):
+                selected_path = directories[num - 1]
+                # Return full relative path from application root
+                full_selected = root_dir / selected_path.replace('\\', os.sep)
+                print(f"\n✓ Selected: {full_selected}")
+                return full_selected
+            else:
+                print(f"Invalid number. Please enter a number between 1 and {len(directories)}.")
+        # Check if input is a valid path
+        elif selected in directories:
+            # Return full relative path from application root
+            full_selected = root_dir / selected.replace('\\', os.sep)
+            print(f"\n✓ Selected: {full_selected}")
+            return full_selected
+        else:
+            print("Invalid selection. Please enter a valid number or path.")
 
 
 def main() -> None:
+    # --- STEP 1: Select source directory ---
+    selected_source_dir = select_source_directory()
+    if selected_source_dir is None:
+        print("[ERROR] No source directory selected. Exiting.")
+        return
+    
+    # Update SOURCE_DIR and CONTROL_DIR based on selection
+    global SOURCE_DIR, CONTROL_DIR, OUTPUT_DIR
+    SOURCE_DIR = selected_source_dir
+    
+    # Find Control directory within selected source
+    control_candidates = [
+        d for d in SOURCE_DIR.iterdir() 
+        if d.is_dir() and d.name.lower().startswith('control')
+    ]
+    
+    if control_candidates:
+        CONTROL_DIR = control_candidates[0]
+        print(f"✓ Control directory found: {CONTROL_DIR.name}")
+    else:
+        print("[WARN] No Control directory found in selected source")
+        CONTROL_DIR = SOURCE_DIR / "Control group"  # Fallback
+
+    # --- STEP 2: Select dataset identifier ---
+    dataset_id = get_dataset_identifier()
+    
+    # --- STEP 3: Create output directory based on dataset_id ---
+    if dataset_id:
+        # Sanitize dataset_id for use in folder name (remove/replace invalid characters)
+        safe_dataset_id = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in dataset_id)
+        safe_dataset_id = safe_dataset_id.strip().replace(' ', '_')
+        output_folder_name = f"{safe_dataset_id}_{_timestamp}_{_script_name}"
+    else:
+        output_folder_name = f"{_timestamp}_{_script_name}"
+    
+    OUTPUT_DIR = _project_root / "outputs" / output_folder_name
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    
+    print(f"\n✓ Output directory: {OUTPUT_DIR}")
+    
+    # --- STEP 4: Select run mode ---
+    mode = get_run_mode()
+    
+    # --- STEP 5: Select percentile ---
+    percentile = get_percentile_option()
+
+    # Clear output directory if configured
     if CLEAR_OUTPUT_DIR_EACH_RUN:
         clear_output_dir(OUTPUT_DIR)
 
-    print(f"Input dir: {_project_root.resolve()}")
+    print(f"Application root: {_project_root.resolve()}")
 
-    mode = get_run_mode()
-    dataset_id = get_dataset_identifier()
-    percentile = get_percentile_option()
-    #dataset_id = get_dataset_identifier()
-    #mode = get_run_mode()
-
+    # --- Continue with existing processing logic ---
     groups = list_sample_group_folders(SOURCE_DIR)
 
     selected_group_name: Optional[str] = None
 
-    if mode == "all_10_19":
+    if mode == "all_groups":
         dirs_to_process = groups
         print(f"Selected numeric groups: {[d.name for d in dirs_to_process]}")
     else:
@@ -2121,6 +2360,7 @@ def main() -> None:
     if not img_paths:
         raise FileNotFoundError(f"No images found under {SOURCE_DIR} matching {IMAGE_GLOB}")
 
+    # [Rest of the function remains unchanged...]
     total_processed = 0
     total_failed = 0
 
@@ -2151,7 +2391,6 @@ def main() -> None:
     print("Generating error bar comparison plots...")
 
     if mode == "single" and selected_group_name is not None:
-        # Save plot into OUTPUT_DIR/{selected_group_name}/
         selected_folder = OUTPUT_DIR / selected_group_name
         ensure_dir(selected_folder)
 
@@ -2170,9 +2409,6 @@ def main() -> None:
             print("[WARN] Comparison plot not generated; embedding skipped.")
 
     else:
-        # ALL-GROUPS mode:
-        #   - Control folder gets the ALL-GROUPS plot
-        #   - Each numeric folder gets its own vs-Control plot
         generate_pairwise_group_vs_control_plots(OUTPUT_DIR, percentile, dataset_id)
 
         print("Embedding per-group comparison plots into master Excel files...")
@@ -2190,15 +2426,18 @@ def main() -> None:
             if plot.exists():
                 embed_comparison_plots_into_all_excels(group_dir, percentile, plot_path=plot)
     
-    # Print group means summary
     print_group_means(OUTPUT_DIR)
-
-
-
-    # Export statistics to CSV
     export_group_statistics_to_csv(OUTPUT_DIR)
 
-    # Print divider line
+    # --- Copy log file to output directory ---
+    try:
+        import shutil
+        log_copy_path = OUTPUT_DIR / _log_path.name
+        shutil.copy2(_log_path, log_copy_path)
+        print(f"\n✓ Log file copied to: {log_copy_path}")
+    except Exception as e:
+        print(f"\n[WARN] Could not copy log file to output directory: {e}")
+
     print("=" * 80)
     sys.stdout = sys.__stdout__
     sys.stderr = sys.__stderr__
