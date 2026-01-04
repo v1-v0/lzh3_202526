@@ -59,6 +59,8 @@ project_root/
 │
 ├── app.py                          # Main analysis script
 │
+├── outputs                         # OUTPU FOLDER
+│
 └── source/                         # INPUT FOLDER (required)
     │
     ├── Experiment_A/               # Experiment folder (any name)
