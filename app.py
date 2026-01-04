@@ -49,18 +49,28 @@ class Tee:
         for s in self.streams:
             s.flush()
 
+def get_project_root() -> Path:
+    """Get project root (works as script and as .exe)"""
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable
+        return Path(sys.executable).resolve().parent
+    else:
+        # Running as script
+        return Path(__file__).resolve().parent
 
-_project_root = Path(__file__).resolve().parent
+_project_root = get_project_root()
 _logs_dir = _project_root / "logs"
 _logs_dir.mkdir(exist_ok=True)
 _timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-_script_name = Path(__file__).stem
+_script_name = Path(sys.argv[0]).stem
 _log_path = _logs_dir / f"run_{_timestamp}_{_script_name}.txt"
 _log_file = open(_log_path, "w", encoding="utf-8")
 
 sys.stdout = Tee(sys.stdout, _log_file)
 sys.stderr = Tee(sys.stderr, _log_file)
 print(f"Saving output to: {_log_path}")
+print(f"Project root: {_project_root.resolve()}")
+print(f"Running as: {'EXECUTABLE' if getattr(sys, 'frozen', False) else 'SCRIPT'}")
 
 
 @atexit.register
@@ -69,7 +79,6 @@ def _close_log_file() -> None:
         _log_file.close()
     except Exception:
         pass
-
 
 # ==================================================
 # Configuration
