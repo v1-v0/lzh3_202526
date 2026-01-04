@@ -24,6 +24,7 @@ env/
 # Project-specific directories
 outputs/
 source/
+source2/
 source_no_meta/
 processed/
 debug/
