@@ -2418,23 +2418,43 @@ def main() -> None:
             print("[WARN] Comparison plot not generated; embedding skipped.")
 
     else:
+        # Generate pairwise plots for each group vs Control
         generate_pairwise_group_vs_control_plots(OUTPUT_DIR, percentile, dataset_id)
 
-        print("Embedding per-group comparison plots into master Excel files...")
+        # ✅ NEW: Generate consolidated all-groups comparison plot
+        print("\nGenerating consolidated all-groups comparison plot...")
+        all_groups_plot_path = generate_error_bar_comparison(
+            output_dir=OUTPUT_DIR,
+            percentile=percentile,
+            restrict_to_groups=None,  # Include all groups
+            output_path=OUTPUT_DIR / "error_bar_jitter_comparison_SD_all_groups.png",
+            title_suffix="All Groups",
+            dataset_id=dataset_id,
+        )
+
+        if all_groups_plot_path is None:
+            print("[WARN] Consolidated all-groups plot generation failed.")
+
+        # Embed plots into Excel files
+        print("\nEmbedding per-group comparison plots into master Excel files...")
         for group_dir in sorted(OUTPUT_DIR.iterdir()):
             if not group_dir.is_dir():
                 continue
 
             if group_dir.name == "Control group":
-                plot = group_dir / "error_bar_jitter_comparison_SD_all_groups.png"
+                # Control group gets the all-groups plot
+                plot = all_groups_plot_path
             elif re.fullmatch(r"\d+", group_dir.name):
+                # Numeric groups get their pairwise plot
                 plot = group_dir / "error_bar_jitter_comparison_SD_vs_Control.png"
             else:
                 continue
 
-            if plot.exists():
+            if plot and plot.exists():
                 embed_comparison_plots_into_all_excels(group_dir, percentile, plot_path=plot)
-    
+            else:
+                print(f"[WARN] Plot not found for {group_dir.name}, skipping    embedding.")
+
     print_group_means(OUTPUT_DIR)
     export_group_statistics_to_csv(OUTPUT_DIR)
 
