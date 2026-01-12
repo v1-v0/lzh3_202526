@@ -1,0 +1,790 @@
+Pairing Details for: Spike sample
+====================================================================================================
+
+
+Folder: 1
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 5
+Perfect match: True
+
+Matched Identifier Pairs:
+
+  Identifier: 1
+    G- files:
+      [ch00] source\Spike sample\G-\1\G- biaopi 1-1_ch00.tif
+      [ch01] source\Spike sample\G-\1\G- biaopi 1-1_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\1\G+ biaopi 1-1_ch00.tif
+      [ch01] source\Spike sample\G+\1\G+ biaopi 1-1_ch01.tif
+
+  Identifier: 2
+    G- files:
+      [ch00] source\Spike sample\G-\1\G- biaopi 1-2_ch00.tif
+      [ch01] source\Spike sample\G-\1\G- biaopi 1-2_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\1\G+ biaopi 1-2_ch00.tif
+      [ch01] source\Spike sample\G+\1\G+ biaopi 1-2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\Spike sample\G-\1\G- biaopi 1-3_ch00.tif
+      [ch01] source\Spike sample\G-\1\G- biaopi 1-3_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\1\G+ biaopi 1-3_ch00.tif
+      [ch01] source\Spike sample\G+\1\G+ biaopi 1-3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\Spike sample\G-\1\G- biaopi 1-4_ch00.tif
+      [ch01] source\Spike sample\G-\1\G- biaopi 1-4_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\1\G+ biaopi 1-4_ch00.tif
+      [ch01] source\Spike sample\G+\1\G+ biaopi 1-4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\Spike sample\G-\1\G- biaopi 1-5_ch00.tif
+      [ch01] source\Spike sample\G-\1\G- biaopi 1-5_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\1\G+ biaopi 1-5_ch00.tif
+      [ch01] source\Spike sample\G+\1\G+ biaopi 1-5_ch01.tif
+
+====================================================================================================
+
+Folder: 10
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 5
+Perfect match: True
+
+Matched Identifier Pairs:
+
+  Identifier: 1
+    G- files:
+      [ch00] source\Spike sample\G-\10\G- PA 1-1_ch00.tif
+      [ch01] source\Spike sample\G-\10\G- PA 1-1_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\10\G+ tuoye 1-1_ch00.tif
+      [ch01] source\Spike sample\G+\10\G+ tuoye 1-1_ch01.tif
+
+  Identifier: 2
+    G- files:
+      [ch00] source\Spike sample\G-\10\G- PA 1-2_ch00.tif
+      [ch01] source\Spike sample\G-\10\G- PA 1-2_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\10\G+ tuoye 1-2_ch00.tif
+      [ch01] source\Spike sample\G+\10\G+ tuoye 1-2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\Spike sample\G-\10\G- PA 1-3_ch00.tif
+      [ch01] source\Spike sample\G-\10\G- PA 1-3_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\10\G+ tuoye 1-3_ch00.tif
+      [ch01] source\Spike sample\G+\10\G+ tuoye 1-3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\Spike sample\G-\10\G- PA 1-4_ch00.tif
+      [ch01] source\Spike sample\G-\10\G- PA 1-4_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\10\G+ tuoye 1-4_ch00.tif
+      [ch01] source\Spike sample\G+\10\G+ tuoye 1-4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\Spike sample\G-\10\G- PA 1-5_ch00.tif
+      [ch01] source\Spike sample\G-\10\G- PA 1-5_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\10\G+ tuoye 1-5_ch00.tif
+      [ch01] source\Spike sample\G+\10\G+ tuoye 1-5_ch01.tif
+
+====================================================================================================
+
+Folder: 11
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 5
+Perfect match: True
+
+Matched Identifier Pairs:
+
+  Identifier: 1
+    G- files:
+      [ch00] source\Spike sample\G-\11\G- PA 2-1_ch00.tif
+      [ch01] source\Spike sample\G-\11\G- PA 2-1_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\11\G+ tuoye 2-1_ch00.tif
+      [ch01] source\Spike sample\G+\11\G+ tuoye 2-1_ch01.tif
+
+  Identifier: 2
+    G- files:
+      [ch00] source\Spike sample\G-\11\G- PA 2-2_ch00.tif
+      [ch01] source\Spike sample\G-\11\G- PA 2-2_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\11\G+ tuoye 2-2_ch00.tif
+      [ch01] source\Spike sample\G+\11\G+ tuoye 2-2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\Spike sample\G-\11\G- PA 2-3_ch00.tif
+      [ch01] source\Spike sample\G-\11\G- PA 2-3_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\11\G+ tuoye 2-3_ch00.tif
+      [ch01] source\Spike sample\G+\11\G+ tuoye 2-3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\Spike sample\G-\11\G- PA 2-4_ch00.tif
+      [ch01] source\Spike sample\G-\11\G- PA 2-4_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\11\G+ tuoye 2-4_ch00.tif
+      [ch01] source\Spike sample\G+\11\G+ tuoye 2-4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\Spike sample\G-\11\G- PA 2-5_ch00.tif
+      [ch01] source\Spike sample\G-\11\G- PA 2-5_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\11\G+ tuoye 2-5_ch00.tif
+      [ch01] source\Spike sample\G+\11\G+ tuoye 2-5_ch01.tif
+
+====================================================================================================
+
+Folder: 12
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 5
+Perfect match: True
+
+Matched Identifier Pairs:
+
+  Identifier: 1
+    G- files:
+      [ch00] source\Spike sample\G-\12\G- PA 3-1_ch00.tif
+      [ch01] source\Spike sample\G-\12\G- PA 3-1_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\12\G+ tuoye 3-1_ch00.tif
+      [ch01] source\Spike sample\G+\12\G+ tuoye 3-1_ch01.tif
+
+  Identifier: 2
+    G- files:
+      [ch00] source\Spike sample\G-\12\G- PA 3-2_ch00.tif
+      [ch01] source\Spike sample\G-\12\G- PA 3-2_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\12\G+ tuoye 3-2_ch00.tif
+      [ch01] source\Spike sample\G+\12\G+ tuoye 3-2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\Spike sample\G-\12\G- PA 3-3_ch00.tif
+      [ch01] source\Spike sample\G-\12\G- PA 3-3_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\12\G+ tuoye 3-3_ch00.tif
+      [ch01] source\Spike sample\G+\12\G+ tuoye 3-3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\Spike sample\G-\12\G- PA 3-4_ch00.tif
+      [ch01] source\Spike sample\G-\12\G- PA 3-4_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\12\G+ tuoye 3-4_ch00.tif
+      [ch01] source\Spike sample\G+\12\G+ tuoye 3-4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\Spike sample\G-\12\G- PA 3-5_ch00.tif
+      [ch01] source\Spike sample\G-\12\G- PA 3-5_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\12\G+ tuoye 3-5_ch00.tif
+      [ch01] source\Spike sample\G+\12\G+ tuoye 3-5_ch01.tif
+
+====================================================================================================
+
+Folder: 13
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 0
+Perfect match: False
+
+
+  Missing in G- (present in G+):
+    - 1
+        [ch00] source\Spike sample\G+\13\G+ Ecoli 1-1_ch00.tif
+        [ch01] source\Spike sample\G+\13\G+ Ecoli 1-1_ch01.tif
+    - 2
+        [ch00] source\Spike sample\G+\13\G+ Ecoli 1-2_ch00.tif
+        [ch01] source\Spike sample\G+\13\G+ Ecoli 1-2_ch01.tif
+    - 3
+        [ch00] source\Spike sample\G+\13\G+ Ecoli 1-3_ch00.tif
+        [ch01] source\Spike sample\G+\13\G+ Ecoli 1-3_ch01.tif
+    - 4
+        [ch00] source\Spike sample\G+\13\G+ Ecoli 1-4_ch00.tif
+        [ch01] source\Spike sample\G+\13\G+ Ecoli 1-4_ch01.tif
+    - 5
+        [ch00] source\Spike sample\G+\13\G+ Ecoli 1-5_ch00.tif
+        [ch01] source\Spike sample\G+\13\G+ Ecoli 1-5_ch01.tif
+
+====================================================================================================
+
+Folder: 14
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 0
+Perfect match: False
+
+
+  Missing in G- (present in G+):
+    - 1
+        [ch00] source\Spike sample\G+\14\G+ Ecoli 2-1_ch00.tif
+        [ch01] source\Spike sample\G+\14\G+ Ecoli 2-1_ch01.tif
+    - 2
+        [ch00] source\Spike sample\G+\14\G+ Ecoli 2-2_ch00.tif
+        [ch01] source\Spike sample\G+\14\G+ Ecoli 2-2_ch01.tif
+    - 3
+        [ch00] source\Spike sample\G+\14\G+ Ecoli 2-3_ch00.tif
+        [ch01] source\Spike sample\G+\14\G+ Ecoli 2-3_ch01.tif
+    - 4
+        [ch00] source\Spike sample\G+\14\G+ Ecoli 2-4_ch00.tif
+        [ch01] source\Spike sample\G+\14\G+ Ecoli 2-4_ch01.tif
+    - 5
+        [ch00] source\Spike sample\G+\14\G+ Ecoli 2-5_ch00.tif
+        [ch01] source\Spike sample\G+\14\G+ Ecoli 2-5_ch01.tif
+
+====================================================================================================
+
+Folder: 15
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 0
+Perfect match: False
+
+
+  Missing in G- (present in G+):
+    - 1
+        [ch00] source\Spike sample\G+\15\G+ Ecoli 3-1_ch00.tif
+        [ch01] source\Spike sample\G+\15\G+ Ecoli 3-1_ch01.tif
+    - 2
+        [ch00] source\Spike sample\G+\15\G+ Ecoli 3-2_ch00.tif
+        [ch01] source\Spike sample\G+\15\G+ Ecoli 3-2_ch01.tif
+    - 3
+        [ch00] source\Spike sample\G+\15\G+ Ecoli 3-3_ch00.tif
+        [ch01] source\Spike sample\G+\15\G+ Ecoli 3-3_ch01.tif
+    - 4
+        [ch00] source\Spike sample\G+\15\G+ Ecoli 3-4_ch00.tif
+        [ch01] source\Spike sample\G+\15\G+ Ecoli 3-4_ch01.tif
+    - 5
+        [ch00] source\Spike sample\G+\15\G+ Ecoli 3-5_ch00.tif
+        [ch01] source\Spike sample\G+\15\G+ Ecoli 3-5_ch01.tif
+
+====================================================================================================
+
+Folder: 16
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 0
+Perfect match: False
+
+
+  Missing in G- (present in G+):
+    - 1
+        [ch00] source\Spike sample\G+\16\G+ PA 1-1_ch00.tif
+        [ch01] source\Spike sample\G+\16\G+ PA 1-1_ch01.tif
+    - 2
+        [ch00] source\Spike sample\G+\16\G+ PA 1-2_ch00.tif
+        [ch01] source\Spike sample\G+\16\G+ PA 1-2_ch01.tif
+    - 3
+        [ch00] source\Spike sample\G+\16\G+ PA 1-3_ch00.tif
+        [ch01] source\Spike sample\G+\16\G+ PA 1-3_ch01.tif
+    - 4
+        [ch00] source\Spike sample\G+\16\G+ PA 1-4_ch00.tif
+        [ch01] source\Spike sample\G+\16\G+ PA 1-4_ch01.tif
+    - 5
+        [ch00] source\Spike sample\G+\16\G+ PA 1-5_ch00.tif
+        [ch01] source\Spike sample\G+\16\G+ PA 1-5_ch01.tif
+
+====================================================================================================
+
+Folder: 17
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 0
+Perfect match: False
+
+
+  Missing in G- (present in G+):
+    - 1
+        [ch00] source\Spike sample\G+\17\G+ PA 2-1_ch00.tif
+        [ch01] source\Spike sample\G+\17\G+ PA 2-1_ch01.tif
+    - 2
+        [ch00] source\Spike sample\G+\17\G+ PA 2-2_ch00.tif
+        [ch01] source\Spike sample\G+\17\G+ PA 2-2_ch01.tif
+    - 3
+        [ch00] source\Spike sample\G+\17\G+ PA 2-3_ch00.tif
+        [ch01] source\Spike sample\G+\17\G+ PA 2-3_ch01.tif
+    - 4
+        [ch00] source\Spike sample\G+\17\G+ PA 2-4_ch00.tif
+        [ch01] source\Spike sample\G+\17\G+ PA 2-4_ch01.tif
+    - 5
+        [ch00] source\Spike sample\G+\17\G+ PA 2-5_ch00.tif
+        [ch01] source\Spike sample\G+\17\G+ PA 2-5_ch01.tif
+
+====================================================================================================
+
+Folder: 18
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 0
+Perfect match: False
+
+
+  Missing in G- (present in G+):
+    - 1
+        [ch00] source\Spike sample\G+\18\G+ PA 3-1_ch00.tif
+        [ch01] source\Spike sample\G+\18\G+ PA 3-1_ch01.tif
+    - 2
+        [ch00] source\Spike sample\G+\18\G+ PA 3-2_ch00.tif
+        [ch01] source\Spike sample\G+\18\G+ PA 3-2_ch01.tif
+    - 3
+        [ch00] source\Spike sample\G+\18\G+ PA 3-3_ch00.tif
+        [ch01] source\Spike sample\G+\18\G+ PA 3-3_ch01.tif
+    - 4
+        [ch00] source\Spike sample\G+\18\G+ PA 3-4_ch00.tif
+        [ch01] source\Spike sample\G+\18\G+ PA 3-4_ch01.tif
+    - 5
+        [ch00] source\Spike sample\G+\18\G+ PA 3-5_ch00.tif
+        [ch01] source\Spike sample\G+\18\G+ PA 3-5_ch01.tif
+
+====================================================================================================
+
+Folder: 2
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 5
+Perfect match: True
+
+Matched Identifier Pairs:
+
+  Identifier: 1
+    G- files:
+      [ch00] source\Spike sample\G-\2\G- biaopi 2-1_ch00.tif
+      [ch01] source\Spike sample\G-\2\G- biaopi 2-1_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\2\G+ biaopi 2-1_ch00.tif
+      [ch01] source\Spike sample\G+\2\G+ biaopi 2-1_ch01.tif
+
+  Identifier: 2
+    G- files:
+      [ch00] source\Spike sample\G-\2\G- biaopi 2-2_ch00.tif
+      [ch01] source\Spike sample\G-\2\G- biaopi 2-2_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\2\G+ biaopi 2-2_ch00.tif
+      [ch01] source\Spike sample\G+\2\G+ biaopi 2-2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\Spike sample\G-\2\G- biaopi 2-3_ch00.tif
+      [ch01] source\Spike sample\G-\2\G- biaopi 2-3_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\2\G+ biaopi 2-3_ch00.tif
+      [ch01] source\Spike sample\G+\2\G+ biaopi 2-3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\Spike sample\G-\2\G- biaopi 2-4_ch00.tif
+      [ch01] source\Spike sample\G-\2\G- biaopi 2-4_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\2\G+ biaopi 2-4_ch00.tif
+      [ch01] source\Spike sample\G+\2\G+ biaopi 2-4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\Spike sample\G-\2\G- biaopi 2-5_ch00.tif
+      [ch01] source\Spike sample\G-\2\G- biaopi 2-5_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\2\G+ biaopi 2-5_ch00.tif
+      [ch01] source\Spike sample\G+\2\G+ biaopi 2-5_ch01.tif
+
+====================================================================================================
+
+Folder: 3
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 5
+Perfect match: True
+
+Matched Identifier Pairs:
+
+  Identifier: 1
+    G- files:
+      [ch00] source\Spike sample\G-\3\G- biaopi 3-1_ch00.tif
+      [ch01] source\Spike sample\G-\3\G- biaopi 3-1_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\3\G+ biaopi 3-1_ch00.tif
+      [ch01] source\Spike sample\G+\3\G+ biaopi 3-1_ch01.tif
+
+  Identifier: 2
+    G- files:
+      [ch00] source\Spike sample\G-\3\G- biaopi 3-2_ch00.tif
+      [ch01] source\Spike sample\G-\3\G- biaopi 3-2_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\3\G+ biaopi 3-2_ch00.tif
+      [ch01] source\Spike sample\G+\3\G+ biaopi 3-2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\Spike sample\G-\3\G- biaopi 3-3_ch00.tif
+      [ch01] source\Spike sample\G-\3\G- biaopi 3-3_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\3\G+ biaopi 3-3_ch00.tif
+      [ch01] source\Spike sample\G+\3\G+ biaopi 3-3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\Spike sample\G-\3\G- biaopi 3-4_ch00.tif
+      [ch01] source\Spike sample\G-\3\G- biaopi 3-4_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\3\G+ biaopi 3-4_ch00.tif
+      [ch01] source\Spike sample\G+\3\G+ biaopi 3-4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\Spike sample\G-\3\G- biaopi 3-5_ch00.tif
+      [ch01] source\Spike sample\G-\3\G- biaopi 3-5_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\3\G+ biaopi 3-5_ch00.tif
+      [ch01] source\Spike sample\G+\3\G+ biaopi 3-5_ch01.tif
+
+====================================================================================================
+
+Folder: 4
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 5
+Perfect match: True
+
+Matched Identifier Pairs:
+
+  Identifier: 1
+    G- files:
+      [ch00] source\Spike sample\G-\4\G- tuoye 1-1_ch00.tif
+      [ch01] source\Spike sample\G-\4\G- tuoye 1-1_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\4\G+ biaopi 1-1_ch00.tif
+      [ch01] source\Spike sample\G+\4\G+ biaopi 1-1_ch01.tif
+
+  Identifier: 2
+    G- files:
+      [ch00] source\Spike sample\G-\4\G- tuoye 1-2_ch00.tif
+      [ch01] source\Spike sample\G-\4\G- tuoye 1-2_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\4\G+ biaopi 1-2_ch00.tif
+      [ch01] source\Spike sample\G+\4\G+ biaopi 1-2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\Spike sample\G-\4\G- tuoye 1-3_ch00.tif
+      [ch01] source\Spike sample\G-\4\G- tuoye 1-3_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\4\G+ biaopi 1-3_ch00.tif
+      [ch01] source\Spike sample\G+\4\G+ biaopi 1-3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\Spike sample\G-\4\G- tuoye 1-4_ch00.tif
+      [ch01] source\Spike sample\G-\4\G- tuoye 1-4_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\4\G+ biaopi 1-4_ch00.tif
+      [ch01] source\Spike sample\G+\4\G+ biaopi 1-4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\Spike sample\G-\4\G- tuoye 1-5_ch00.tif
+      [ch01] source\Spike sample\G-\4\G- tuoye 1-5_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\4\G+ biaopi 1-5_ch00.tif
+      [ch01] source\Spike sample\G+\4\G+ biaopi 1-5_ch01.tif
+
+====================================================================================================
+
+Folder: 5
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 5
+Perfect match: True
+
+Matched Identifier Pairs:
+
+  Identifier: 1
+    G- files:
+      [ch00] source\Spike sample\G-\5\G- tuoye 2-1_ch00.tif
+      [ch01] source\Spike sample\G-\5\G- tuoye 2-1_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\5\G+ biaopi 2-1_ch00.tif
+      [ch01] source\Spike sample\G+\5\G+ biaopi 2-1_ch01.tif
+
+  Identifier: 2
+    G- files:
+      [ch00] source\Spike sample\G-\5\G- tuoye 2-2_ch00.tif
+      [ch01] source\Spike sample\G-\5\G- tuoye 2-2_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\5\G+ biaopi 2-2_ch00.tif
+      [ch01] source\Spike sample\G+\5\G+ biaopi 2-2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\Spike sample\G-\5\G- tuoye 2-3_ch00.tif
+      [ch01] source\Spike sample\G-\5\G- tuoye 2-3_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\5\G+ biaopi 2-3_ch00.tif
+      [ch01] source\Spike sample\G+\5\G+ biaopi 2-3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\Spike sample\G-\5\G- tuoye 2-4_ch00.tif
+      [ch01] source\Spike sample\G-\5\G- tuoye 2-4_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\5\G+ biaopi 2-4_ch00.tif
+      [ch01] source\Spike sample\G+\5\G+ biaopi 2-4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\Spike sample\G-\5\G- tuoye 2-5_ch00.tif
+      [ch01] source\Spike sample\G-\5\G- tuoye 2-5_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\5\G+ biaopi 2-5_ch00.tif
+      [ch01] source\Spike sample\G+\5\G+ biaopi 2-5_ch01.tif
+
+====================================================================================================
+
+Folder: 6
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 5
+Perfect match: True
+
+Matched Identifier Pairs:
+
+  Identifier: 1
+    G- files:
+      [ch00] source\Spike sample\G-\6\G- tuoye 3-1_ch00.tif
+      [ch01] source\Spike sample\G-\6\G- tuoye 3-1_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\6\G+ biaopi 3-1_ch00.tif
+      [ch01] source\Spike sample\G+\6\G+ biaopi 3-1_ch01.tif
+
+  Identifier: 2
+    G- files:
+      [ch00] source\Spike sample\G-\6\G- tuoye 3-2_ch00.tif
+      [ch01] source\Spike sample\G-\6\G- tuoye 3-2_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\6\G+ biaopi 3-2_ch00.tif
+      [ch01] source\Spike sample\G+\6\G+ biaopi 3-2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\Spike sample\G-\6\G- tuoye 3-3_ch00.tif
+      [ch01] source\Spike sample\G-\6\G- tuoye 3-3_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\6\G+ biaopi 3-3_ch00.tif
+      [ch01] source\Spike sample\G+\6\G+ biaopi 3-3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\Spike sample\G-\6\G- tuoye 3-4_ch00.tif
+      [ch01] source\Spike sample\G-\6\G- tuoye 3-4_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\6\G+ biaopi 3-4_ch00.tif
+      [ch01] source\Spike sample\G+\6\G+ biaopi 3-4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\Spike sample\G-\6\G- tuoye 3-5_ch00.tif
+      [ch01] source\Spike sample\G-\6\G- tuoye 3-5_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\6\G+ biaopi 3-5_ch00.tif
+      [ch01] source\Spike sample\G+\6\G+ biaopi 3-5_ch01.tif
+
+====================================================================================================
+
+Folder: 7
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 5
+Perfect match: True
+
+Matched Identifier Pairs:
+
+  Identifier: 1
+    G- files:
+      [ch00] source\Spike sample\G-\7\G- Ecoli 1-1_ch00.tif
+      [ch01] source\Spike sample\G-\7\G- Ecoli 1-1_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\7\G+ tuoye 1-1_ch00.tif
+      [ch01] source\Spike sample\G+\7\G+ tuoye 1-1_ch01.tif
+
+  Identifier: 2
+    G- files:
+      [ch00] source\Spike sample\G-\7\G- Ecoli 1-2_ch00.tif
+      [ch01] source\Spike sample\G-\7\G- Ecoli 1-2_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\7\G+ tuoye 1-2_ch00.tif
+      [ch01] source\Spike sample\G+\7\G+ tuoye 1-2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\Spike sample\G-\7\G- Ecoli 1-3_ch00.tif
+      [ch01] source\Spike sample\G-\7\G- Ecoli 1-3_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\7\G+ tuoye 1-3_ch00.tif
+      [ch01] source\Spike sample\G+\7\G+ tuoye 1-3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\Spike sample\G-\7\G- Ecoli 1-4_ch00.tif
+      [ch01] source\Spike sample\G-\7\G- Ecoli 1-4_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\7\G+ tuoye 1-4_ch00.tif
+      [ch01] source\Spike sample\G+\7\G+ tuoye 1-4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\Spike sample\G-\7\G- Ecoli 1-5_ch00.tif
+      [ch01] source\Spike sample\G-\7\G- Ecoli 1-5_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\7\G+ tuoye 1-5_ch00.tif
+      [ch01] source\Spike sample\G+\7\G+ tuoye 1-5_ch01.tif
+
+====================================================================================================
+
+Folder: 8
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 5
+Perfect match: True
+
+Matched Identifier Pairs:
+
+  Identifier: 1
+    G- files:
+      [ch00] source\Spike sample\G-\8\G- Ecoli 2-1_ch00.tif
+      [ch01] source\Spike sample\G-\8\G- Ecoli 2-1_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\8\G+ tuoye 2-1_ch00.tif
+      [ch01] source\Spike sample\G+\8\G+ tuoye 2-1_ch01.tif
+
+  Identifier: 2
+    G- files:
+      [ch00] source\Spike sample\G-\8\G- Ecoli 2-2_ch00.tif
+      [ch01] source\Spike sample\G-\8\G- Ecoli 2-2_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\8\G+ tuoye 2-2_ch00.tif
+      [ch01] source\Spike sample\G+\8\G+ tuoye 2-2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\Spike sample\G-\8\G- Ecoli 2-3_ch00.tif
+      [ch01] source\Spike sample\G-\8\G- Ecoli 2-3_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\8\G+ tuoye 2-3_ch00.tif
+      [ch01] source\Spike sample\G+\8\G+ tuoye 2-3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\Spike sample\G-\8\G- Ecoli 2-4_ch00.tif
+      [ch01] source\Spike sample\G-\8\G- Ecoli 2-4_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\8\G+ tuoye 2-4_ch00.tif
+      [ch01] source\Spike sample\G+\8\G+ tuoye 2-4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\Spike sample\G-\8\G- Ecoli 2-5_ch00.tif
+      [ch01] source\Spike sample\G-\8\G- Ecoli 2-5_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\8\G+ tuoye 2-5_ch00.tif
+      [ch01] source\Spike sample\G+\8\G+ tuoye 2-5_ch01.tif
+
+====================================================================================================
+
+Folder: 9
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 5
+Perfect match: True
+
+Matched Identifier Pairs:
+
+  Identifier: 1
+    G- files:
+      [ch00] source\Spike sample\G-\9\G- Ecoli 3-1_ch00.tif
+      [ch01] source\Spike sample\G-\9\G- Ecoli 3-1_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\9\G+ tuoye 3-1_ch00.tif
+      [ch01] source\Spike sample\G+\9\G+ tuoye 3-1_ch01.tif
+
+  Identifier: 2
+    G- files:
+      [ch00] source\Spike sample\G-\9\G- Ecoli 3-2_ch00.tif
+      [ch01] source\Spike sample\G-\9\G- Ecoli 3-2_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\9\G+ tuoye 3-2_ch00.tif
+      [ch01] source\Spike sample\G+\9\G+ tuoye 3-2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\Spike sample\G-\9\G- Ecoli 3-3_ch00.tif
+      [ch01] source\Spike sample\G-\9\G- Ecoli 3-3_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\9\G+ tuoye 3-3_ch00.tif
+      [ch01] source\Spike sample\G+\9\G+ tuoye 3-3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\Spike sample\G-\9\G- Ecoli 3-4_ch00.tif
+      [ch01] source\Spike sample\G-\9\G- Ecoli 3-4_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\9\G+ tuoye 3-4_ch00.tif
+      [ch01] source\Spike sample\G+\9\G+ tuoye 3-4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\Spike sample\G-\9\G- Ecoli 3-5_ch00.tif
+      [ch01] source\Spike sample\G-\9\G- Ecoli 3-5_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\9\G+ tuoye 3-5_ch00.tif
+      [ch01] source\Spike sample\G+\9\G+ tuoye 3-5_ch01.tif
+
+====================================================================================================
+
+Folder: control group
+----------------------------------------------------------------------------------------------------
+Matched identifiers: 5
+Perfect match: True
+
+Matched Identifier Pairs:
+
+  Identifier: 1
+    G- files:
+      [ch00] source\Spike sample\G-\control group\G- microgel spike control 1_ch00.tif
+      [ch01] source\Spike sample\G-\control group\G- microgel spike control 1_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\control group\G+ microgel spike control 1_ch00.tif
+      [ch01] source\Spike sample\G+\control group\G+ microgel spike control 1_ch01.tif
+
+  Identifier: 2
+    G- files:
+      [ch00] source\Spike sample\G-\control group\G- microgel spike control 2_ch00.tif
+      [ch01] source\Spike sample\G-\control group\G- microgel spike control 2_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\control group\G+ microgel spike control 2_ch00.tif
+      [ch01] source\Spike sample\G+\control group\G+ microgel spike control 2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\Spike sample\G-\control group\G- microgel spike control 3_ch00.tif
+      [ch01] source\Spike sample\G-\control group\G- microgel spike control 3_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\control group\G+ microgel spike control 3_ch00.tif
+      [ch01] source\Spike sample\G+\control group\G+ microgel spike control 3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\Spike sample\G-\control group\G- microgel spike control 4_ch00.tif
+      [ch01] source\Spike sample\G-\control group\G- microgel spike control 4_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\control group\G+ microgel spike control 4_ch00.tif
+      [ch01] source\Spike sample\G+\control group\G+ microgel spike control 4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\Spike sample\G-\control group\G- microgel spike control 5_ch00.tif
+      [ch01] source\Spike sample\G-\control group\G- microgel spike control 5_ch01.tif
+    G+ files:
+      [ch00] source\Spike sample\G+\control group\G+ microgel spike control 5_ch00.tif
+      [ch01] source\Spike sample\G+\control group\G+ microgel spike control 5_ch01.tif
+
+====================================================================================================

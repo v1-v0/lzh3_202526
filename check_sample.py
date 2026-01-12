@@ -1,23 +1,38 @@
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Dict, List, Optional, Tuple
 from collections import defaultdict
 import re
 
 def extract_file_identifier(filename: str) -> Optional[str]:
     """
-    Extract the base identifier from a filename (everything before _ch00 or _ch01).
+    Extract the number identifier from the filename.
+    
+    Handles patterns like:
+    - "G- biaopi 1-1_ch00.tif" → "1"
+    - "G- biaopi 1-2_ch00.tif" → "2"
+    - "1 P NO 1_ch00.tif" → "1"
+    - "2 P 2_ch00.tif" → "2"
     
     Args:
-        filename: Name of the file (e.g., '1 P NO 1_ch00.tif')
+        filename: Name of the file
     
     Returns:
-        Base identifier (e.g., '1 P NO 1')
+        The extracted identifier number as string
     """
-    # Remove the channel and extension
-    match = re.match(r'(.+?)_ch0[01]\.tif$', filename)
+    # Remove the .tif extension and _ch00/_ch01 suffix
+    base = filename.replace('_ch00.tif', '').replace('_ch01.tif', '')
+    
+    # Try to find pattern like "1-1", "1-2", etc. (number-number at end)
+    match = re.search(r'-(\d+)$', base)
     if match:
         return match.group(1)
+    
+    # Otherwise, try to find last number in the string
+    match = re.search(r'(\d+)$', base)
+    if match:
+        return match.group(1)
+    
     return None
 
 def get_file_details(directory: Path) -> Dict[str, Dict[str, List[Tuple[str, str]]]]:
@@ -153,9 +168,9 @@ def verify_identifier_pairing(neg_details: Dict, pos_details: Dict) -> Dict:
         
         folder_result = {
             'matched_count': len(matched),
-            'matched_identifiers': sorted(matched),
-            'missing_in_positive': sorted(missing_in_pos),
-            'missing_in_negative': sorted(missing_in_neg),
+            'matched_identifiers': sorted(matched, key=lambda x: int(x)),
+            'missing_in_positive': sorted(missing_in_pos, key=lambda x: int(x)),
+            'missing_in_negative': sorted(missing_in_neg, key=lambda x: int(x)),
             'perfect_match': len(missing_in_pos) == 0 and len(missing_in_neg) == 0
         }
         
@@ -218,9 +233,9 @@ def compare_microgel_groups(source_root: str, sample_name: str) -> Dict:
     neg_ch00, neg_ch01, neg_subdirs = count_channel_files(microgel_negative_path)
     pos_ch00, pos_ch01, pos_subdirs = count_channel_files(microgel_positive_path)
     
-    # Get counts by folder - BUG FIX: was using microgel_negative_path for both
+    # Get counts by folder
     neg_folder_counts = count_channel_files_by_folder(microgel_negative_path)
-    pos_folder_counts = count_channel_files_by_folder(microgel_positive_path)  # Fixed!
+    pos_folder_counts = count_channel_files_by_folder(microgel_positive_path)
     
     # Get detailed file information
     neg_file_details = get_file_details(microgel_negative_path)
@@ -272,8 +287,75 @@ def compare_microgel_groups(source_root: str, sample_name: str) -> Dict:
     
     return results
 
-def print_comparison_report(results: Dict, show_details: bool = True):
+def print_debug_index_details(results: Dict):
+    """Print detailed index/identifier information for debugging."""
+    if 'error' in results:
+        print(f"ERROR: {results['error']}")
+        return
+    
+    print(f"\n{'='*100}")
+    print(f"DEBUG: Index/Identifier Details for: {results['sample_name']}")
+    print(f"{'='*100}\n")
+    
+    neg_details = results['microgel_negative']['file_details']
+    pos_details = results['microgel_positive']['file_details']
+    
+    all_folders = sorted(set(neg_details.keys()) | set(pos_details.keys()))
+    
+    for folder in all_folders:
+        print(f"\n{'─'*100}")
+        print(f"Folder: {folder}")
+        print(f"{'─'*100}")
+        
+        neg_ids = neg_details.get(folder, {})
+        pos_ids = pos_details.get(folder, {})
+        
+        # Print G- identifiers
+        print(f"\n  G- (Microgel Negative) Identifiers:")
+        if neg_ids:
+            for identifier in sorted(neg_ids.keys(), key=lambda x: int(x)):
+                files = neg_ids[identifier]
+                print(f"    ID '{identifier}':")
+                for channel, filepath in sorted(files):
+                    filename = os.path.basename(filepath)
+                    print(f"      [{channel}] {filename}")
+        else:
+            print(f"    (No files found)")
+        
+        # Print G+ identifiers
+        print(f"\n  G+ (Microgel Positive) Identifiers:")
+        if pos_ids:
+            for identifier in sorted(pos_ids.keys(), key=lambda x: int(x)):
+                files = pos_ids[identifier]
+                print(f"    ID '{identifier}':")
+                for channel, filepath in sorted(files):
+                    filename = os.path.basename(filepath)
+                    print(f"      [{channel}] {filename}")
+        else:
+            print(f"    (No files found)")
+        
+        # Show comparison
+        neg_id_set = set(neg_ids.keys())
+        pos_id_set = set(pos_ids.keys())
+        matched = neg_id_set & pos_id_set
+        missing_in_pos = neg_id_set - pos_id_set
+        missing_in_neg = pos_id_set - neg_id_set
+        
+        print(f"\n  Comparison Summary:")
+        print(f"    Matched IDs: {sorted(matched, key=lambda x: int(x)) if matched else '(none)'}")
+        print(f"    Only in G-:  {sorted(missing_in_pos, key=lambda x: int(x)) if missing_in_pos else '(none)'}")
+        print(f"    Only in G+:  {sorted(missing_in_neg, key=lambda x: int(x)) if missing_in_neg else '(none)'}")
+    
+    print(f"\n{'='*100}\n")
+
+def print_comparison_report(results: Dict, show_details: bool = True, show_debug: bool = False):
     """Print a formatted report of the comparison results."""
+    
+    # Show debug details FIRST if requested
+    if show_debug:
+        print_debug_index_details(results)
+    
+    # Then show the main report
     print(f"\n{'='*80}")
     print(f"Comparison Report for: {results['sample_name']}")
     print(f"{'='*80}\n")
@@ -361,36 +443,13 @@ def print_comparison_report(results: Dict, show_details: bool = True):
             
             print(f"\n  Folder '{folder}':")
             for pair in details['incomplete_pairs'][:5]:  # Show first 5
-                print(f"    - {pair['identifier']}")
+                print(f"    - Identifier {pair['identifier']}")
                 print(f"      G- has: {', '.join(pair['neg_channels'])}")
                 print(f"      G+ has: {', '.join(pair['pos_channels'])}")
             if len(details['incomplete_pairs']) > 5:
                 print(f"    ... and {len(details['incomplete_pairs']) - 5} more")
     
-    # Detailed folder breakdown
-    if results['folder_comparison'] and show_details:
-        print(f"\n{'-'*80}")
-        print("FOLDER-BY-FOLDER BREAKDOWN:")
-        print(f"{'-'*80}")
-        print(f"{'Folder':<40} | {'G- ch00':<8} | {'G- ch01':<8} | {'G+ ch00':<8} | {'G+ ch01':<8} | {'IDs':<6} | {'Match'}")
-        print(f"{'-'*80}")
-        
-        for folder in sorted(results['folder_comparison'].keys()):
-            comparison = results['folder_comparison'][folder]
-            neg_ch00 = comparison['negative']['ch00']
-            neg_ch01 = comparison['negative']['ch01']
-            pos_ch00 = comparison['positive']['ch00']
-            pos_ch01 = comparison['positive']['ch01']
-            
-            # Get identifier match status
-            folder_pairing = pairing['folder_details'].get(folder, {})
-            id_status = "✓" if folder_pairing.get('perfect_match', False) else "✗"
-            match_status = "✓" if (comparison['match'] and folder_pairing.get('perfect_match', False)) else "✗"
-            
-            folder_display = folder[:38] + '..' if len(folder) > 40 else folder
-            print(f"{folder_display:<40} | {neg_ch00:<8} | {neg_ch01:<8} | {pos_ch00:<8} | {pos_ch01:<8} | {id_status:<6} | {match_status}")
-    
-    # Final verdict
+    # Final verdict (before detailed folder breakdown)
     print(f"\n{'-'*80}")
     all_checks_pass = (
         results['ch00_match'] and 
@@ -423,6 +482,31 @@ def print_comparison_report(results: Dict, show_details: bool = True):
             issues.append("incomplete channel pairs detected")
         
         print(f"✗ FAIL: Issues found - {', '.join(issues)}")
+    
+    # Detailed folder breakdown at the end
+    if results['folder_comparison'] and show_details:
+        print(f"\n{'-'*80}")
+        print("FOLDER-BY-FOLDER BREAKDOWN:")
+        print(f"{'-'*80}")
+        print(f"{'Folder':<40} | {'G- ch00':<8} | {'G- ch01':<8} | {'G+ ch00':<8} | {'G+ ch01':<8} | {'IDs':<6} | {'Match'}")
+        print(f"{'-'*80}")
+        
+        for folder in sorted(results['folder_comparison'].keys()):
+            comparison = results['folder_comparison'][folder]
+            neg_ch00 = comparison['negative']['ch00']
+            neg_ch01 = comparison['negative']['ch01']
+            pos_ch00 = comparison['positive']['ch00']
+            pos_ch01 = comparison['positive']['ch01']
+            
+            # Get identifier match status
+            folder_pairing = pairing['folder_details'].get(folder, {})
+            id_status = "✓" if folder_pairing.get('perfect_match', False) else "✗"
+            match_status = "✓" if (comparison['match'] and folder_pairing.get('perfect_match', False)) else "✗"
+            
+            folder_display = folder[:38] + '..' if len(folder) > 40 else folder
+            print(f"{folder_display:<40} | {neg_ch00:<8} | {neg_ch01:<8} | {pos_ch00:<8} | {pos_ch01:<8} | {id_status:<6} | {match_status}")
+        print(f"{'-'*80}")
+    
     print(f"{'='*80}\n")
 
 def export_pairing_details(results: Dict, output_file: Optional[str] = None):
@@ -459,7 +543,7 @@ def export_pairing_details(results: Dict, output_file: Optional[str] = None):
             # Write matched identifiers with file paths
             if folder_info['matched_identifiers']:
                 f.write("Matched Identifier Pairs:\n")
-                for identifier in sorted(folder_info['matched_identifiers']):
+                for identifier in sorted(folder_info['matched_identifiers'], key=lambda x: int(x)):
                     f.write(f"\n  Identifier: {identifier}\n")
                     
                     # G- files
@@ -475,14 +559,14 @@ def export_pairing_details(results: Dict, output_file: Optional[str] = None):
             # Write mismatches
             if folder_info['missing_in_positive']:
                 f.write(f"\n  Missing in G+ (present in G-):\n")
-                for identifier in sorted(folder_info['missing_in_positive']):
+                for identifier in sorted(folder_info['missing_in_positive'], key=lambda x: int(x)):
                     f.write(f"    - {identifier}\n")
                     for channel, filepath in sorted(neg_details[folder][identifier]):
                         f.write(f"        [{channel}] {filepath}\n")
             
             if folder_info['missing_in_negative']:
                 f.write(f"\n  Missing in G- (present in G+):\n")
-                for identifier in sorted(folder_info['missing_in_negative']):
+                for identifier in sorted(folder_info['missing_in_negative'], key=lambda x: int(x)):
                     f.write(f"    - {identifier}\n")
                     for channel, filepath in sorted(pos_details[folder][identifier]):
                         f.write(f"        [{channel}] {filepath}\n")
@@ -562,6 +646,22 @@ def prompt_directory_selection(source_root: str) -> Optional[str]:
         except ValueError:
             print("Invalid input. Please enter a number or 'q' to quit.")
 
+def prompt_debug_option() -> bool:
+    """
+    Ask user if they want to see detailed index/identifier information for debugging.
+    
+    Returns:
+        True if user wants to see debug details, False otherwise
+    """
+    while True:
+        choice = input("\nShow detailed index/identifier information for debugging? (y/n): ").strip().lower()
+        if choice in ['y', 'yes']:
+            return True
+        elif choice in ['n', 'no']:
+            return False
+        else:
+            print("Invalid input. Please enter 'y' or 'n'.")
+
 def run_comparison(source_root: str = './source', export_details: bool = True):
     """Main function to check samples in the source directory based on user selection."""
     
@@ -576,6 +676,9 @@ def run_comparison(source_root: str = './source', export_details: bool = True):
     if selected_directory is None:
         return
     
+    # Ask if user wants to see debug details
+    show_debug = prompt_debug_option()
+    
     all_results: Dict[str, Dict] = {}
     
     if selected_directory == 'ALL':
@@ -586,15 +689,15 @@ def run_comparison(source_root: str = './source', export_details: bool = True):
         for directory in directories:
             results = compare_microgel_groups(source_root, directory)
             all_results[directory] = results
-            print_comparison_report(results, show_details=False)
+            print_comparison_report(results, show_details=False, show_debug=show_debug)
             
             if export_details and 'error' not in results:
                 export_pairing_details(results)
     else:
-        # Check only the selected directory (it's a str, not None, due to early return above)
+        # Check only the selected directory
         results = compare_microgel_groups(source_root, selected_directory)
         all_results[selected_directory] = results
-        print_comparison_report(results, show_details=True)
+        print_comparison_report(results, show_details=True, show_debug=show_debug)
         
         if export_details and 'error' not in results:
             export_pairing_details(results)

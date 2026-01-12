@@ -4,127 +4,148 @@ Pairing Details for: PD sample
 
 Folder: 1
 ----------------------------------------------------------------------------------------------------
-Matched identifiers: 0
-Perfect match: False
+Matched identifiers: 5
+Perfect match: True
 
+Matched Identifier Pairs:
 
-  Missing in G+ (present in G-):
-    - 1 P NO 1
-        [ch00] source/PD sample/G-/1/1 P NO 1_ch00.tif
-        [ch01] source/PD sample/G-/1/1 P NO 1_ch01.tif
-    - 1 P NO 2
-        [ch00] source/PD sample/G-/1/1 P NO 2_ch00.tif
-        [ch01] source/PD sample/G-/1/1 P NO 2_ch01.tif
-    - 1 P NO 3
-        [ch00] source/PD sample/G-/1/1 P NO 3_ch00.tif
-        [ch01] source/PD sample/G-/1/1 P NO 3_ch01.tif
-    - 1 P NO 4
-        [ch00] source/PD sample/G-/1/1 P NO 4_ch00.tif
-        [ch01] source/PD sample/G-/1/1 P NO 4_ch01.tif
-    - 1 P NO 5
-        [ch00] source/PD sample/G-/1/1 P NO 5_ch00.tif
-        [ch01] source/PD sample/G-/1/1 P NO 5_ch01.tif
+  Identifier: 1
+    G- files:
+      [ch00] source\PD sample\G-\1\1 P NO 1_ch00.tif
+      [ch01] source\PD sample\G-\1\1 P NO 1_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\1\1 N NO 1_ch00.tif
+      [ch01] source\PD sample\G+\1\1 N NO 1_ch01.tif
 
-  Missing in G- (present in G+):
-    - 1 N NO 1
-        [ch00] source/PD sample/G+/1/1 N NO 1_ch00.tif
-        [ch01] source/PD sample/G+/1/1 N NO 1_ch01.tif
-    - 1 N NO 2
-        [ch00] source/PD sample/G+/1/1 N NO 2_ch00.tif
-        [ch01] source/PD sample/G+/1/1 N NO 2_ch01.tif
-    - 1 N NO 3
-        [ch00] source/PD sample/G+/1/1 N NO 3_ch00.tif
-        [ch01] source/PD sample/G+/1/1 N NO 3_ch01.tif
-    - 1 N NO 4
-        [ch00] source/PD sample/G+/1/1 N NO 4_ch00.tif
-        [ch01] source/PD sample/G+/1/1 N NO 4_ch01.tif
-    - 1 N NO 5
-        [ch00] source/PD sample/G+/1/1 N NO 5_ch00.tif
-        [ch01] source/PD sample/G+/1/1 N NO 5_ch01.tif
+  Identifier: 2
+    G- files:
+      [ch00] source\PD sample\G-\1\1 P NO 2_ch00.tif
+      [ch01] source\PD sample\G-\1\1 P NO 2_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\1\1 N NO 2_ch00.tif
+      [ch01] source\PD sample\G+\1\1 N NO 2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\PD sample\G-\1\1 P NO 3_ch00.tif
+      [ch01] source\PD sample\G-\1\1 P NO 3_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\1\1 N NO 3_ch00.tif
+      [ch01] source\PD sample\G+\1\1 N NO 3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\PD sample\G-\1\1 P NO 4_ch00.tif
+      [ch01] source\PD sample\G-\1\1 P NO 4_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\1\1 N NO 4_ch00.tif
+      [ch01] source\PD sample\G+\1\1 N NO 4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\PD sample\G-\1\1 P NO 5_ch00.tif
+      [ch01] source\PD sample\G-\1\1 P NO 5_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\1\1 N NO 5_ch00.tif
+      [ch01] source\PD sample\G+\1\1 N NO 5_ch01.tif
 
 ====================================================================================================
 
 Folder: 2
 ----------------------------------------------------------------------------------------------------
-Matched identifiers: 0
-Perfect match: False
+Matched identifiers: 5
+Perfect match: True
 
+Matched Identifier Pairs:
 
-  Missing in G+ (present in G-):
-    - 2 P NO 1
-        [ch00] source/PD sample/G-/2/2 P NO 1_ch00.tif
-        [ch01] source/PD sample/G-/2/2 P NO 1_ch01.tif
-    - 2 P NO 2
-        [ch00] source/PD sample/G-/2/2 P NO 2_ch00.tif
-        [ch01] source/PD sample/G-/2/2 P NO 2_ch01.tif
-    - 2 P NO 3
-        [ch00] source/PD sample/G-/2/2 P NO 3_ch00.tif
-        [ch01] source/PD sample/G-/2/2 P NO 3_ch01.tif
-    - 2 P NO 4
-        [ch00] source/PD sample/G-/2/2 P NO 4_ch00.tif
-        [ch01] source/PD sample/G-/2/2 P NO 4_ch01.tif
-    - 2 P NO 5
-        [ch00] source/PD sample/G-/2/2 P NO 5_ch00.tif
-        [ch01] source/PD sample/G-/2/2 P NO 5_ch01.tif
+  Identifier: 1
+    G- files:
+      [ch00] source\PD sample\G-\2\2 P NO 1_ch00.tif
+      [ch01] source\PD sample\G-\2\2 P NO 1_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\2\2 P 1_ch00.tif
+      [ch01] source\PD sample\G+\2\2 P 1_ch01.tif
 
-  Missing in G- (present in G+):
-    - 2 P 1
-        [ch00] source/PD sample/G+/2/2 P 1_ch00.tif
-        [ch01] source/PD sample/G+/2/2 P 1_ch01.tif
-    - 2 P 2
-        [ch00] source/PD sample/G+/2/2 P 2_ch00.tif
-        [ch01] source/PD sample/G+/2/2 P 2_ch01.tif
-    - 2 P 3
-        [ch00] source/PD sample/G+/2/2 P 3_ch00.tif
-        [ch01] source/PD sample/G+/2/2 P 3_ch01.tif
-    - 2 P 4
-        [ch00] source/PD sample/G+/2/2 P 4_ch00.tif
-        [ch01] source/PD sample/G+/2/2 P 4_ch01.tif
-    - 2 P 5
-        [ch00] source/PD sample/G+/2/2 P 5_ch00.tif
-        [ch01] source/PD sample/G+/2/2 P 5_ch01.tif
+  Identifier: 2
+    G- files:
+      [ch00] source\PD sample\G-\2\2 P NO 2_ch00.tif
+      [ch01] source\PD sample\G-\2\2 P NO 2_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\2\2 P 2_ch00.tif
+      [ch01] source\PD sample\G+\2\2 P 2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\PD sample\G-\2\2 P NO 3_ch00.tif
+      [ch01] source\PD sample\G-\2\2 P NO 3_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\2\2 P 3_ch00.tif
+      [ch01] source\PD sample\G+\2\2 P 3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\PD sample\G-\2\2 P NO 4_ch00.tif
+      [ch01] source\PD sample\G-\2\2 P NO 4_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\2\2 P 4_ch00.tif
+      [ch01] source\PD sample\G+\2\2 P 4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\PD sample\G-\2\2 P NO 5_ch00.tif
+      [ch01] source\PD sample\G-\2\2 P NO 5_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\2\2 P 5_ch00.tif
+      [ch01] source\PD sample\G+\2\2 P 5_ch01.tif
 
 ====================================================================================================
 
 Folder: 3
 ----------------------------------------------------------------------------------------------------
-Matched identifiers: 0
-Perfect match: False
+Matched identifiers: 5
+Perfect match: True
 
+Matched Identifier Pairs:
 
-  Missing in G+ (present in G-):
-    - 3 P NO 1
-        [ch00] source/PD sample/G-/3/3 P NO 1_ch00.tif
-        [ch01] source/PD sample/G-/3/3 P NO 1_ch01.tif
-    - 3 P NO 2
-        [ch00] source/PD sample/G-/3/3 P NO 2_ch00.tif
-        [ch01] source/PD sample/G-/3/3 P NO 2_ch01.tif
-    - 3 P NO 3
-        [ch00] source/PD sample/G-/3/3 P NO 3_ch00.tif
-        [ch01] source/PD sample/G-/3/3 P NO 3_ch01.tif
-    - 3 P NO 4
-        [ch00] source/PD sample/G-/3/3 P NO 4_ch00.tif
-        [ch01] source/PD sample/G-/3/3 P NO 4_ch01.tif
-    - 3 P NO 5
-        [ch00] source/PD sample/G-/3/3 P NO 5_ch00.tif
-        [ch01] source/PD sample/G-/3/3 P NO 5_ch01.tif
+  Identifier: 1
+    G- files:
+      [ch00] source\PD sample\G-\3\3 P NO 1_ch00.tif
+      [ch01] source\PD sample\G-\3\3 P NO 1_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\3\3 N NO 1_ch00.tif
+      [ch01] source\PD sample\G+\3\3 N NO 1_ch01.tif
 
-  Missing in G- (present in G+):
-    - 3 N NO 1
-        [ch00] source/PD sample/G+/3/3 N NO 1_ch00.tif
-        [ch01] source/PD sample/G+/3/3 N NO 1_ch01.tif
-    - 3 N NO 2
-        [ch00] source/PD sample/G+/3/3 N NO 2_ch00.tif
-        [ch01] source/PD sample/G+/3/3 N NO 2_ch01.tif
-    - 3 N NO 3
-        [ch00] source/PD sample/G+/3/3 N NO 3_ch00.tif
-        [ch01] source/PD sample/G+/3/3 N NO 3_ch01.tif
-    - 3 N NO 4
-        [ch00] source/PD sample/G+/3/3 N NO 4_ch00.tif
-        [ch01] source/PD sample/G+/3/3 N NO 4_ch01.tif
-    - 3 N NO 5
-        [ch00] source/PD sample/G+/3/3 N NO 5_ch00.tif
-        [ch01] source/PD sample/G+/3/3 N NO 5_ch01.tif
+  Identifier: 2
+    G- files:
+      [ch00] source\PD sample\G-\3\3 P NO 2_ch00.tif
+      [ch01] source\PD sample\G-\3\3 P NO 2_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\3\3 N NO 2_ch00.tif
+      [ch01] source\PD sample\G+\3\3 N NO 2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\PD sample\G-\3\3 P NO 3_ch00.tif
+      [ch01] source\PD sample\G-\3\3 P NO 3_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\3\3 N NO 3_ch00.tif
+      [ch01] source\PD sample\G+\3\3 N NO 3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\PD sample\G-\3\3 P NO 4_ch00.tif
+      [ch01] source\PD sample\G-\3\3 P NO 4_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\3\3 N NO 4_ch00.tif
+      [ch01] source\PD sample\G+\3\3 N NO 4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\PD sample\G-\3\3 P NO 5_ch00.tif
+      [ch01] source\PD sample\G-\3\3 P NO 5_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\3\3 N NO 5_ch00.tif
+      [ch01] source\PD sample\G+\3\3 N NO 5_ch01.tif
 
 ====================================================================================================
 
@@ -135,296 +156,338 @@ Perfect match: True
 
 Matched Identifier Pairs:
 
-  Identifier: 4 P NO 1
+  Identifier: 1
     G- files:
-      [ch00] source/PD sample/G-/4/4 P NO 1_ch00.tif
-      [ch01] source/PD sample/G-/4/4 P NO 1_ch01.tif
+      [ch00] source\PD sample\G-\4\4 P NO 1_ch00.tif
+      [ch01] source\PD sample\G-\4\4 P NO 1_ch01.tif
     G+ files:
-      [ch00] source/PD sample/G+/4/4 P NO 1_ch00.tif
-      [ch01] source/PD sample/G+/4/4 P NO 1_ch01.tif
+      [ch00] source\PD sample\G+\4\4 P NO 1_ch00.tif
+      [ch01] source\PD sample\G+\4\4 P NO 1_ch01.tif
 
-  Identifier: 4 P NO 2
+  Identifier: 2
     G- files:
-      [ch00] source/PD sample/G-/4/4 P NO 2_ch00.tif
-      [ch01] source/PD sample/G-/4/4 P NO 2_ch01.tif
+      [ch00] source\PD sample\G-\4\4 P NO 2_ch00.tif
+      [ch01] source\PD sample\G-\4\4 P NO 2_ch01.tif
     G+ files:
-      [ch00] source/PD sample/G+/4/4 P NO 2_ch00.tif
-      [ch01] source/PD sample/G+/4/4 P NO 2_ch01.tif
+      [ch00] source\PD sample\G+\4\4 P NO 2_ch00.tif
+      [ch01] source\PD sample\G+\4\4 P NO 2_ch01.tif
 
-  Identifier: 4 P NO 3
+  Identifier: 3
     G- files:
-      [ch00] source/PD sample/G-/4/4 P NO 3_ch00.tif
-      [ch01] source/PD sample/G-/4/4 P NO 3_ch01.tif
+      [ch00] source\PD sample\G-\4\4 P NO 3_ch00.tif
+      [ch01] source\PD sample\G-\4\4 P NO 3_ch01.tif
     G+ files:
-      [ch00] source/PD sample/G+/4/4 P NO 3_ch00.tif
-      [ch01] source/PD sample/G+/4/4 P NO 3_ch01.tif
+      [ch00] source\PD sample\G+\4\4 P NO 3_ch00.tif
+      [ch01] source\PD sample\G+\4\4 P NO 3_ch01.tif
 
-  Identifier: 4 P NO 4
+  Identifier: 4
     G- files:
-      [ch00] source/PD sample/G-/4/4 P NO 4_ch00.tif
-      [ch01] source/PD sample/G-/4/4 P NO 4_ch01.tif
+      [ch00] source\PD sample\G-\4\4 P NO 4_ch00.tif
+      [ch01] source\PD sample\G-\4\4 P NO 4_ch01.tif
     G+ files:
-      [ch00] source/PD sample/G+/4/4 P NO 4_ch00.tif
-      [ch01] source/PD sample/G+/4/4 P NO 4_ch01.tif
+      [ch00] source\PD sample\G+\4\4 P NO 4_ch00.tif
+      [ch01] source\PD sample\G+\4\4 P NO 4_ch01.tif
 
-  Identifier: 4 P NO 5
+  Identifier: 5
     G- files:
-      [ch00] source/PD sample/G-/4/4 P NO 5_ch00.tif
-      [ch01] source/PD sample/G-/4/4 P NO 5_ch01.tif
+      [ch00] source\PD sample\G-\4\4 P NO 5_ch00.tif
+      [ch01] source\PD sample\G-\4\4 P NO 5_ch01.tif
     G+ files:
-      [ch00] source/PD sample/G+/4/4 P NO 5_ch00.tif
-      [ch01] source/PD sample/G+/4/4 P NO 5_ch01.tif
+      [ch00] source\PD sample\G+\4\4 P NO 5_ch00.tif
+      [ch01] source\PD sample\G+\4\4 P NO 5_ch01.tif
 
 ====================================================================================================
 
 Folder: 5
 ----------------------------------------------------------------------------------------------------
-Matched identifiers: 0
-Perfect match: False
+Matched identifiers: 5
+Perfect match: True
 
+Matched Identifier Pairs:
 
-  Missing in G+ (present in G-):
-    - 5 P NO 1
-        [ch00] source/PD sample/G-/5/5 P NO 1_ch00.tif
-        [ch01] source/PD sample/G-/5/5 P NO 1_ch01.tif
-    - 5 P NO 2
-        [ch00] source/PD sample/G-/5/5 P NO 2_ch00.tif
-        [ch01] source/PD sample/G-/5/5 P NO 2_ch01.tif
-    - 5 P NO 3
-        [ch00] source/PD sample/G-/5/5 P NO 3_ch00.tif
-        [ch01] source/PD sample/G-/5/5 P NO 3_ch01.tif
-    - 5 P NO 4
-        [ch00] source/PD sample/G-/5/5 P NO 4_ch00.tif
-        [ch01] source/PD sample/G-/5/5 P NO 4_ch01.tif
-    - 5 P NO 5
-        [ch00] source/PD sample/G-/5/5 P NO 5_ch00.tif
-        [ch01] source/PD sample/G-/5/5 P NO 5_ch01.tif
+  Identifier: 1
+    G- files:
+      [ch00] source\PD sample\G-\5\5 P NO 1_ch00.tif
+      [ch01] source\PD sample\G-\5\5 P NO 1_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\5\5 N NO 1_ch00.tif
+      [ch01] source\PD sample\G+\5\5 N NO 1_ch01.tif
 
-  Missing in G- (present in G+):
-    - 5 N NO 1
-        [ch00] source/PD sample/G+/5/5 N NO 1_ch00.tif
-        [ch01] source/PD sample/G+/5/5 N NO 1_ch01.tif
-    - 5 N NO 2
-        [ch00] source/PD sample/G+/5/5 N NO 2_ch00.tif
-        [ch01] source/PD sample/G+/5/5 N NO 2_ch01.tif
-    - 5 N NO 3
-        [ch00] source/PD sample/G+/5/5 N NO 3_ch00.tif
-        [ch01] source/PD sample/G+/5/5 N NO 3_ch01.tif
-    - 5 N NO 4
-        [ch00] source/PD sample/G+/5/5 N NO 4_ch00.tif
-        [ch01] source/PD sample/G+/5/5 N NO 4_ch01.tif
-    - 5 N NO 5
-        [ch00] source/PD sample/G+/5/5 N NO 5_ch00.tif
-        [ch01] source/PD sample/G+/5/5 N NO 5_ch01.tif
+  Identifier: 2
+    G- files:
+      [ch00] source\PD sample\G-\5\5 P NO 2_ch00.tif
+      [ch01] source\PD sample\G-\5\5 P NO 2_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\5\5 N NO 2_ch00.tif
+      [ch01] source\PD sample\G+\5\5 N NO 2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\PD sample\G-\5\5 P NO 3_ch00.tif
+      [ch01] source\PD sample\G-\5\5 P NO 3_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\5\5 N NO 3_ch00.tif
+      [ch01] source\PD sample\G+\5\5 N NO 3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\PD sample\G-\5\5 P NO 4_ch00.tif
+      [ch01] source\PD sample\G-\5\5 P NO 4_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\5\5 N NO 4_ch00.tif
+      [ch01] source\PD sample\G+\5\5 N NO 4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\PD sample\G-\5\5 P NO 5_ch00.tif
+      [ch01] source\PD sample\G-\5\5 P NO 5_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\5\5 N NO 5_ch00.tif
+      [ch01] source\PD sample\G+\5\5 N NO 5_ch01.tif
 
 ====================================================================================================
 
 Folder: 6
 ----------------------------------------------------------------------------------------------------
-Matched identifiers: 0
-Perfect match: False
+Matched identifiers: 5
+Perfect match: True
 
+Matched Identifier Pairs:
 
-  Missing in G+ (present in G-):
-    - 6 P NO 1
-        [ch00] source/PD sample/G-/6/6 P NO 1_ch00.tif
-        [ch01] source/PD sample/G-/6/6 P NO 1_ch01.tif
-    - 6 P NO 2
-        [ch00] source/PD sample/G-/6/6 P NO 2_ch00.tif
-        [ch01] source/PD sample/G-/6/6 P NO 2_ch01.tif
-    - 6 P NO 3
-        [ch00] source/PD sample/G-/6/6 P NO 3_ch00.tif
-        [ch01] source/PD sample/G-/6/6 P NO 3_ch01.tif
-    - 6 P NO 4
-        [ch00] source/PD sample/G-/6/6 P NO 4_ch00.tif
-        [ch01] source/PD sample/G-/6/6 P NO 4_ch01.tif
-    - 6 P NO 5
-        [ch00] source/PD sample/G-/6/6 P NO 5_ch00.tif
-        [ch01] source/PD sample/G-/6/6 P NO 5_ch01.tif
+  Identifier: 1
+    G- files:
+      [ch00] source\PD sample\G-\6\6 P NO 1_ch00.tif
+      [ch01] source\PD sample\G-\6\6 P NO 1_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\6\6 P 1_ch00.tif
+      [ch01] source\PD sample\G+\6\6 P 1_ch01.tif
 
-  Missing in G- (present in G+):
-    - 6 P 1
-        [ch00] source/PD sample/G+/6/6 P 1_ch00.tif
-        [ch01] source/PD sample/G+/6/6 P 1_ch01.tif
-    - 6 P 2
-        [ch00] source/PD sample/G+/6/6 P 2_ch00.tif
-        [ch01] source/PD sample/G+/6/6 P 2_ch01.tif
-    - 6 P 3
-        [ch00] source/PD sample/G+/6/6 P 3_ch00.tif
-        [ch01] source/PD sample/G+/6/6 P 3_ch01.tif
-    - 6 P 4
-        [ch00] source/PD sample/G+/6/6 P 4_ch00.tif
-        [ch01] source/PD sample/G+/6/6 P 4_ch01.tif
-    - 6 P 5
-        [ch00] source/PD sample/G+/6/6 P 5_ch00.tif
-        [ch01] source/PD sample/G+/6/6 P 5_ch01.tif
+  Identifier: 2
+    G- files:
+      [ch00] source\PD sample\G-\6\6 P NO 2_ch00.tif
+      [ch01] source\PD sample\G-\6\6 P NO 2_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\6\6 P 2_ch00.tif
+      [ch01] source\PD sample\G+\6\6 P 2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\PD sample\G-\6\6 P NO 3_ch00.tif
+      [ch01] source\PD sample\G-\6\6 P NO 3_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\6\6 P 3_ch00.tif
+      [ch01] source\PD sample\G+\6\6 P 3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\PD sample\G-\6\6 P NO 4_ch00.tif
+      [ch01] source\PD sample\G-\6\6 P NO 4_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\6\6 P 4_ch00.tif
+      [ch01] source\PD sample\G+\6\6 P 4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\PD sample\G-\6\6 P NO 5_ch00.tif
+      [ch01] source\PD sample\G-\6\6 P NO 5_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\6\6 P 5_ch00.tif
+      [ch01] source\PD sample\G+\6\6 P 5_ch01.tif
 
 ====================================================================================================
 
 Folder: 7
 ----------------------------------------------------------------------------------------------------
-Matched identifiers: 0
-Perfect match: False
+Matched identifiers: 5
+Perfect match: True
 
+Matched Identifier Pairs:
 
-  Missing in G+ (present in G-):
-    - 7 P NO 1
-        [ch00] source/PD sample/G-/7/7 P NO 1_ch00.tif
-        [ch01] source/PD sample/G-/7/7 P NO 1_ch01.tif
-    - 7 P NO 2
-        [ch00] source/PD sample/G-/7/7 P NO 2_ch00.tif
-        [ch01] source/PD sample/G-/7/7 P NO 2_ch01.tif
-    - 7 P NO 3
-        [ch00] source/PD sample/G-/7/7 P NO 3_ch00.tif
-        [ch01] source/PD sample/G-/7/7 P NO 3_ch01.tif
-    - 7 P NO 4
-        [ch00] source/PD sample/G-/7/7 P NO 4_ch00.tif
-        [ch01] source/PD sample/G-/7/7 P NO 4_ch01.tif
-    - 7 P NO 5
-        [ch00] source/PD sample/G-/7/7 P NO 5_ch00.tif
-        [ch01] source/PD sample/G-/7/7 P NO 5_ch01.tif
+  Identifier: 1
+    G- files:
+      [ch00] source\PD sample\G-\7\7 P NO 1_ch00.tif
+      [ch01] source\PD sample\G-\7\7 P NO 1_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\7\7 P 1_ch00.tif
+      [ch01] source\PD sample\G+\7\7 P 1_ch01.tif
 
-  Missing in G- (present in G+):
-    - 7 P 1
-        [ch00] source/PD sample/G+/7/7 P 1_ch00.tif
-        [ch01] source/PD sample/G+/7/7 P 1_ch01.tif
-    - 7 P 2
-        [ch00] source/PD sample/G+/7/7 P 2_ch00.tif
-        [ch01] source/PD sample/G+/7/7 P 2_ch01.tif
-    - 7 P 3
-        [ch00] source/PD sample/G+/7/7 P 3_ch00.tif
-        [ch01] source/PD sample/G+/7/7 P 3_ch01.tif
-    - 7 P 4
-        [ch00] source/PD sample/G+/7/7 P 4_ch00.tif
-        [ch01] source/PD sample/G+/7/7 P 4_ch01.tif
-    - 7 P 5
-        [ch00] source/PD sample/G+/7/7 P 5_ch00.tif
-        [ch01] source/PD sample/G+/7/7 P 5_ch01.tif
+  Identifier: 2
+    G- files:
+      [ch00] source\PD sample\G-\7\7 P NO 2_ch00.tif
+      [ch01] source\PD sample\G-\7\7 P NO 2_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\7\7 P 2_ch00.tif
+      [ch01] source\PD sample\G+\7\7 P 2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\PD sample\G-\7\7 P NO 3_ch00.tif
+      [ch01] source\PD sample\G-\7\7 P NO 3_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\7\7 P 3_ch00.tif
+      [ch01] source\PD sample\G+\7\7 P 3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\PD sample\G-\7\7 P NO 4_ch00.tif
+      [ch01] source\PD sample\G-\7\7 P NO 4_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\7\7 P 4_ch00.tif
+      [ch01] source\PD sample\G+\7\7 P 4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\PD sample\G-\7\7 P NO 5_ch00.tif
+      [ch01] source\PD sample\G-\7\7 P NO 5_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\7\7 P 5_ch00.tif
+      [ch01] source\PD sample\G+\7\7 P 5_ch01.tif
 
 ====================================================================================================
 
 Folder: 8
 ----------------------------------------------------------------------------------------------------
-Matched identifiers: 0
-Perfect match: False
+Matched identifiers: 5
+Perfect match: True
 
+Matched Identifier Pairs:
 
-  Missing in G+ (present in G-):
-    - 8 P NO 1
-        [ch00] source/PD sample/G-/8/8 P NO 1_ch00.tif
-        [ch01] source/PD sample/G-/8/8 P NO 1_ch01.tif
-    - 8 P NO 2
-        [ch00] source/PD sample/G-/8/8 P NO 2_ch00.tif
-        [ch01] source/PD sample/G-/8/8 P NO 2_ch01.tif
-    - 8 P NO 3
-        [ch00] source/PD sample/G-/8/8 P NO 3_ch00.tif
-        [ch01] source/PD sample/G-/8/8 P NO 3_ch01.tif
-    - 8 P NO 4
-        [ch00] source/PD sample/G-/8/8 P NO 4_ch00.tif
-        [ch01] source/PD sample/G-/8/8 P NO 4_ch01.tif
-    - 8 P NO 5
-        [ch00] source/PD sample/G-/8/8 P NO 5_ch00.tif
-        [ch01] source/PD sample/G-/8/8 P NO 5_ch01.tif
+  Identifier: 1
+    G- files:
+      [ch00] source\PD sample\G-\8\8 P NO 1_ch00.tif
+      [ch01] source\PD sample\G-\8\8 P NO 1_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\8\8 P 1_ch00.tif
+      [ch01] source\PD sample\G+\8\8 P 1_ch01.tif
 
-  Missing in G- (present in G+):
-    - 8 P 1
-        [ch00] source/PD sample/G+/8/8 P 1_ch00.tif
-        [ch01] source/PD sample/G+/8/8 P 1_ch01.tif
-    - 8 P 2
-        [ch00] source/PD sample/G+/8/8 P 2_ch00.tif
-        [ch01] source/PD sample/G+/8/8 P 2_ch01.tif
-    - 8 P 3
-        [ch00] source/PD sample/G+/8/8 P 3_ch00.tif
-        [ch01] source/PD sample/G+/8/8 P 3_ch01.tif
-    - 8 P 4
-        [ch00] source/PD sample/G+/8/8 P 4_ch00.tif
-        [ch01] source/PD sample/G+/8/8 P 4_ch01.tif
-    - 8 P 5
-        [ch00] source/PD sample/G+/8/8 P 5_ch00.tif
-        [ch01] source/PD sample/G+/8/8 P 5_ch01.tif
+  Identifier: 2
+    G- files:
+      [ch00] source\PD sample\G-\8\8 P NO 2_ch00.tif
+      [ch01] source\PD sample\G-\8\8 P NO 2_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\8\8 P 2_ch00.tif
+      [ch01] source\PD sample\G+\8\8 P 2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\PD sample\G-\8\8 P NO 3_ch00.tif
+      [ch01] source\PD sample\G-\8\8 P NO 3_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\8\8 P 3_ch00.tif
+      [ch01] source\PD sample\G+\8\8 P 3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\PD sample\G-\8\8 P NO 4_ch00.tif
+      [ch01] source\PD sample\G-\8\8 P NO 4_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\8\8 P 4_ch00.tif
+      [ch01] source\PD sample\G+\8\8 P 4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\PD sample\G-\8\8 P NO 5_ch00.tif
+      [ch01] source\PD sample\G-\8\8 P NO 5_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\8\8 P 5_ch00.tif
+      [ch01] source\PD sample\G+\8\8 P 5_ch01.tif
 
 ====================================================================================================
 
 Folder: 9
 ----------------------------------------------------------------------------------------------------
-Matched identifiers: 0
-Perfect match: False
+Matched identifiers: 5
+Perfect match: True
 
+Matched Identifier Pairs:
 
-  Missing in G+ (present in G-):
-    - 9 P NO 1
-        [ch00] source/PD sample/G-/9/9 P NO 1_ch00.tif
-        [ch01] source/PD sample/G-/9/9 P NO 1_ch01.tif
-    - 9 P NO 2
-        [ch00] source/PD sample/G-/9/9 P NO 2_ch00.tif
-        [ch01] source/PD sample/G-/9/9 P NO 2_ch01.tif
-    - 9 P NO 3
-        [ch00] source/PD sample/G-/9/9 P NO 3_ch00.tif
-        [ch01] source/PD sample/G-/9/9 P NO 3_ch01.tif
-    - 9 P NO 4
-        [ch00] source/PD sample/G-/9/9 P NO 4_ch00.tif
-        [ch01] source/PD sample/G-/9/9 P NO 4_ch01.tif
-    - 9 P NO 5
-        [ch00] source/PD sample/G-/9/9 P NO 5_ch00.tif
-        [ch01] source/PD sample/G-/9/9 P NO 5_ch01.tif
+  Identifier: 1
+    G- files:
+      [ch00] source\PD sample\G-\9\9 P NO 1_ch00.tif
+      [ch01] source\PD sample\G-\9\9 P NO 1_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\9\9 N NO 1_ch00.tif
+      [ch01] source\PD sample\G+\9\9 N NO 1_ch01.tif
 
-  Missing in G- (present in G+):
-    - 9 N NO 1
-        [ch00] source/PD sample/G+/9/9 N NO 1_ch00.tif
-        [ch01] source/PD sample/G+/9/9 N NO 1_ch01.tif
-    - 9 N NO 2
-        [ch00] source/PD sample/G+/9/9 N NO 2_ch00.tif
-        [ch01] source/PD sample/G+/9/9 N NO 2_ch01.tif
-    - 9 N NO 3
-        [ch00] source/PD sample/G+/9/9 N NO 3_ch00.tif
-        [ch01] source/PD sample/G+/9/9 N NO 3_ch01.tif
-    - 9 N NO 4
-        [ch00] source/PD sample/G+/9/9 N NO 4_ch00.tif
-        [ch01] source/PD sample/G+/9/9 N NO 4_ch01.tif
-    - 9 N NO 5
-        [ch00] source/PD sample/G+/9/9 N NO 5_ch00.tif
-        [ch01] source/PD sample/G+/9/9 N NO 5_ch01.tif
+  Identifier: 2
+    G- files:
+      [ch00] source\PD sample\G-\9\9 P NO 2_ch00.tif
+      [ch01] source\PD sample\G-\9\9 P NO 2_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\9\9 N NO 2_ch00.tif
+      [ch01] source\PD sample\G+\9\9 N NO 2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\PD sample\G-\9\9 P NO 3_ch00.tif
+      [ch01] source\PD sample\G-\9\9 P NO 3_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\9\9 N NO 3_ch00.tif
+      [ch01] source\PD sample\G+\9\9 N NO 3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\PD sample\G-\9\9 P NO 4_ch00.tif
+      [ch01] source\PD sample\G-\9\9 P NO 4_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\9\9 N NO 4_ch00.tif
+      [ch01] source\PD sample\G+\9\9 N NO 4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\PD sample\G-\9\9 P NO 5_ch00.tif
+      [ch01] source\PD sample\G-\9\9 P NO 5_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\9\9 N NO 5_ch00.tif
+      [ch01] source\PD sample\G+\9\9 N NO 5_ch01.tif
 
 ====================================================================================================
 
 Folder: Control group
 ----------------------------------------------------------------------------------------------------
-Matched identifiers: 0
-Perfect match: False
+Matched identifiers: 5
+Perfect match: True
 
+Matched Identifier Pairs:
 
-  Missing in G+ (present in G-):
-    - G- microgel 1
-        [ch00] source/PD sample/G-/Control group/G- microgel 1_ch00.tif
-        [ch01] source/PD sample/G-/Control group/G- microgel 1_ch01.tif
-    - G- microgel 2
-        [ch00] source/PD sample/G-/Control group/G- microgel 2_ch00.tif
-        [ch01] source/PD sample/G-/Control group/G- microgel 2_ch01.tif
-    - G- microgel 3
-        [ch00] source/PD sample/G-/Control group/G- microgel 3_ch00.tif
-        [ch01] source/PD sample/G-/Control group/G- microgel 3_ch01.tif
-    - G- microgel 4
-        [ch00] source/PD sample/G-/Control group/G- microgel 4_ch00.tif
-        [ch01] source/PD sample/G-/Control group/G- microgel 4_ch01.tif
-    - G- microgel 5
-        [ch00] source/PD sample/G-/Control group/G- microgel 5_ch00.tif
-        [ch01] source/PD sample/G-/Control group/G- microgel 5_ch01.tif
+  Identifier: 1
+    G- files:
+      [ch00] source\PD sample\G-\Control group\G- microgel 1_ch00.tif
+      [ch01] source\PD sample\G-\Control group\G- microgel 1_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\Control group\G+ microgel 1_ch00.tif
+      [ch01] source\PD sample\G+\Control group\G+ microgel 1_ch01.tif
 
-  Missing in G- (present in G+):
-    - G+ microgel 1
-        [ch00] source/PD sample/G+/Control group/G+ microgel 1_ch00.tif
-        [ch01] source/PD sample/G+/Control group/G+ microgel 1_ch01.tif
-    - G+ microgel 2
-        [ch00] source/PD sample/G+/Control group/G+ microgel 2_ch00.tif
-        [ch01] source/PD sample/G+/Control group/G+ microgel 2_ch01.tif
-    - G+ microgel 3
-        [ch00] source/PD sample/G+/Control group/G+ microgel 3_ch00.tif
-        [ch01] source/PD sample/G+/Control group/G+ microgel 3_ch01.tif
-    - G+ microgel 4
-        [ch00] source/PD sample/G+/Control group/G+ microgel 4_ch00.tif
-        [ch01] source/PD sample/G+/Control group/G+ microgel 4_ch01.tif
-    - G+ microgel 5
-        [ch00] source/PD sample/G+/Control group/G+ microgel 5_ch00.tif
-        [ch01] source/PD sample/G+/Control group/G+ microgel 5_ch01.tif
+  Identifier: 2
+    G- files:
+      [ch00] source\PD sample\G-\Control group\G- microgel 2_ch00.tif
+      [ch01] source\PD sample\G-\Control group\G- microgel 2_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\Control group\G+ microgel 2_ch00.tif
+      [ch01] source\PD sample\G+\Control group\G+ microgel 2_ch01.tif
+
+  Identifier: 3
+    G- files:
+      [ch00] source\PD sample\G-\Control group\G- microgel 3_ch00.tif
+      [ch01] source\PD sample\G-\Control group\G- microgel 3_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\Control group\G+ microgel 3_ch00.tif
+      [ch01] source\PD sample\G+\Control group\G+ microgel 3_ch01.tif
+
+  Identifier: 4
+    G- files:
+      [ch00] source\PD sample\G-\Control group\G- microgel 4_ch00.tif
+      [ch01] source\PD sample\G-\Control group\G- microgel 4_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\Control group\G+ microgel 4_ch00.tif
+      [ch01] source\PD sample\G+\Control group\G+ microgel 4_ch01.tif
+
+  Identifier: 5
+    G- files:
+      [ch00] source\PD sample\G-\Control group\G- microgel 5_ch00.tif
+      [ch01] source\PD sample\G-\Control group\G- microgel 5_ch01.tif
+    G+ files:
+      [ch00] source\PD sample\G+\Control group\G+ microgel 5_ch00.tif
+      [ch01] source\PD sample\G+\Control group\G+ microgel 5_ch01.tif
 
 ====================================================================================================
