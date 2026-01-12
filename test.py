@@ -1668,12 +1668,12 @@ def classify_groups_clinical(
                     
                 if mean_val > upper_threshold:
                     classification = "NEGATIVE"
-                    bacteria_status = "Detected"
-                    flag = "⚠️"
+                    #bacteria_status = "Detected"
+                    #flag = "Y"
                 else:
                     classification = "POSITIVE/No obvious bacteria"
-                    bacteria_status = "Not detected"
-                    flag = "✓"
+                    #bacteria_status = "Not detected"
+                    #flag = "N"
                 
                 diff_from_threshold = mean_val - upper_threshold
                 threshold_for_export = upper_threshold
@@ -1683,12 +1683,12 @@ def classify_groups_clinical(
                     
                 if mean_val < lower_threshold:
                     classification = "POSITIVE"
-                    bacteria_status = "Detected"
-                    flag = "⚠️"
+                    #bacteria_status = "Detected"
+                    #flag = "Y"
                 else:
                     classification = "NEGATIVE/No obvious bacteria"
-                    bacteria_status = "Not detected"
-                    flag = "✓"
+                    #bacteria_status = "Not detected"
+                    #flag = "N"
                 
                 diff_from_threshold = mean_val - lower_threshold
                 threshold_for_export = lower_threshold
@@ -1707,8 +1707,8 @@ def classify_groups_clinical(
                 'Diff_from_Control': round(diff_from_control, 2),
                 'Pct_Diff_from_Control': round(pct_diff_from_control, 1),
                 'Classification': classification,
-                'Bacteria_Status': bacteria_status,
-                'Flag': flag
+                #'Bacteria_Status': bacteria_status,
+                #'Flag': flag
             })
             
         except Exception:
@@ -1931,29 +1931,32 @@ def collect_configuration() -> dict:
     print("\n" + "━" * 80)
     print("STEP 3/4: Percentile for Top/Bottom Filtering")
     print("━" * 80)
-    print("\nSelect percentile:")
-    print("  [1] 20%")
-    print("  [2] 25%")
-    print("  [3] 30% (default)")
-    
+    print("\nEnter threshold percentage:")
+    print("  → Default: 30% (recommended)")
+    print("  → Range: 1-100%")
+
     while True:
-        choice = logged_input("Enter number (or Enter for default): ").strip()
+        choice = logged_input("Threshold (% or Enter for 30%): ").strip()
         
-        if choice == "1":
-            config['percentile'] = 0.2
-            print("  ✓ Selected: 20%")
-            break
-        elif choice == "2":
-            config['percentile'] = 0.25
-            print("  ✓ Selected: 25%")
-            break
-        elif choice == "" or choice == "3":
+        if choice == "":
             config['percentile'] = 0.3
-            print("  ✓ Selected: 30% (default)")
+            print("  ✓ Using default: 30%")
             break
         else:
-            print("Invalid choice. Enter 1, 2, 3, or press Enter.")
+            try:
+                value = float(choice)
+                if 1 <= value <= 30:
+                    config['percentile'] = value / 40
+                    print(f"  ✓ Selected: {value}%")
+                    break
+                else:
+                    print("Invalid input. Enter a number between 1 and 40, or press Enter.")
+            except ValueError:
+                print("Invalid input. Enter a number between 1 and 40, or press Enter.")
     
+
+
+
     # Step 4/4: Microgel Type and Threshold
     print("\n" + "━" * 80)
     print("STEP 4/4: Clinical Classification Settings")
@@ -1961,22 +1964,23 @@ def collect_configuration() -> dict:
     
     # Microgel type
     print("\nSelect microgel type:")
-    print("  [1] Negative microgel (G-)")
-    print("  [2] Positive microgel (G+)")
-    
+    print("  [1] Positive microgel (G+)")
+    print("  [2] Negative microgel (G-)")
+
     while True:
         mg_choice = logged_input("Enter number: ").strip()
         if mg_choice == "1":
-            config['microgel_type'] = "negative"
-            print("  ✓ Selected: Negative microgel (G-)")
-            break
-        elif mg_choice == "2":
             config['microgel_type'] = "positive"
             print("  ✓ Selected: Positive microgel (G+)")
             break
+        elif mg_choice == "2":
+            config['microgel_type'] = "negative"
+            print("  ✓ Selected: Negative microgel (G-)")
+            break
         else:
             print("Invalid choice. Enter 1 or 2.")
-    
+
+
     # Threshold
     print("\nEnter threshold percentage:")
     print("  → Default: 5% (recommended)")
