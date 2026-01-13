@@ -31,7 +31,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='MicroscopyAnalysis',
+    name='scout',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
