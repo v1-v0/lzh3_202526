@@ -1627,13 +1627,8 @@ def classify_groups_clinical(
     if control_mean is None:
         return pd.DataFrame()
     
-    # Calculate threshold based on microgel type
-    if microgel_type.lower() == "negative":
-        # Negative microgel: threshold is ABOVE control mean
-        threshold = control_mean * (1 + threshold_pct)
-    else:
-        # Positive microgel: threshold is BELOW control mean
-        threshold = control_mean * (1 - threshold_pct)
+    # ✅ SAME threshold calculation for BOTH types: BELOW control mean
+    threshold = control_mean * (1 - threshold_pct)
     
     results = []
     
@@ -1659,25 +1654,20 @@ def classify_groups_clinical(
             std_val = float(values.std(ddof=1))
             n = len(values)
             
-            # Classification logic based on microgel type
-            if microgel_type.lower() == "negative":
-                # Negative microgel logic:
-                # Mean < Threshold (control mean + threshold_pct%) → NEGATIVE
-                # Mean ≥ Threshold → POSITIVE/No obvious bacteria
-                if mean_val < threshold:
+            # ✅ Classification logic - SAME threshold, different labels
+            if mean_val < threshold:
+                # Below threshold = bacteria detected
+                if microgel_type.lower() == "negative":
                     classification = "NEGATIVE"
                     bacteria_status = "Gram-negative bacteria detected"
                 else:
-                    classification = "POSITIVE/No obvious bacteria"
-                    bacteria_status = "No obvious bacteria"
-                    
-            else:
-                # Positive microgel logic:
-                # Mean < Threshold (control mean - threshold_pct%) → POSITIVE
-                # Mean ≥ Threshold → NEGATIVE/No obvious bacteria
-                if mean_val < threshold:
                     classification = "POSITIVE"
                     bacteria_status = "Gram-positive bacteria detected"
+            else:
+                # Above/equal threshold = no bacteria
+                if microgel_type.lower() == "negative":
+                    classification = "POSITIVE/No obvious bacteria"
+                    bacteria_status = "No obvious bacteria"
                 else:
                     classification = "NEGATIVE/No obvious bacteria"
                     bacteria_status = "No obvious bacteria"
@@ -1713,7 +1703,6 @@ def classify_groups_clinical(
     results_df = results_df.sort_values('sort_key').drop('sort_key', axis=1)
     
     return results_df
-
 
 def export_clinical_classification(
     output_root: Path,

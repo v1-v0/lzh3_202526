@@ -849,7 +849,7 @@ def generate_error_bar_comparison_with_threshold(
         size=6, alpha=0.6,
     )
 
-    # ✅ Add threshold lines
+    # ✅ Add threshold lines - BOTH types use LOWER threshold
     legend_handles = []
     
     if control_mean is not None:
@@ -864,13 +864,9 @@ def generate_error_bar_comparison_with_threshold(
         )
         legend_handles.append(control_line)
         
-        # Threshold line (dashed red)
-        if microgel_type.lower() == "negative":
-            threshold = control_mean * (1 + threshold_pct)
-            threshold_label = f'Upper Threshold ({threshold:.1f})'
-        else:
-            threshold = control_mean * (1 - threshold_pct)
-            threshold_label = f'Lower Threshold ({threshold:.1f})'
+        # Calculate LOWER threshold for BOTH microgel types
+        threshold = control_mean * (1 - threshold_pct)
+        threshold_label = f'Lower Threshold (-{threshold_pct*100:.0f}%: {threshold:.1f})'
         
         threshold_line = ax.axhline(
             y=threshold, 
@@ -898,17 +894,20 @@ def generate_error_bar_comparison_with_threshold(
     plt.xticks(fontsize=10, fontweight="bold")
     plt.yticks(fontsize=10, fontweight="bold")
     
-    # Title
-    pct_display = int(percentile * 100)
+    # Title - Consistent messaging
+    filter_pct_display = int(percentile * 100)
     threshold_pct_display = int(threshold_pct * 100)
     
     title_parts = []
     if dataset_id:
         title_parts.append(dataset_id)
     
+    # Microgel type description
+    microgel_desc = "G- Microgel" if microgel_type.lower() == "negative" else "G+ Microgel"
+    
     title_parts.append(
-        f"Comparison (Error Bars: SD) — Typical = Middle {100 - 2*pct_display}% "
-        f"(Cut top/bottom {pct_display}%) — Threshold: ±{threshold_pct_display}%"
+        f"{microgel_desc} — Typical Particles: Middle {100 - 2*filter_pct_display}% "
+        f"(Excluded top/bottom {filter_pct_display}%)"
     )
     
     if title_suffix:
@@ -916,7 +915,7 @@ def generate_error_bar_comparison_with_threshold(
     
     raw_title = " — ".join(title_parts)
     wrapped_title = "\n".join(
-        textwrap.wrap(raw_title, width=70, break_long_words=False, break_on_hyphens=False)
+        textwrap.wrap(raw_title, width=80, break_long_words=False, break_on_hyphens=False)
     )
     plt.title(wrapped_title, fontsize=11, pad=10)
 
@@ -945,7 +944,6 @@ def generate_error_bar_comparison_with_threshold(
         print(f"[ERROR] Failed to save plot to {out_path}: {e}")
         plt.close()
         return None
-
 
 def generate_pairwise_group_vs_control_plots(
     output_root: Path, 
@@ -1629,14 +1627,8 @@ def classify_groups_clinical(
     if control_mean is None:
         return pd.DataFrame()
     
-    threshold_value = control_mean * threshold_pct
-    upper_threshold: Optional[float] = None
-    lower_threshold: Optional[float] = None
-    
-    if microgel_type.lower() == "negative":
-        upper_threshold = control_mean * (1 + threshold_pct)
-    else:
-        lower_threshold = control_mean * (1 - threshold_pct)
+    # ✅ SAME threshold calculation for BOTH types: BELOW control mean
+    threshold = control_mean * (1 - threshold_pct)
     
     results = []
     
@@ -1662,37 +1654,25 @@ def classify_groups_clinical(
             std_val = float(values.std(ddof=1))
             n = len(values)
             
-            if microgel_type.lower() == "negative":
-                if upper_threshold is None:
-                    continue
-                    
-                if mean_val > upper_threshold:
+            # ✅ Classification logic - SAME threshold, different labels
+            if mean_val < threshold:
+                # Below threshold = bacteria detected
+                if microgel_type.lower() == "negative":
                     classification = "NEGATIVE"
-                    #bacteria_status = "Detected"
-                    #flag = "Y"
+                    bacteria_status = "Gram-negative bacteria detected"
                 else:
-                    classification = "POSITIVE/No obvious bacteria"
-                    #bacteria_status = "Not detected"
-                    #flag = "N"
-                
-                diff_from_threshold = mean_val - upper_threshold
-                threshold_for_export = upper_threshold
-            else:
-                if lower_threshold is None:
-                    continue
-                    
-                if mean_val < lower_threshold:
                     classification = "POSITIVE"
-                    #bacteria_status = "Detected"
-                    #flag = "Y"
+                    bacteria_status = "Gram-positive bacteria detected"
+            else:
+                # Above/equal threshold = no bacteria
+                if microgel_type.lower() == "negative":
+                    classification = "POSITIVE/No obvious bacteria"
+                    bacteria_status = "No obvious bacteria"
                 else:
                     classification = "NEGATIVE/No obvious bacteria"
-                    #bacteria_status = "Not detected"
-                    #flag = "N"
-                
-                diff_from_threshold = mean_val - lower_threshold
-                threshold_for_export = lower_threshold
+                    bacteria_status = "No obvious bacteria"
             
+            diff_from_threshold = mean_val - threshold
             diff_from_control = mean_val - control_mean
             pct_diff_from_control = (diff_from_control / control_mean) * 100
             
@@ -1702,13 +1682,11 @@ def classify_groups_clinical(
                 'Mean': round(mean_val, 2),
                 'Std_Dev': round(std_val, 2),
                 'Control_Mean': round(control_mean, 2),
-                'Threshold': round(threshold_for_export, 2),
+                'Threshold': round(threshold, 2),
                 'Diff_from_Threshold': round(diff_from_threshold, 2),
                 'Diff_from_Control': round(diff_from_control, 2),
                 'Pct_Diff_from_Control': round(pct_diff_from_control, 1),
                 'Classification': classification,
-                #'Bacteria_Status': bacteria_status,
-                #'Flag': flag
             })
             
         except Exception:
@@ -1725,7 +1703,6 @@ def classify_groups_clinical(
     results_df = results_df.sort_values('sort_key').drop('sort_key', axis=1)
     
     return results_df
-
 
 def export_clinical_classification(
     output_root: Path,
