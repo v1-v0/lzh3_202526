@@ -1854,26 +1854,63 @@ def select_source_directory(max_depth=2) -> Optional[Path]:
 # Configuration Collection
 # ==================================================
 def collect_configuration() -> dict:
-    """Collect all user configuration upfront"""
+    """Collect all user configuration upfront
+    
+    Returns:
+        dict: Configuration dictionary with all user settings
+        
+    Raises:
+        SystemExit: If no source directory is selected
+    """
     
     print("\n" + "="*80)
     print("PHASE 1: CONFIGURATION")
     print("="*80)
-    print("\nPlease answer the following 4 questions:\n")
+    print("\nPlease answer the following 3 questions:\n")
     
     config = {}
     
-    # Step 1/4: Source Directory
+    # Step 1/3: Source Directory
     print("━" * 80)
-    print("STEP 1/4: Select Source Directory")
+    print("STEP 1/3: Select Source Directory")
     print("━" * 80)
     config['source_dir'] = select_source_directory()
     if config['source_dir'] is None:
         raise SystemExit("No source directory selected.")
     
-    # Step 2/4: Dataset ID
+    # Auto-detect microgel type from directory name
+    dir_name = os.path.basename(config['source_dir'])
+    if 'G+' in dir_name.upper():
+        config['microgel_type'] = "positive"
+        detected_type = "Positive (G+)"
+    elif 'G-' in dir_name.upper():
+        config['microgel_type'] = "negative"
+        detected_type = "Negative (G-)"
+    else:
+        # If not detected, ask the user
+        print("\n⚠ Could not auto-detect microgel type from directory name")
+        print("\nSelect microgel type:")
+        print("  [1] Positive microgel (G+)")
+        print("  [2] Negative microgel (G-)")
+        
+        while True:
+            mg_choice = logged_input("Enter number: ").strip()
+            if mg_choice == "1":
+                config['microgel_type'] = "positive"
+                detected_type = "Positive (G+)"
+                break
+            elif mg_choice == "2":
+                config['microgel_type'] = "negative"
+                detected_type = "Negative (G-)"
+                break
+            else:
+                print("Invalid choice. Enter 1 or 2.")
+    
+    print(f"  ✓ Microgel type: {detected_type}")
+    
+    # Step 2/3: Dataset ID
     print("\n" + "━" * 80)
-    print("STEP 2/4: Dataset Identifier")
+    print("STEP 2/3: Dataset Identifier")
     print("━" * 80)
     print("\nEnter dataset identifier (e.g., 'PD G-', 'Spike G+'):")
     print("  → Press Enter to use timestamp as label")
@@ -1904,13 +1941,13 @@ def collect_configuration() -> dict:
             print(f"  ✓ Confirmed: {dataset_id}")
             break
     
-    # Step 3/4: Percentile
+    # Step 3/3: Percentile
     print("\n" + "━" * 80)
-    print("STEP 3/4: Percentile for Top/Bottom Filtering")
+    print("STEP 3/3: Percentile for Top/Bottom Filtering")
     print("━" * 80)
     print("\nEnter threshold percentage:")
     print("  → Default: 30% (recommended)")
-    print("  → Range: 1-100%")
+    print("  → Range: 1-40%")
 
     while True:
         choice = logged_input("Threshold (% or Enter for 30%): ").strip()
@@ -1922,8 +1959,8 @@ def collect_configuration() -> dict:
         else:
             try:
                 value = float(choice)
-                if 1 <= value <= 30:
-                    config['percentile'] = value / 40
+                if 1 <= value <= 40:
+                    config['percentile'] = value / 100
                     print(f"  ✓ Selected: {value}%")
                     break
                 else:
@@ -1931,34 +1968,10 @@ def collect_configuration() -> dict:
             except ValueError:
                 print("Invalid input. Enter a number between 1 and 40, or press Enter.")
     
-
-
-
-    # Step 4/4: Microgel Type and Threshold
+    # Step 4/3: Clinical Classification Threshold
     print("\n" + "━" * 80)
-    print("STEP 4/4: Clinical Classification Settings")
+    print("STEP 4/3: Clinical Classification Threshold")
     print("━" * 80)
-    
-    # Microgel type
-    print("\nSelect microgel type:")
-    print("  [1] Positive microgel (G+)")
-    print("  [2] Negative microgel (G-)")
-
-    while True:
-        mg_choice = logged_input("Enter number: ").strip()
-        if mg_choice == "1":
-            config['microgel_type'] = "positive"
-            print("  ✓ Selected: Positive microgel (G+)")
-            break
-        elif mg_choice == "2":
-            config['microgel_type'] = "negative"
-            print("  ✓ Selected: Negative microgel (G-)")
-            break
-        else:
-            print("Invalid choice. Enter 1 or 2.")
-
-
-    # Threshold
     print("\nEnter threshold percentage:")
     print("  → Default: 5% (recommended)")
     print("  → Range: 1-20%")
@@ -1986,6 +1999,8 @@ def collect_configuration() -> dict:
             print("  ✗ Please enter a valid number")
     
     return config
+
+
 
 
 def display_configuration_summary(config: dict) -> None:
