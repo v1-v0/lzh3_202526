@@ -1,7 +1,16 @@
 import os
+import shutil
+import subprocess
+import platform
+from pathlib import Path
+from datetime import datetime
+from typing import Optional, Dict, List
+import sys
+
+
 import cv2
 import numpy as np
-import sys
+
 import csv
 import textwrap
 import time
@@ -30,9 +39,20 @@ from openpyxl.chart import ScatterChart, Reference
 from openpyxl.chart.marker import Marker
 from openpyxl.chart.series_factory import SeriesFactory
 
+# Basic logger setup
+import logging
+logger = logging.getLogger("particle_scout")
+if not logger.handlers:
+    logger.setLevel(logging.INFO)
+    _sh = logging.StreamHandler()
+    _sh.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    logger.addHandler(_sh)
+
 from openpyxl import load_workbook
 from openpyxl.drawing.image import Image as XLImage
 
+
+csv_paths: list[Path] = []
 
 # ==================================================
 # Logging: tee stdout/stderr to a file
@@ -938,7 +958,7 @@ def generate_error_bar_comparison_with_threshold(
     try:
         plt.savefig(out_path, dpi=300)
         plt.close()
-        print(f"✓ Saved plot with threshold: {out_path.name}")
+        print(f"Saved plot with threshold: {out_path.name}")
         return out_path
     except Exception as e:
         print(f"[ERROR] Failed to save plot to {out_path}: {e}")
@@ -998,7 +1018,7 @@ def generate_pairwise_group_vs_control_plots(
         )
         
         if result is not None:
-            print(f"  ✓ Pairwise plot: {pair_plot_path.name}")
+            print(f"  Pairwise plot: {pair_plot_path.name}")
 
 
 def embed_comparison_plots_into_all_excels(
@@ -1072,7 +1092,7 @@ def embed_comparison_plots_into_all_excels(
             print(f"[WARN] Could not embed plots into {excel_path}: {e}")
 
     if updated > 0:
-        print(f"  ✓ Embedded plots in {updated} Excel files")
+        print(f"  Embedded plots in {updated} Excel files")
 
 
 def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -> None:
@@ -1772,87 +1792,335 @@ def export_clinical_classification(
     
     return csv_path
 
+def generate_final_clinical_matrix(
+    output_root: Path,
+    gplus_classification: pd.DataFrame,
+    gminus_classification: pd.DataFrame,
+    dataset_base_name: str
+) -> Optional[Path]:
+    """Generate final clinical result matrix combining G+ and G- results
+    
+    Args:
+        output_root: Root output directory
+        gplus_classification: Classification results for G+ microgel
+        gminus_classification: Classification results for G- microgel
+        dataset_base_name: Base name for the dataset
+        
+    Returns:
+        Path to the generated Excel file, or None if generation failed
+    """
+    
+    if gplus_classification.empty or gminus_classification.empty:
+        print("[WARN] Missing classification data - cannot generate final matrix")
+        return None
+    
+    # ✅ FIX: Ensure Group column is string type in both DataFrames
+    gplus_classification['Group'] = gplus_classification['Group'].astype(str)
+    gminus_classification['Group'] = gminus_classification['Group'].astype(str)
+    
+    # Clinical decision matrix
+    decision_matrix = {
+        ('POSITIVE', 'POSITIVE/No obvious bacteria'): 'POSITIVE',
+        ('NEGATIVE/No obvious bacteria', 'NEGATIVE'): 'NEGATIVE',
+        ('NEGATIVE/No obvious bacteria', 'POSITIVE/No obvious bacteria'): 'NO OBVIOUS BACTERIA',
+        ('POSITIVE', 'NEGATIVE'): 'MIXED/CONTRADICTORY',
+    }
+    
+    # Prepare results
+    results = []
+    
+    # ✅ FIX: Get all groups (numeric groups only, excluding Control)
+    gplus_groups = set(gplus_classification[gplus_classification['Group'] != 'Control']['Group'])
+    gminus_groups = set(gminus_classification[gminus_classification['Group'] != 'Control']['Group'])
+    all_groups = sorted(gplus_groups | gminus_groups, key=lambda x: int(x) if x.isdigit() else 999)
+    
+    # ✅ FIX: Create lookup dictionaries with string keys
+    gplus_dict = gplus_classification.set_index('Group').to_dict('index')
+    gminus_dict = gminus_classification.set_index('Group').to_dict('index')
+    
+    # ✅ DEBUG: Print what we found
+    print(f"  DEBUG: G+ groups found: {sorted(gplus_groups)}")
+    print(f"  DEBUG: G- groups found: {sorted(gminus_groups)}")
+    print(f"  DEBUG: All groups to process: {all_groups}")
+    
+    for group in all_groups:
+        # Get G+ data
+        gplus_data = gplus_dict.get(group)
+        if gplus_data:
+            gplus_mean = gplus_data['Mean']
+            gplus_class = gplus_data['Classification']
+            gplus_detection = 'POSITIVE' if 'POSITIVE' in gplus_class and 'No obvious' not in gplus_class else 'NEGATIVE/No obvious bacteria'
+        else:
+            gplus_mean = None
+            gplus_class = None
+            gplus_detection = '-'
+        
+        # Get G- data
+        gminus_data = gminus_dict.get(group)
+        if gminus_data:
+            gminus_mean = gminus_data['Mean']
+            gminus_class = gminus_data['Classification']
+            gminus_detection = 'NEGATIVE' if 'NEGATIVE' in gminus_class and 'No obvious' not in gminus_class else 'POSITIVE/No obvious bacteria'
+        else:
+            gminus_mean = None
+            gminus_class = None
+            gminus_detection = '-'
+        
+        # Determine final classification
+        if gplus_class is None and gminus_class is None:
+            final_class = 'MISSING DATA'
+        elif gplus_class is None:
+            final_class = 'MISSING G+'
+        elif gminus_class is None:
+            final_class = 'MISSING G-'
+        else:
+            # Look up in decision matrix
+            key = (gplus_class, gminus_class)
+            final_class = decision_matrix.get(key, 'UNKNOWN COMBINATION')
+        
+        results.append({
+            'Group': group,
+            'G+_Mean': gplus_mean if gplus_mean is not None else '-',
+            'G+_Detection': gplus_detection,
+            'G-_Mean': gminus_mean if gminus_mean is not None else '-',
+            'G-_Detection': gminus_detection,
+            'Final_Classification': final_class
+        })
+    
+    # Create DataFrame
+    final_df = pd.DataFrame(results)
+    
+    # Round numeric values
+    for col in ['G+_Mean', 'G-_Mean']:
+        final_df[col] = final_df[col].apply(
+            lambda x: f"{x:.2f}" if isinstance(x, (int, float)) else x
+        )
+    
+    # Export to CSV
+    csv_path = output_root / "final_clinical_results.csv"
+    final_df.to_csv(csv_path, index=False)
+    print(f"  Final results CSV: {csv_path.name}")
+    
+    # Export to Excel with formatting
+    excel_path = output_root / "final_clinical_results.xlsx"
+    
+    try:
+        from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        
+        with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+            final_df.to_excel(writer, sheet_name='Final Results', index=False)
+            
+            ws = writer.sheets['Final Results']
+            
+            # Define colors
+            header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+            positive_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")  # Light red
+            negative_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")  # Light green
+            no_bacteria_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")  # Light yellow
+            mixed_fill = PatternFill(start_color="FCD5B4", end_color="FCD5B4", fill_type="solid")  # Light orange
+            missing_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")  # Light gray
+            
+            header_font = Font(bold=True, color="FFFFFF")
+            center_align = Alignment(horizontal="center", vertical="center")
+            thin_border = Border(
+                left=Side(style='thin'),
+                right=Side(style='thin'),
+                top=Side(style='thin'),
+                bottom=Side(style='thin')
+            )
+            
+            # Format header
+            for cell in ws[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = center_align
+                cell.border = thin_border
+            
+            # Format data rows
+            for row_idx in range(len(final_df)):
+                excel_row = row_idx + 2
+                final_class = final_df.iloc[row_idx]['Final_Classification']
+                
+                # Determine row color based on final classification
+                if final_class == 'POSITIVE':
+                    row_fill = positive_fill
+                elif final_class == 'NEGATIVE':
+                    row_fill = negative_fill
+                elif final_class == 'NO OBVIOUS BACTERIA':
+                    row_fill = no_bacteria_fill
+                elif final_class == 'MIXED/CONTRADICTORY':
+                    row_fill = mixed_fill
+                else:  # MISSING DATA, MISSING G+, MISSING G-, etc.
+                    row_fill = missing_fill
+                
+                # Apply formatting to all cells in row
+                for col_idx in range(1, len(final_df.columns) + 1):
+                    cell = ws.cell(row=excel_row, column=col_idx)
+                    cell.fill = row_fill
+                    cell.alignment = center_align
+                    cell.border = thin_border
+            
+            # Adjust column widths
+            for column in ws.columns:
+                max_length = 0
+                column_letter = get_column_letter(column[0].column)
+                for cell in column:
+                    try:
+                        if cell.value:
+                            max_length = max(max_length, len(str(cell.value)))
+                    except:
+                        pass
+                adjusted_width = min((max_length + 2) * 1.1, 50)
+                ws.column_dimensions[column_letter].width = adjusted_width
+            
+            # Add legend sheet
+            legend_data = pd.DataFrame({
+                'Classification': ['POSITIVE', 'NEGATIVE', 'NO OBVIOUS BACTERIA', 'MIXED/CONTRADICTORY', 'MISSING DATA'],
+                'Meaning': [
+                    'Bacteria detected (G+ positive AND G- positive/no bacteria)',
+                    'No bacteria detected (G+ negative/no bacteria AND G- negative)',
+                    'No obvious bacteria (both G+ and G- show no bacteria)',
+                    'Contradictory results (G+ positive AND G- negative)',
+                    'Insufficient data for classification'
+                ],
+                'Color': ['Light Red', 'Light Green', 'Light Yellow', 'Light Orange', 'Light Gray']
+            })
+            
+            legend_data.to_excel(writer, sheet_name='Legend', index=False)
+            ws_legend = writer.sheets['Legend']
+            
+            # Format legend header
+            for cell in ws_legend[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = center_align
+            
+            # Color code legend rows
+            for row_idx in range(len(legend_data)):
+                excel_row = row_idx + 2
+                class_name = legend_data.iloc[row_idx]['Classification']
+                
+                if class_name == 'POSITIVE':
+                    fill = positive_fill
+                elif class_name == 'NEGATIVE':
+                    fill = negative_fill
+                elif class_name == 'NO OBVIOUS BACTERIA':
+                    fill = no_bacteria_fill
+                elif class_name == 'MIXED/CONTRADICTORY':
+                    fill = mixed_fill
+                else:
+                    fill = missing_fill
+                
+                for col_idx in range(1, 4):
+                    ws_legend.cell(row=excel_row, column=col_idx).fill = fill
+                    ws_legend.cell(row=excel_row, column=col_idx).alignment = center_align
+            
+            # Adjust legend column widths
+            ws_legend.column_dimensions['A'].width = 25
+            ws_legend.column_dimensions['B'].width = 60
+            ws_legend.column_dimensions['C'].width = 15
+        
+        print(f"  Final results Excel: {excel_path.name}")
+        
+        # Print summary to console
+        print("\n" + "="*80)
+        print("FINAL CLINICAL RESULTS SUMMARY")
+        print("="*80)
+        print(final_df.to_string(index=False))
+        print("="*80 + "\n")
+        
+        return excel_path
+        
+        
+
+    except Exception as e:
+        print(f"[ERROR] Could not create Excel file: {e}")
+        return None
+
 
 # ==================================================
 # Source Directory Selection
 # ==================================================
 def select_source_directory(max_depth=2) -> Optional[Path]:
-    """Lists directories up to 2 levels deep that have a Control subfolder"""
+    """Lists directories that either have a Control subfolder OR contain G+/G- subdirectories"""
     root_dir = Path('source')
     
     if not root_dir.exists():
         print(f"[ERROR] Source directory not found: {root_dir.resolve()}")
         return None
     
-    directories = []
-    
-    for root, dirs, files in os.walk(root_dir):
-        rel_path = os.path.relpath(root, root_dir)
-        if rel_path == '.':
-            depth = 0
-        else:
-            depth = rel_path.count(os.sep) + 1
-        
-        if depth > max_depth + 1:
-            dirs[:] = []
-            continue
-        
-        if depth > 0:
-            directories.append(rel_path.replace(os.sep, '\\'))
-    
     valid_directories = []
-    for dir_path in directories:
-        if len(dir_path.split('\\')) > max_depth:
+    
+    # Check immediate subdirectories of source/
+    for item in root_dir.iterdir():
+        if not item.is_dir():
             continue
             
-        full_path = root_dir / dir_path.replace('\\', os.sep)
-        if full_path.is_dir():
-            try:
-                subdirs = [d for d in os.listdir(full_path) 
-                          if (full_path / d).is_dir()]
-                has_control = any(d.lower().startswith('control') for d in subdirs)
-                if has_control:
-                    valid_directories.append(dir_path)
-            except OSError:
-                continue
+        # Check if this directory has both G+ and G- subdirectories
+        has_gplus = (item / 'G+').is_dir()
+        has_gminus = (item / 'G-').is_dir()
+        
+        if has_gplus and has_gminus:
+            # This is a batch directory (like "PD sample" or "Spike sample")
+            valid_directories.append(item.name)
+            continue
+        
+        # Check if this directory has a Control subfolder (single-mode directory)
+        try:
+            subdirs = [d for d in item.iterdir() if d.is_dir()]
+            has_control = any(d.name.lower().startswith('control') for d in subdirs)
+            if has_control:
+                valid_directories.append(item.name)
+        except OSError:
+            continue
     
-    directories = sorted(set(valid_directories))
-    
-    if not directories:
-        print("[ERROR] No valid directories found with Control subfolders.")
+    if not valid_directories:
+        print("[ERROR] No valid directories found.")
+        print("Valid directories must either:")
+        print("  1. Contain both 'G+' and 'G-' subfolders (for batch processing)")
+        print("  2. Contain a 'Control' subfolder (for single processing)")
         return None
+    
+    valid_directories.sort()
     
     print("\n" + "="*80)
     print("SELECT SOURCE DIRECTORY")
     print("="*80)
-    print("\nAvailable directories (up to 2 levels deep):")
-    for i, dir_path in enumerate(directories, 1):
-        print(f"  [{i}] {dir_path}")
+    print("\nAvailable directories:")
+    for i, dir_name in enumerate(valid_directories, 1):
+        dir_path = root_dir / dir_name
+        has_gplus = (dir_path / 'G+').is_dir()
+        has_gminus = (dir_path / 'G-').is_dir()
+        
+        if has_gplus and has_gminus:
+            mode_label = "[BATCH: G+ and G-]"
+        else:
+            mode_label = "[SINGLE]"
+        
+        print(f"  [{i}] {dir_name} {mode_label}")
     
     while True:
-        selected = logged_input("\nEnter the number or full path (or 'q' to quit): ").strip()
+        selected = logged_input("\nEnter the number or folder name (or 'q' to quit): ").strip()
         
         if selected.lower() in {'q', 'quit', 'exit'}:
             raise SystemExit(0)
         
         if selected.isdigit():
             num = int(selected)
-            if 1 <= num <= len(directories):
-                selected_path = directories[num - 1]
-                full_selected = root_dir / selected_path.replace('\\', os.sep)
+            if 1 <= num <= len(valid_directories):
+                selected_name = valid_directories[num - 1]
+                full_selected = root_dir / selected_name
                 return full_selected
             else:
-                print(f"Invalid number. Please enter between 1 and {len(directories)}.")
-        elif selected in directories:
-            full_selected = root_dir / selected.replace('\\', os.sep)
+                print(f"Invalid number. Please enter between 1 and {len(valid_directories)}.")
+        elif selected in valid_directories:
+            full_selected = root_dir / selected
             return full_selected
         else:
-            print("Invalid selection. Please enter a valid number or path.")
+            print("Invalid selection. Please enter a valid number or folder name.")
 
 
-# ==================================================
-# Configuration Collection
-# ==================================================
 def collect_configuration() -> dict:
     """Collect all user configuration upfront
     
@@ -1866,84 +2134,149 @@ def collect_configuration() -> dict:
     print("\n" + "="*80)
     print("PHASE 1: CONFIGURATION")
     print("="*80)
-    print("\nPlease answer the following 3 questions:\n")
+    print("\nPlease answer the following questions:\n")
     
     config = {}
     
-    # Step 1/3: Source Directory
+    # Step 1: Source Directory
     print("━" * 80)
-    print("STEP 1/3: Select Source Directory")
+    print("STEP 1/4: Select Source Directory")
     print("━" * 80)
     config['source_dir'] = select_source_directory()
     if config['source_dir'] is None:
         raise SystemExit("No source directory selected.")
     
-    # Auto-detect microgel type from directory name
-    dir_name = os.path.basename(config['source_dir'])
-    if 'G+' in dir_name.upper():
-        config['microgel_type'] = "positive"
-        detected_type = "Positive (G+)"
-    elif 'G-' in dir_name.upper():
-        config['microgel_type'] = "negative"
-        detected_type = "Negative (G-)"
-    else:
-        # If not detected, ask the user
-        print("\n⚠ Could not auto-detect microgel type from directory name")
-        print("\nSelect microgel type:")
-        print("  [1] Positive microgel (G+)")
-        print("  [2] Negative microgel (G-)")
+    # Auto-detect batch mode
+    gplus_path = config['source_dir'] / 'G+'
+    gminus_path = config['source_dir'] / 'G-'
+    
+    has_gplus = gplus_path.is_dir()
+    has_gminus = gminus_path.is_dir()
+    
+    if has_gplus and has_gminus:
+        # Batch mode detected
+        config['batch_mode'] = True
+        config['dataset_base_name'] = config['source_dir'].name
+        config['subdirs'] = []
         
-        while True:
-            mg_choice = logged_input("Enter number: ").strip()
-            if mg_choice == "1":
-                config['microgel_type'] = "positive"
-                detected_type = "Positive (G+)"
-                break
-            elif mg_choice == "2":
-                config['microgel_type'] = "negative"
-                detected_type = "Negative (G-)"
-                break
-            else:
-                print("Invalid choice. Enter 1 or 2.")
+        print(f"\nDetected BATCH PROCESSING mode")
+        print(f"  Parent folder: {config['dataset_base_name']}")
+        print(f"  Will process:")
+        print(f"    → {config['dataset_base_name']}/G+ (Gram-positive)")
+        print(f"    → {config['dataset_base_name']}/G- (Gram-negative)")
+        
+        # Store subdirectory configurations with safe filenames
+        config['subdirs'].append({
+            'path': gplus_path,
+            'microgel_type': 'positive',
+            'label': 'G+',
+            'safe_label': 'Positive'  # For filenames
+        })
+        config['subdirs'].append({
+            'path': gminus_path,
+            'microgel_type': 'negative',
+            'label': 'G-',
+            'safe_label': 'Negative'  # For filenames
+        })
+        
+    else:
+        # Single mode
+        config['batch_mode'] = False
+        
+        # Try to detect microgel type from directory structure or name
+        if has_gplus:
+            config['microgel_type'] = "positive"
+            detected_type = "Positive (G+)"
+        elif has_gminus:
+            config['microgel_type'] = "negative"
+            detected_type = "Negative (G-)"
+        elif 'G+' in config['source_dir'].name.upper():
+            config['microgel_type'] = "positive"
+            detected_type = "Positive (G+)"
+        elif 'G-' in config['source_dir'].name.upper():
+            config['microgel_type'] = "negative"
+            detected_type = "Negative (G-)"
+        else:
+            # Ask user
+            print("\n⚠ Could not auto-detect microgel type")
+            print("\nSelect microgel type:")
+            print("  [1] Positive microgel (G+)")
+            print("  [2] Negative microgel (G-)")
+            
+            while True:
+                mg_choice = logged_input("Enter number: ").strip()
+                if mg_choice == "1":
+                    config['microgel_type'] = "positive"
+                    detected_type = "Positive (G+)"
+                    break
+                elif mg_choice == "2":
+                    config['microgel_type'] = "negative"
+                    detected_type = "Negative (G-)"
+                    break
+                else:
+                    print("Invalid choice. Enter 1 or 2.")
+        
+        print(f"  Microgel type: {detected_type}")
     
-    print(f"  ✓ Microgel type: {detected_type}")
-    
-    # Step 2/3: Dataset ID
+    # Step 2: Dataset ID
     print("\n" + "━" * 80)
-    print("STEP 2/3: Dataset Identifier")
+    print("STEP 2/4: Dataset Identifier")
     print("━" * 80)
-    print("\nEnter dataset identifier (e.g., 'PD G-', 'Spike G+'):")
-    print("  → Press Enter to use timestamp as label")
+    
+    if config.get('batch_mode', False):
+        print(f"\nEnter base dataset identifier:")
+        print(f"  Current folder: '{config['dataset_base_name']}'")
+        print(f"  Will create: '[your_id] Positive' and '[your_id] Negative'")
+        print(f"  Example: '{config['dataset_base_name']}'")
+        print(f"  → Press Enter to use folder name: '{config['dataset_base_name']}'")
+    else:
+        print("\nEnter dataset identifier:")
+        print(f"  Example: 'PD Negative', 'Spike Positive'")
+        print(f"  → Press Enter to use timestamp")
     
     while True:
         dataset_id = logged_input("Dataset label: ").strip()
         
         if dataset_id == "":
-            timestamp_label = datetime.now().strftime("%Y%m%d_%H%M%S")
-            config['dataset_id'] = timestamp_label
-            print(f"  ✓ Using timestamp: {timestamp_label}")
+            if config.get('batch_mode', False):
+                config['dataset_id_base'] = config['dataset_base_name']
+                print(f"  Using folder name: {config['dataset_base_name']}")
+            else:
+                timestamp_label = datetime.now().strftime("%Y%m%d_%H%M%S")
+                config['dataset_id'] = timestamp_label
+                print(f"  Using timestamp: {timestamp_label}")
             break
         
         if len(dataset_id) > 50:
-            print("  ✗ Too long (max 50 characters)")
+            print("  Too long (max 50 characters)")
             continue
         
         invalid_chars = set('<>:"|?*\\/')
         found_invalid = [c for c in dataset_id if c in invalid_chars]
         if found_invalid:
-            print(f"  ✗ Invalid characters: {', '.join(repr(c) for c in set(found_invalid))}")
+            print(f"  Invalid characters: {', '.join(repr(c) for c in set(found_invalid))}")
             continue
         
-        confirm = logged_input(f"  → Confirm '{dataset_id}'? (y/n, Enter=yes): ").strip().lower()
+        if config.get('batch_mode', False):
+            print(f"  → Will create:")
+            print(f"     • '{dataset_id} Positive'")
+            print(f"     • '{dataset_id} Negative'")
+            confirm = logged_input(f"  → Confirm? (y/n, Enter=yes): ").strip().lower()
+        else:
+            confirm = logged_input(f"  → Confirm '{dataset_id}'? (y/n, Enter=yes): ").strip().lower()
         
         if confirm in ["", "y", "yes"]:
-            config['dataset_id'] = dataset_id
-            print(f"  ✓ Confirmed: {dataset_id}")
+            if config.get('batch_mode', False):
+                config['dataset_id_base'] = dataset_id
+                print(f"  Confirmed: {dataset_id}")
+            else:
+                config['dataset_id'] = dataset_id
+                print(f"  Confirmed: {dataset_id}")
             break
     
-    # Step 3/3: Percentile
+    # Step 3: Percentile
     print("\n" + "━" * 80)
-    print("STEP 3/3: Percentile for Top/Bottom Filtering")
+    print("STEP 3/4: Percentile for Top/Bottom Filtering")
     print("━" * 80)
     print("\nEnter threshold percentage:")
     print("  → Default: 30% (recommended)")
@@ -1954,23 +2287,23 @@ def collect_configuration() -> dict:
         
         if choice == "":
             config['percentile'] = 0.3
-            print("  ✓ Using default: 30%")
+            print("  Using default: 30%")
             break
         else:
             try:
                 value = float(choice)
                 if 1 <= value <= 40:
                     config['percentile'] = value / 100
-                    print(f"  ✓ Selected: {value}%")
+                    print(f"  Selected: {value}%")
                     break
                 else:
                     print("Invalid input. Enter a number between 1 and 40, or press Enter.")
             except ValueError:
                 print("Invalid input. Enter a number between 1 and 40, or press Enter.")
     
-    # Step 4/3: Clinical Classification Threshold
+    # Step 4: Clinical Classification Threshold
     print("\n" + "━" * 80)
-    print("STEP 4/3: Clinical Classification Threshold")
+    print("STEP 4/4: Clinical Classification Threshold")
     print("━" * 80)
     print("\nEnter threshold percentage:")
     print("  → Default: 5% (recommended)")
@@ -1981,7 +2314,7 @@ def collect_configuration() -> dict:
         
         if choice == "":
             config['threshold_pct'] = 0.05
-            print("  ✓ Using default: 5%")
+            print("  Using default: 5%")
             break
         
         try:
@@ -1991,37 +2324,50 @@ def collect_configuration() -> dict:
             
             if 0.01 <= value <= 0.20:
                 config['threshold_pct'] = value
-                print(f"  ✓ Threshold set: {value*100:.1f}%")
+                print(f"  Threshold set: {value*100:.1f}%")
                 break
             else:
-                print("  ✗ Must be between 1% and 20%")
+                print("  Must be between 1% and 20%")
         except ValueError:
-            print("  ✗ Please enter a valid number")
+            print("  Please enter a valid number")
     
     return config
 
 
 
-
 def display_configuration_summary(config: dict) -> None:
-    """Display configuration summary for user confirmation"""
+    """Display configuration summary before processing"""
     print("\n" + "="*80)
     print("CONFIGURATION SUMMARY")
-    print("="*80)
-    print(f"\n1. Source Directory: {config['source_dir']}")
-    print(f"2. Dataset ID: {config['dataset_id']}")
-    print(f"3. Percentile: {int(config['percentile']*100)}%")
-    print(f"4. Microgel Type: {config['microgel_type'].capitalize()}")
-    print(f"5. Threshold: {int(config['threshold_pct']*100)}%")
-    print("\n" + "="*80)
+    print("="*80 + "\n")
     
-    confirm = logged_input("\nProceed with this configuration? (y/n, Enter=yes): ").strip().lower()
+    if config.get('batch_mode', False):
+        print(f"Mode: BATCH PROCESSING")
+        print(f"1. Base Directory: {config['source_dir']}")
+        print(f"2. Dataset Base ID: {config.get('dataset_id_base', 'N/A')}")
+        print(f"   → Processing:")
+        for subdir in config['subdirs']:
+            dataset_name = f"{config.get('dataset_id_base', '')} {subdir['safe_label']}"
+            print(f"     • {subdir['label']}: {dataset_name}")
+        print(f"3. Percentile: {config['percentile']*100:.0f}%")
+        print(f"4. Clinical Threshold: {config['threshold_pct']*100:.1f}%")
+    else:
+        print(f"Mode: SINGLE PROCESSING")
+        print(f"1. Source Directory: {config['source_dir']}")
+        print(f"2. Dataset ID: {config['dataset_id']}")
+        print(f"3. Percentile: {config['percentile']*100:.0f}%")
+        print(f"4. Microgel Type: {config['microgel_type'].capitalize()}")
+        print(f"5. Clinical Threshold: {config['threshold_pct']*100:.1f}%")
+    
+    print("\n" + "="*80 + "\n")
+    
+    confirm = logged_input("Proceed with this configuration? (y/n, Enter=yes): ").strip().lower()
     
     if confirm not in ["", "y", "yes"]:
-        print("\n✗ Configuration cancelled by user")
-        raise SystemExit(0)
+        raise SystemExit("Configuration cancelled by user.")
     
-    print("\n✓ Configuration confirmed - starting processing...")
+    print("\nConfiguration confirmed - starting processing...\n")
+
 
 
 # ==================================================
@@ -2288,215 +2634,647 @@ def process_image(img_path: Path, output_root: Path) -> None:
 # ==================================================
 # Main Function
 # ==================================================
-def main() -> None:
-    start_time = time.time()
-    
-    # PHASE 1: Configuration
-    config = collect_configuration()
-    display_configuration_summary(config)
-    
-    # Setup paths
-    global SOURCE_DIR, CONTROL_DIR, OUTPUT_DIR
-    SOURCE_DIR = config['source_dir']
-    
-    control_candidates = [
-        d for d in SOURCE_DIR.iterdir() 
-        if d.is_dir() and d.name.lower().startswith('control')
-    ]
-    
-    if control_candidates:
-        CONTROL_DIR = control_candidates[0]
-    else:
-        CONTROL_DIR = SOURCE_DIR / "Control group"
-    
-    safe_dataset_id = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in config['dataset_id'])
-    safe_dataset_id = safe_dataset_id.strip().replace(' ', '_')
-    output_folder_name = f"{safe_dataset_id}_{_timestamp}_{_script_name}"
-    
-    OUTPUT_DIR = _project_root / "outputs" / output_folder_name
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    
-    if CLEAR_OUTPUT_DIR_EACH_RUN:
-        clear_output_dir(OUTPUT_DIR)
-    
-    # PHASE 2: Processing
-    print("\n" + "="*80)
-    print("PHASE 2: PROCESSING")
-    print("="*80)
-    
-    # Step 1/7: Collect images
-    print("\n━" * 80)
-    print("STEP 1/7: Collecting Images")
-    print("━" * 80)
-    
-    groups = list_sample_group_folders(SOURCE_DIR)
-    dirs_to_process = groups.copy()
-    
-    if CONTROL_DIR.exists():
-        dirs_to_process.append(CONTROL_DIR)
-    
-    img_paths: list[Path] = []
-    for d in dirs_to_process:
-        img_paths.extend(sorted(d.rglob(IMAGE_GLOB)))
-    
-    print(f"  ✓ Found {len(img_paths)} images across {len(dirs_to_process)} groups")
-    
-    if not img_paths:
-        raise FileNotFoundError(f"No images found matching {IMAGE_GLOB}")
-    
-    # Step 2/7: Process images
-    print("\n━" * 80)
-    print("STEP 2/7: Processing Images")
-    print("━" * 80)
-    
-    total_processed = 0
-    total_failed = 0
-
-    for p in tqdm(img_paths, desc="  Processing", unit="img"):
-        out_root = (OUTPUT_DIR / p.parent.name) if SEPARATE_OUTPUT_BY_GROUP else OUTPUT_DIR
-        ensure_dir(out_root)
-
-        try:
-            process_image(p, out_root)
-            total_processed += 1
-        except Exception as e:
-            tqdm.write(f"  [ERROR] {p.name}: {e}")
-            total_failed += 1
-    
-    print(f"\n  ✓ Processed: {total_processed} succeeded, {total_failed} failed")
-    
-    # Step 3/7: Consolidate to Excel
-    print("\n━" * 80)
-    print("STEP 3/7: Consolidating to Excel")
-    print("━" * 80)
-    
-    for group_dir in OUTPUT_DIR.iterdir():
-        if group_dir.is_dir() and len(list(group_dir.glob("*/object_stats.csv"))) > 0:
-            print(f"  → Consolidating {group_dir.name}...")
-            consolidate_to_excel(group_dir, group_dir.name, config['percentile'])
-    
-    print("  ✓ Excel consolidation complete")
-    
-    # Step 4/7: Generate plots
-    print("\n━" * 80)
-    print("STEP 4/7: Generating Comparison Plots")
-    print("━" * 80)
-    
-    # Pairwise plots
-    print("  → Generating pairwise plots...")
-    generate_pairwise_group_vs_control_plots(
-        OUTPUT_DIR, 
-        config['percentile'], 
-        config['dataset_id'],
-        config['threshold_pct'],
-        config['microgel_type']
-    )
-    
-    # All-groups plot
-    print("  → Generating all-groups plot...")
-    all_groups_plot_path = generate_error_bar_comparison_with_threshold(
-        output_dir=OUTPUT_DIR,
-        percentile=config['percentile'],
-        restrict_to_groups=None,
-        output_path=OUTPUT_DIR / f"comparison_{config['microgel_type']}_all_groups.png",
-        title_suffix="All Groups",
-        dataset_id=config['dataset_id'],
-        threshold_pct=config['threshold_pct'],
-        microgel_type=config['microgel_type'],
-    )
-    
-    print("  ✓ Plots generated")
-    
-    # Step 5/7: Embed plots
-    print("\n━" * 80)
-    print("STEP 5/7: Embedding Plots into Excel")
-    print("━" * 80)
-    
-    for group_dir in sorted(OUTPUT_DIR.iterdir()):
-        if not group_dir.is_dir():
-            continue
-
-        if group_dir.name.lower().startswith("control"):
-            plot = all_groups_plot_path
-        elif re.fullmatch(r"\d+", group_dir.name):
-            plot = group_dir / f"Group_{group_dir.name}_vs_Control_threshold.png"
-        else:
-            continue
-
-        if plot and plot.exists():
-            embed_comparison_plots_into_all_excels(group_dir, config['percentile'], plot_path=plot)
-    
-    print("  ✓ Plots embedded")
-    
-    # Step 6/7: Export statistics
-    print("\n━" * 80)
-    print("STEP 6/7: Exporting Statistics")
-    print("━" * 80)
-    
-    export_group_statistics_to_csv(OUTPUT_DIR)
-    print("  ✓ Statistics exported")
-    
-    # Step 7/7: Clinical classification
-    print("\n━" * 80)
-    print("STEP 7/7: Clinical Classification")
-    print("━" * 80)
-    
-    classification_df = classify_groups_clinical(
-        OUTPUT_DIR, 
-        config['microgel_type'], 
-        config['threshold_pct']
-    )
-    
-    if not classification_df.empty:
-        export_clinical_classification(OUTPUT_DIR, classification_df, config['microgel_type'])
-        print("  ✓ Classification complete")
-    else:
-        print("  ✗ Classification failed")
-    
-    # Copy log file
+def open_folder(folder_path: Path):
+    """Open folder in file explorer (cross-platform)"""
     try:
-        import shutil
-        log_copy_path = OUTPUT_DIR / _log_path.name
-        shutil.copy2(_log_path, log_copy_path)
-    except Exception:
-        pass
-    
-    # PHASE 3: Summary
-    elapsed_time = time.time() - start_time
-    
-    print("\n" + "="*80)
-    print("PHASE 3: SUMMARY")
-    print("="*80)
-    print(f"\n✓ Processing complete in {elapsed_time:.1f} seconds")
-    print(f"\n📁 Output directory: {OUTPUT_DIR}")
-    print(f"\nKey files generated:")
-    print(f"  • Master Excel files (per group)")
-    print(f"  • Comparison plots with threshold lines")
-    print(f"  • Clinical classification results")
-    print(f"  • Group statistics summary")
-    
-    # Auto-open output folder
-    try:
-        import subprocess
-        import platform
+        folder_str = str(folder_path.resolve())
         
-        system = platform.system()
-        if system == "Windows":
-            subprocess.run(["explorer", str(OUTPUT_DIR)])
-        elif system == "Darwin":  # macOS
-            subprocess.run(["open", str(OUTPUT_DIR)])
+        if platform.system() == 'Windows':
+            os.startfile(folder_str)
+        elif platform.system() == 'Darwin':  # macOS
+            subprocess.run(['open', folder_str])
         else:  # Linux
-            subprocess.run(["xdg-open", str(OUTPUT_DIR)])
+            subprocess.run(['xdg-open', folder_str])
         
-        print(f"\n✓ Output folder opened")
-    except Exception:
-        print(f"\n→ Please manually open: {OUTPUT_DIR}")
-    
-    print("\n" + "="*80)
-    
-    sys.stdout = sys.__stdout__
-    sys.stderr = sys.__stderr__
+        print(f"  ✓ Opened folder: {folder_path.name}")
+    except Exception as e:
+        print(f"  ⚠ Could not open folder automatically: {e}")
+        print(f"  Please open manually: {folder_path.resolve()}")
 
+def setup_output_directory(config: dict) -> Path:
+    """Create and setup output directory structure with timestamp naming.
+    
+    Args:
+        config: Configuration dictionary
+        
+    Returns:
+        Path to the main output directory
+    """
+    # Resolve the repository root from this file
+    project_root = Path(__file__).resolve().parent
+    output_root = project_root / 'outputs'
+    output_root.mkdir(exist_ok=True)
+    
+    # Create timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    if config.get('batch_mode', False):
+        # Batch mode: base_name_timestamp_test
+        # Example: v48_PD_20260119_012703_test
+        base_name = config.get('dataset_id_base', 'dataset')
+        output_dir_name = f"{base_name}_{timestamp}_test"
+        
+    else:
+        # Single mode: base_name_microgel_timestamp_test
+        # Example: v48_PD_Negative_20260119_012703_test
+        dataset_id = config.get('dataset_id', 'dataset')
+        microgel_type = config.get('microgel_type', '')
+        
+        if microgel_type:
+            # Capitalize first letter: negative -> Negative, positive -> Positive
+            microgel_label = microgel_type.capitalize()
+            output_dir_name = f"{dataset_id}_{microgel_label}_{timestamp}_test"
+        else:
+            output_dir_name = f"{dataset_id}_{timestamp}_test"
+    
+    # Create the output directory
+    output_dir = output_root / output_dir_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    return output_dir
+
+
+def copy_log_to_output(log_path: Path, output_dir: Path) -> Optional[Path]:
+    """Copy log file to output directory
+    
+    Args:
+        log_path: Path to the original log file
+        output_dir: Output directory to copy to
+        
+    Returns:
+        Path to the copied log file, or None if copy failed
+    """
+    try:
+        if log_path and log_path.exists():
+            dest_path = output_dir / log_path.name
+            shutil.copy2(log_path, dest_path)
+            return dest_path
+        return None
+    except Exception as e:
+        print(f"Warning: Could not copy log file: {e}")
+        return None
+
+
+def check_log_for_errors(log_path: Path) -> Dict[str, Any]:
+    """Check log file for errors and warnings
+    
+    Args:
+        log_path: Path to log file
+        
+    Returns:
+        Dictionary with error/warning counts and details
+    """
+    result = {
+        'errors': [],
+        'warnings': [],
+        'error_count': 0,
+        'warning_count': 0
+    }
+    
+    try:
+        if not log_path or not log_path.exists():
+            return result
+            
+        with open(log_path, 'r', encoding='utf-8') as f:
+            for line_num, line in enumerate(f, 1):
+                line_lower = line.lower()
+                
+                # Check for errors
+                if any(keyword in line_lower for keyword in ['error', 'exception', 'traceback', 'failed']):
+                    if not any(skip in line_lower for skip in ['0 failed', 'no error', 'error_count']):
+                        result['errors'].append((line_num, line.strip()))
+                        result['error_count'] += 1
+                
+                # Check for warnings
+                elif 'warning' in line_lower or '⚠' in line:
+                    result['warnings'].append((line_num, line.strip()))
+                    result['warning_count'] += 1
+                    
+    except Exception as e:
+        print(f"Could not analyze log file: {e}")
+    
+    return result
+
+
+def display_log_analysis(log_analysis: Dict, log_path: Path):
+    """Display log analysis results
+    
+    Args:
+        log_analysis: Results from check_log_for_errors
+        log_path: Path to the log file
+    """
+    print("\n" + "="*80)
+    print("LOG FILE ANALYSIS")
+    print("="*80)
+    print(f"Log file: {log_path.name}\n")
+    
+    if log_analysis['error_count'] == 0 and log_analysis['warning_count'] == 0:
+        print("No errors or warnings found")
+    else:
+        if log_analysis['error_count'] > 0:
+            print(f"⚠ Found {log_analysis['error_count']} error(s):")
+            for line_num, line in log_analysis['errors'][:5]:  # Show first 5
+                print(f"  Line {line_num}: {line[:100]}")
+            if len(log_analysis['errors']) > 5:
+                print(f"  ... and {len(log_analysis['errors']) - 5} more")
+            print()
+        
+        if log_analysis['warning_count'] > 0:
+            print(f"⚠ Found {log_analysis['warning_count']} warning(s):")
+            for line_num, line in log_analysis['warnings'][:5]:  # Show first 5
+                print(f"  Line {line_num}: {line[:100]}")
+            if len(log_analysis['warnings']) > 5:
+                print(f"  ... and {len(log_analysis['warnings']) - 5} more")
+    
+    print("="*80)
+
+
+def process_single_dataset(config: dict) -> dict:
+    """Process a single dataset with given configuration
+    
+    Args:
+        config: Configuration dictionary containing all settings
+        
+    Returns:
+        dict: Processing results including success status
+    """
+    
+    try:
+        # Extract configuration
+        source_dir = Path(config['source_dir'])
+        dataset_id = config['dataset_id']
+        percentile = config['percentile']
+        microgel_type = config['microgel_type']
+        threshold_pct = config['threshold_pct']
+        
+        # Setup output directory
+        output_dir = config.get('output_dir')
+        if output_dir is None:
+            project_root = Path(__file__).resolve().parent
+            output_root = project_root / 'outputs'
+            output_root.mkdir(exist_ok=True)
+            output_dir = output_root / dataset_id
+            output_dir.mkdir(exist_ok=True)
+        else:
+            output_dir = Path(output_dir)
+            output_dir.mkdir(exist_ok=True)
+        
+        # Step 1: Collect images
+        print("━" * 80)
+        print("STEP 1/7: Collecting Images")
+        print("━" * 80)
+        
+        group_folders = list_sample_group_folders(source_dir)
+        
+        # Find control folder
+        control_folder = None
+        for folder in source_dir.iterdir():
+            if folder.is_dir() and folder.name.lower().startswith("control"):
+                control_folder = folder
+                break
+        
+        all_groups = group_folders + ([control_folder] if control_folder else [])
+        
+        total_images = sum(len(list(g.glob(IMAGE_GLOB))) for g in all_groups if g)
+        print(f"  Found {total_images} images across {len(all_groups)} groups")
+        
+        # Step 2: Process images
+        print("\n" + "━" * 80)
+        print("STEP 2/7: Processing Images")
+        print("━" * 80)
+        
+        all_image_paths = []
+        for group in all_groups:
+            if group:
+                all_image_paths.extend(sorted(group.glob(IMAGE_GLOB)))
+        
+        success_count = 0
+        fail_count = 0
+        
+        with tqdm(total=len(all_image_paths), desc="  Processing", unit="img") as pbar:
+            for img_path in all_image_paths:
+                try:
+                    # Process each image into group-specific output folder
+                    group_output_dir = output_dir / img_path.parent.name
+                    ensure_dir(group_output_dir)
+                    process_image(img_path, group_output_dir)
+                    success_count += 1
+                except Exception as e:
+                    print(f"\n[ERROR] Failed to process {img_path.name}: {e}")
+                    fail_count += 1
+                finally:
+                    pbar.update(1)
+        
+        print(f"\n  Processed: {success_count} succeeded, {fail_count} failed")
+        
+        # Step 3: Consolidate to Excel
+        print("\n" + "━" * 80)
+        print("STEP 3/7: Consolidating to Excel")
+        print("━" * 80)
+        
+        # Consolidate each group folder
+        for group_dir in sorted(output_dir.iterdir()):
+            if group_dir.is_dir() and len(list(group_dir.glob("*/object_stats.csv"))) > 0:
+                group_name = group_dir.name
+                display_name = _display_group_name(group_name)
+                print(f"  → Consolidating {display_name}...")
+                consolidate_to_excel(group_dir, group_name, percentile)
+        
+        print("  Excel consolidation complete")
+        
+        # Step 4: Generate comparison plots
+        print("\n" + "━" * 80)
+        print("STEP 4/7: Generating Comparison Plots")
+        print("━" * 80)
+        
+        print("  → Generating pairwise plots...")
+        generate_pairwise_group_vs_control_plots(
+            output_dir, 
+            percentile, 
+            dataset_id,
+            threshold_pct,
+            microgel_type
+        )
+        
+        print("  → Generating all-groups plot...")
+        all_groups_plot = generate_error_bar_comparison_with_threshold(
+            output_dir=output_dir,
+            percentile=percentile,
+            restrict_to_groups=None,
+            output_path=None,
+            title_suffix="",
+            dataset_id=dataset_id,
+            threshold_pct=threshold_pct,
+            microgel_type=microgel_type,
+        )
+        print("  Plots generated")
+        
+        # Step 5: Embed plots into Excel
+        print("\n" + "━" * 80)
+        print("STEP 5/7: Embedding Plots into Excel")
+        print("━" * 80)
+        
+        # Embed plots into each group's Excel file
+        for group_dir in sorted(output_dir.iterdir()):
+            if not group_dir.is_dir():
+                continue
+
+            if group_dir.name.lower().startswith("control"):
+                plot = all_groups_plot
+            elif re.fullmatch(r"\d+", group_dir.name):
+                plot = group_dir / f"Group_{group_dir.name}_vs_Control_threshold.png"
+            else:
+                continue
+
+            if plot and plot.exists():
+                embed_comparison_plots_into_all_excels(group_dir, percentile, plot_path=plot)
+        
+        print("  Plots embedded")
+        
+        # Step 6: Export statistics
+        print("\n" + "━" * 80)
+        print("STEP 6/7: Exporting Statistics")
+        print("━" * 80)
+        
+        export_group_statistics_to_csv(output_dir)
+        print("  Statistics exported")
+        
+        # Step 7: Clinical classification
+        print("\n" + "━" * 80)
+        print("STEP 7/7: Clinical Classification")
+        print("━" * 80)
+        
+        classification_df = classify_groups_clinical(
+            output_dir,
+            microgel_type=microgel_type,
+            threshold_pct=threshold_pct
+        )
+        
+        if not classification_df.empty:
+            export_clinical_classification(
+                output_dir,
+                classification_df,
+                microgel_type=microgel_type
+            )
+            print("  Classification complete")
+        else:
+            print("  ⚠ No classification data available")
+        
+        print()
+        
+        return {
+            'success': True,
+            'output_dir': output_dir,
+            'dataset_id': dataset_id,
+            'images_processed': success_count,
+            'images_failed': fail_count
+        }
+        
+    except Exception as e:
+        print(f"\nProcessing failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'success': False,
+            'error': str(e),
+            'dataset_id': config.get('dataset_id', 'Unknown')
+        }
+
+
+
+
+def main():
+    """Main execution function"""
+    
+    log_file_path = _log_path
+    
+    try:
+        # Phase 1: Configuration
+        config = collect_configuration()
+        display_configuration_summary(config)
+        
+        # Setup output directory structure
+        main_output_dir = setup_output_directory(config)
+        print(f"\n📁 Output directory: {main_output_dir.resolve()}\n")
+        
+        # Phase 2: Processing
+        print("="*80)
+        print("PHASE 2: PROCESSING")
+        print("="*80 + "\n")
+        
+        all_results = []
+        
+        if config.get('batch_mode', False):
+            # Batch mode: Process both G+ and G-
+            
+            for idx, subdir_config in enumerate(config['subdirs'], 1):
+                print("━" * 80)
+                print(f"BATCH {idx}/{len(config['subdirs'])}: Processing {subdir_config['label']}")
+                print("━" * 80 + "\n")
+                
+                # Create subdirectory for this batch item
+                batch_output_dir = main_output_dir / subdir_config['safe_label']
+                batch_output_dir.mkdir(exist_ok=True)
+                
+                # Create individual config for this subdirectory
+                individual_config = {
+                    'source_dir': subdir_config['path'],
+                    'dataset_id': f"{config['dataset_id_base']} {subdir_config['safe_label']}",
+                    'percentile': config['percentile'],
+                    'microgel_type': subdir_config['microgel_type'],
+                    'threshold_pct': config['threshold_pct'],
+                    'output_dir': batch_output_dir
+                }
+                
+                # Process this subdirectory
+                result = process_single_dataset(individual_config)
+                all_results.append({
+                    'label': subdir_config['label'],
+                    'safe_label': subdir_config['safe_label'],
+                    'config': individual_config,
+                    'result': result
+                })
+                
+                print(f"\n✓ Completed {subdir_config['label']} processing\n")
+            
+            # Generate final clinical matrix
+            if len(all_results) == 2:  # Should have both G+ and G-
+                print("\n" + "━" * 80)
+                print("GENERATING FINAL CLINICAL MATRIX")
+                print("━" * 80 + "\n")
+                
+                # Get classification DataFrames from results
+                gplus_result = next((r for r in all_results if r['safe_label'] == 'Positive'), None)
+                gminus_result = next((r for r in all_results if r['safe_label'] == 'Negative'), None)
+                
+                if gplus_result and gminus_result:
+                    # Get output directories
+                    gplus_output_dir = gplus_result['result']['output_dir']
+                    gminus_output_dir = gminus_result['result']['output_dir']
+                    
+                    # Find classification CSV files
+                    gplus_csv_files = list(gplus_output_dir.glob("clinical_classification_*.csv"))
+                    gminus_csv_files = list(gminus_output_dir.glob("clinical_classification_*.csv"))
+                    
+                    print(f"  Searching in G+ directory: {gplus_output_dir}")
+                    print(f"  Found G+ classification files: {[f.name for f in gplus_csv_files]}")
+                    print(f"  Searching in G- directory: {gminus_output_dir}")
+                    print(f"  Found G- classification files: {[f.name for f in gminus_csv_files]}")
+                    
+                    if gplus_csv_files and gminus_csv_files:
+                        try:
+                            # Use the first classification file found
+                            gplus_csv = gplus_csv_files[0]
+                            gminus_csv = gminus_csv_files[0]
+                            
+                            gplus_df = pd.read_csv(gplus_csv)
+                            gminus_df = pd.read_csv(gminus_csv)
+                            
+                            print(f"  ✓ Loaded G+ classification: {len(gplus_df)} groups from {gplus_csv.name}")
+                            print(f"  ✓ Loaded G- classification: {len(gminus_df)} groups from {gminus_csv.name}")
+                            
+                            final_matrix_path = generate_final_clinical_matrix(
+                                main_output_dir,
+                                gplus_df,
+                                gminus_df,
+                                config['dataset_id_base']
+                            )
+                            
+                            if final_matrix_path:
+                                print(f"  ✓ Final clinical matrix generated: {final_matrix_path.name}")
+                        except Exception as e:
+                            print(f"  ✗ Error generating final matrix: {e}")
+                            import traceback
+                            traceback.print_exc()
+                    else:
+                        print("  ⚠ Classification files not found - skipping matrix generation")
+                        if not gplus_csv_files:
+                            print(f"    No classification files in: {gplus_output_dir}")
+                            print(f"    Contents: {[f.name for f in gplus_output_dir.glob('*.csv')]}")
+                        if not gminus_csv_files:
+                            print(f"    No classification files in: {gminus_output_dir}")
+                            print(f"    Contents: {[f.name for f in gminus_output_dir.glob('*.csv')]}")
+                else:
+                    print("  ⚠ Missing G+ or G- results - skipping matrix generation")
+                    if not gplus_result:
+                        print("    Missing: G+ result")
+                    if not gminus_result:
+                        print("    Missing: G- result")
+
+            # Copy log file to main output directory (BEFORE final summary)
+            print("\n" + "━" * 80)
+            print("COPYING LOG FILE")
+            print("━" * 80)
+            if log_file_path and log_file_path.exists():
+                try:
+                    # Flush all output streams
+                    _log_file.flush()
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+                    
+                    # Small delay to ensure file handles are released
+                    import time
+                    time.sleep(0.1)
+                    
+                    # Copy to main output directory
+                    dest_log = main_output_dir / log_file_path.name
+                    shutil.copy2(log_file_path, dest_log)
+                    print(f"  ✓ Log copied to main: {dest_log.relative_to(Path.cwd())}")
+                    
+                    # Also copy to each subdirectory
+                    for item in all_results:
+                        subdir_output = item['result'].get('output_dir')
+                        if subdir_output and Path(subdir_output).exists():
+                            subdir_log = Path(subdir_output) / log_file_path.name
+                            shutil.copy2(log_file_path, subdir_log)
+                            print(f"  ✓ Log copied to {item['label']}: {subdir_log.relative_to(Path.cwd())}")
+                    
+                    print("  ✓ All log files copied successfully")
+                    
+                except Exception as e:
+                    print(f"  ⚠ Error copying log file: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"  ⚠ Log file not found or doesn't exist")
+                if log_file_path:
+                    print(f"     Path: {log_file_path}")
+                    print(f"     Exists: {log_file_path.exists()}")
+                else:
+                    print(f"     log_file_path is None")
+            
+            # Final summary
+            print("\n" + "="*80)
+            print("BATCH PROCESSING COMPLETE")
+            print("="*80 + "\n")
+            
+            all_success = True
+            for item in all_results:
+                status = "✓ SUCCESS" if item['result']['success'] else "✗ FAILED"
+                print(f"{status}: {item['label']} - {item['config']['dataset_id']}")
+                if not item['result']['success']:
+                    all_success = False
+            
+            print("\n" + "="*80)
+            
+            # Analyze log file
+            if log_file_path and log_file_path.exists():
+                log_analysis = check_log_for_errors(log_file_path)
+                display_log_analysis(log_analysis, log_file_path)
+            
+            # Open output folder
+            print("\n📂 Opening output folder...")
+            open_folder(main_output_dir)
+            
+            if all_success:
+                print("\n✓ All processing completed successfully!")
+            else:
+                print("\n⚠ Some processing tasks failed - check log for details")
+                
+        else:
+            # Single mode: Process one dataset
+            config['output_dir'] = main_output_dir
+            result = process_single_dataset(config)
+            
+            # Copy log file to output directory (BEFORE final summary)
+            print("\n" + "━" * 80)
+            print("COPYING LOG FILE")
+            print("━" * 80)
+            if log_file_path and log_file_path.exists():
+                try:
+                    # Flush all output streams
+                    _log_file.flush()
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+                    
+                    # Small delay to ensure file handles are released
+                    import time
+                    time.sleep(0.1)
+                    
+                    dest_log = main_output_dir / log_file_path.name
+                    shutil.copy2(log_file_path, dest_log)
+                    print(f"  ✓ Log copied to: {dest_log.relative_to(Path.cwd())}")
+                    print("  ✓ Log file copied successfully")
+                    
+                except Exception as e:
+                    print(f"  ⚠ Error copying log file: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"  ⚠ Log file not found or doesn't exist")
+                if log_file_path:
+                    print(f"     Path: {log_file_path}")
+                    print(f"     Exists: {log_file_path.exists()}")
+                else:
+                    print(f"     log_file_path is None")
+            
+            if result['success']:
+                print("\n" + "="*80)
+                print("PROCESSING COMPLETE")
+                print("="*80)
+                
+                # Analyze log file
+                if log_file_path and log_file_path.exists():
+                    log_analysis = check_log_for_errors(log_file_path)
+                    display_log_analysis(log_analysis, log_file_path)
+                
+                # Open output folder
+                print("\n📂 Opening output folder...")
+                open_folder(main_output_dir)
+                
+                print("\n✓ Processing completed successfully!")
+            else:
+                print("\n" + "="*80)
+                print("PROCESSING FAILED")
+                print("="*80)
+                
+                # Analyze log file
+                if log_file_path and log_file_path.exists():
+                    log_analysis = check_log_for_errors(log_file_path)
+                    display_log_analysis(log_analysis, log_file_path)
+                
+                print("\n⚠ Processing failed - check log for details")
+        
+    except KeyboardInterrupt:
+        print("\n\n⚠ Process interrupted by user")
+        # Try to copy log even on interruption
+        if log_file_path and log_file_path.exists() and 'main_output_dir' in locals() and isinstance(main_output_dir, Path):
+            try:
+                _log_file.flush()
+                sys.stdout.flush()
+                sys.stderr.flush()
+                import time
+                time.sleep(0.1)
+                dest_log = main_output_dir / log_file_path.name
+                shutil.copy2(log_file_path, dest_log)
+                print(f"✓ Log saved to: {dest_log}")
+            except Exception as e:
+                print(f"⚠ Could not save log: {e}")
+        sys.exit(1)
+    except SystemExit as e:
+        if str(e):
+            print(f"\n⚠ {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n✗ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Try to copy log even on failure
+        if log_file_path and log_file_path.exists() and 'main_output_dir' in locals() and isinstance(main_output_dir, Path):
+            try:
+                _log_file.flush()
+                sys.stdout.flush()
+                sys.stderr.flush()
+                import time
+                time.sleep(0.1)
+                dest_log = main_output_dir / log_file_path.name
+                shutil.copy2(log_file_path, dest_log)
+                print(f"✓ Log saved to: {dest_log}")
+            except Exception as e2:
+                print(f"⚠ Could not save log: {e2}")
+        
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
