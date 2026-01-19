@@ -2640,7 +2640,7 @@ def open_folder(folder_path: Path):
         folder_str = str(folder_path.resolve())
         
         if platform.system() == 'Windows':
-            os.startfile(folder_str)
+            subprocess.run(['explorer', folder_str])
         elif platform.system() == 'Darwin':  # macOS
             subprocess.run(['open', folder_str])
         else:  # Linux
