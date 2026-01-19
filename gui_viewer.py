@@ -30,8 +30,8 @@ except ImportError:
 class ClinicalResultsViewer:
     def __init__(self, root):
         self.root = root
-        self.root.title("Microgel Clinical Results Viewer")
-        self.root.geometry("1400x900")
+        self.root.title("Particle-Scout Clinical Results Viewer")
+        self.root.geometry("1920x1080")
         
         # Data storage
         self.current_folder: Optional[Path] = None
@@ -40,6 +40,9 @@ class ClinicalResultsViewer:
         self.gminus_data: Optional[pd.DataFrame] = None
         self.selected_group: Optional[str] = None
         self.dataset_name: str = ""
+        
+        # Photo reference storage - prevents garbage collection
+        self.photo_refs: Dict[int, ImageTk.PhotoImage] = {}
         
         # Color scheme
         self.colors = {
@@ -366,6 +369,9 @@ class ClinicalResultsViewer:
             # Clear existing data
             for item in self.tree.get_children():
                 self.tree.delete(item)
+            
+            # Clear photo references
+            self.photo_refs.clear()
             
             # Try to load final clinical results
             clinical_matrix = folder_path / "final_clinical_results.csv"
@@ -743,6 +749,10 @@ Clinical Action:
         for widget in self.plots_tab.winfo_children():
             widget.destroy()
         
+        # Clear old photo references for plots tab
+        self.photo_refs = {k: v for k, v in self.photo_refs.items() 
+                          if k not in [id(w) for w in self.plots_tab.winfo_children()]}
+        
         if self.current_folder is None:
             ttk.Label(self.plots_tab,
                      text="No plots available",
@@ -800,7 +810,10 @@ Clinical Action:
             
             # Create label with image
             label = tk.Label(tab, image=photo)
-            label.image = photo  # Keep reference
+            
+            # Store photo reference using label's id as key
+            self.photo_refs[id(label)] = photo
+            
             label.pack(expand=True)
             
         except Exception as e:
@@ -949,6 +962,9 @@ Clinical Action:
     
     def generate_pdf_report(self, filename: str):
         """Generate PDF report using ReportLab"""
+        if self.clinical_data is None:
+            return
+            
         from reportlab.lib.pagesizes import letter
         from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
         from reportlab.lib.styles import getSampleStyleSheet
