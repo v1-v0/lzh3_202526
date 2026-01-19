@@ -3010,7 +3010,7 @@ def launch_results_viewer(output_dir: Optional[Path] = None):
             # Running as compiled executable
             # GUI should be bundled
             try:
-                from gui_viewer import launch_viewer
+                from image_viewer import launch_viewer
                 launch_viewer(output_dir)
                 return True
             except ImportError:

@@ -1,6 +1,7 @@
 """
 Cross-Platform Clinical Results Viewer
 Compatible with Windows, macOS, and Linux
+Now includes Processing Steps Viewer
 """
 
 import tkinter as tk
@@ -43,6 +44,14 @@ class ClinicalResultsViewer:
         
         # Photo reference storage - prevents garbage collection
         self.photo_refs: Dict[int, ImageTk.PhotoImage] = {}
+        
+        # Processing steps viewer - image storage
+        self.current_pos_image: Optional[Image.Image] = None
+        self.current_neg_image: Optional[Image.Image] = None
+        self.current_pos_path: Optional[Path] = None
+        self.current_neg_path: Optional[Path] = None
+        self.photo_positive: Optional[ImageTk.PhotoImage] = None
+        self.photo_negative: Optional[ImageTk.PhotoImage] = None
         
         # Color scheme
         self.colors = {
@@ -275,11 +284,16 @@ class ClinicalResultsViewer:
         self.gminus_tab = ttk.Frame(right_panel)
         right_panel.add(self.gminus_tab, text="🔵 G- Details")
         
-        # Tab 4: Comparison Plots
+        # Tab 4: Processing Steps Viewer (NEW)
+        self.processing_tab = ttk.Frame(right_panel)
+        right_panel.add(self.processing_tab, text="🔬 Processing Steps")
+        self.create_processing_steps_tab()
+        
+        # Tab 5: Comparison Plots
         self.plots_tab = ttk.Frame(right_panel)
         right_panel.add(self.plots_tab, text="📈 Plots")
         
-        # Tab 5: Raw Data
+        # Tab 6: Raw Data
         self.data_tab = ttk.Frame(right_panel)
         right_panel.add(self.data_tab, text="📋 Raw Data")
     
@@ -309,6 +323,393 @@ class ClinicalResultsViewer:
         ttk.Label(self.overview_content, 
                  text="Select a group from the list to view details",
                  font=('Arial', 11)).pack(pady=20)
+    
+    def create_processing_steps_tab(self):
+        """Create the processing steps viewer tab"""
+        # Main horizontal split
+        main_split = ttk.PanedWindow(self.processing_tab, orient=tk.HORIZONTAL)
+        main_split.pack(fill=tk.BOTH, expand=True)
+        
+        # Left: Processing steps tree
+        left_frame = ttk.Frame(main_split, width=250)
+        main_split.add(left_frame, weight=1)
+        
+        ttk.Label(left_frame, text="Processing Steps", 
+                 style='Header.TLabel').pack(pady=5, padx=5, anchor=tk.W)
+        
+        # Steps tree with scrollbar
+        tree_frame = ttk.Frame(left_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        tree_scroll = ttk.Scrollbar(tree_frame)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.steps_tree = ttk.Treeview(tree_frame, yscrollcommand=tree_scroll.set,
+                                       columns=('description',), show='tree',
+                                       selectmode='browse')
+        self.steps_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scroll.config(command=self.steps_tree.yview)
+        
+        self.steps_tree.bind('<<TreeviewSelect>>', self.on_step_selected)
+        
+        # Populate processing steps
+        self.populate_processing_steps()
+        
+        # Right: Dual image view (Positive | Negative)
+        right_frame = ttk.Frame(main_split)
+        main_split.add(right_frame, weight=3)
+        
+        # Split into Positive (left) and Negative (right)
+        dual_split = ttk.PanedWindow(right_frame, orient=tk.HORIZONTAL)
+        dual_split.pack(fill=tk.BOTH, expand=True)
+        
+        # === POSITIVE COLUMN ===
+        positive_frame = ttk.Frame(dual_split)
+        dual_split.add(positive_frame, weight=1)
+        
+        # Positive header
+        pos_header = ttk.Frame(positive_frame)
+        pos_header.pack(fill=tk.X, pady=(5, 5), padx=5)
+        
+        ttk.Label(pos_header, text="POSITIVE (G+)", font=('Arial', 11, 'bold'),
+                 foreground='#C62828').pack(side=tk.LEFT)
+        
+        self.pos_title = ttk.Label(pos_header, text="", font=('Arial', 9))
+        self.pos_title.pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Positive canvas
+        pos_canvas_frame = ttk.Frame(positive_frame, relief='sunken', borderwidth=2)
+        pos_canvas_frame.pack(fill=tk.BOTH, expand=True, padx=5)
+        
+        self.pos_canvas = tk.Canvas(pos_canvas_frame, bg='#f0f0f0', cursor='cross')
+        self.pos_canvas.pack(fill=tk.BOTH, expand=True)
+        
+        # Positive controls
+        pos_controls = ttk.Frame(positive_frame)
+        pos_controls.pack(fill=tk.X, pady=(5, 0), padx=5)
+        
+        ttk.Button(pos_controls, text="Fit to Window", 
+                  command=lambda: self.fit_to_window('positive')).pack(side=tk.LEFT, padx=2)
+        
+        self.pos_zoom_label = ttk.Label(pos_controls, text="100%")
+        self.pos_zoom_label.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(pos_controls, text="Save Image",
+                  command=lambda: self.save_processing_image('positive')).pack(side=tk.RIGHT, padx=2)
+        
+        # Positive description
+        pos_desc_frame = ttk.LabelFrame(positive_frame, text="Description", padding=5)
+        pos_desc_frame.pack(fill=tk.X, pady=(5, 5), padx=5)
+        
+        self.pos_description = tk.Text(pos_desc_frame, height=3, wrap='word', 
+                                       font=('Arial', 9), state='disabled')
+        self.pos_description.pack(fill=tk.X)
+        
+        # === NEGATIVE COLUMN ===
+        negative_frame = ttk.Frame(dual_split)
+        dual_split.add(negative_frame, weight=1)
+        
+        # Negative header
+        neg_header = ttk.Frame(negative_frame)
+        neg_header.pack(fill=tk.X, pady=(5, 5), padx=5)
+        
+        ttk.Label(neg_header, text="NEGATIVE (G-)", font=('Arial', 11, 'bold'),
+                 foreground='#2E7D32').pack(side=tk.LEFT)
+        
+        self.neg_title = ttk.Label(neg_header, text="", font=('Arial', 9))
+        self.neg_title.pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Negative canvas
+        neg_canvas_frame = ttk.Frame(negative_frame, relief='sunken', borderwidth=2)
+        neg_canvas_frame.pack(fill=tk.BOTH, expand=True, padx=5)
+        
+        self.neg_canvas = tk.Canvas(neg_canvas_frame, bg='#f0f0f0', cursor='cross')
+        self.neg_canvas.pack(fill=tk.BOTH, expand=True)
+        
+        # Negative controls
+        neg_controls = ttk.Frame(negative_frame)
+        neg_controls.pack(fill=tk.X, pady=(5, 0), padx=5)
+        
+        ttk.Button(neg_controls, text="Fit to Window",
+                  command=lambda: self.fit_to_window('negative')).pack(side=tk.LEFT, padx=2)
+        
+        self.neg_zoom_label = ttk.Label(neg_controls, text="100%")
+        self.neg_zoom_label.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(neg_controls, text="Save Image",
+                  command=lambda: self.save_processing_image('negative')).pack(side=tk.RIGHT, padx=2)
+        
+        # Negative description
+        neg_desc_frame = ttk.LabelFrame(negative_frame, text="Description", padding=5)
+        neg_desc_frame.pack(fill=tk.X, pady=(5, 5), padx=5)
+        
+        self.neg_description = tk.Text(neg_desc_frame, height=3, wrap='word',
+                                       font=('Arial', 9), state='disabled')
+        self.neg_description.pack(fill=tk.X)
+    
+    def populate_processing_steps(self):
+        """Populate the processing steps tree"""
+        # Clear existing items
+        for item in self.steps_tree.get_children():
+            self.steps_tree.delete(item)
+        
+        # Define processing pipeline
+        steps = {
+            "Phase 1: Brightfield Preprocessing": [
+                ("01_gray_8bit.png", "Original grayscale image (8-bit)"),
+                ("02_enhanced.png", "CLAHE enhanced image for improved contrast"),
+                ("03_enhanced_blur.png", "Gaussian blur applied to reduce noise"),
+            ],
+            "Phase 2: Brightfield Segmentation": [
+                ("04_thresh_raw.png", "Otsu thresholding for binary segmentation"),
+                ("05_closed.png", "Morphological closing to fill gaps"),
+            ],
+            "Phase 3: Particle Detection & Filtering": [
+                ("10_contours_all.png", "All detected contours from segmentation"),
+                ("11_contours_rejected_orange_accepted_yellow_ids_green.png", "Filtered contours (rejected=orange, accepted=yellow, IDs=green)"),
+                ("12_mask_all.png", "Binary mask of all detected particles"),
+                ("13_mask_accepted.png", "Binary mask of accepted particles only"),
+                ("13_mask_accepted_ids.png", "Accepted particles with ID labels"),
+            ],
+            "Phase 4: Fluorescence Channel Processing": [
+                ("20_fluorescence_aligned_raw.png", "Raw fluorescence channel aligned to brightfield"),
+                ("20_fluorescence_8bit.png", "8-bit converted fluorescence image"),
+                ("21_fluorescence_overlay.png", "Fluorescence overlaid on brightfield"),
+                ("22_fluorescence_mask_global.png", "Global thresholded fluorescence mask"),
+                ("22_fluorescence_mask_global_ids.png", "Fluorescence mask with particle IDs"),
+                ("23_fluorescence_contours_global.png", "Fluorescence contours detected"),
+                ("23_fluorescence_contours_global_ids.png", "Fluorescence contours with IDs"),
+            ],
+            "Phase 5: BF-Fluorescence Matching": [
+                ("24_bf_fluor_matching_overlay.png", "Brightfield and fluorescence matching visualization"),
+                ("24_bf_fluor_matching_overlay_ids.png", "BF-Fluorescence matching with particle IDs"),
+            ],
+        }
+        
+        for phase, phase_steps in steps.items():
+            phase_item = self.steps_tree.insert("", "end", text=phase, tags=('phase',))
+            for filename, description in phase_steps:
+                self.steps_tree.insert(phase_item, "end", text=f"○ {filename}", 
+                                      values=(description,), tags=('step',))
+        
+        # Expand all
+        for item in self.steps_tree.get_children():
+            self.steps_tree.item(item, open=True)
+        
+        # Configure tags
+        self.steps_tree.tag_configure('phase', font=('Arial', 10, 'bold'))
+    
+    def on_step_selected(self, event):
+        """Display selected processing step for both Positive and Negative"""
+        selection = self.steps_tree.selection()
+        if not selection:
+            return
+        
+        item = selection[0]
+        item_text = self.steps_tree.item(item, "text")
+        
+        # Extract filename
+        filename = item_text.replace("○ ", "").replace("✓ ", "").replace("◐ ", "").replace("✗ ", "")
+        
+        # Skip phase headers
+        if not filename.endswith(".png"):
+            return
+        
+        # Get description
+        values = self.steps_tree.item(item, "values")
+        description = values[0] if values else ""
+        
+        if self.selected_group is None or self.current_folder is None:
+            self.update_processing_description("Please select a group first", 'both')
+            return
+        
+        # Load Positive image
+        self.load_processing_image('positive', filename, description)
+        
+        # Load Negative image
+        self.load_processing_image('negative', filename, description)
+    
+    def load_processing_image(self, img_type, filename, description):
+        """Load processing image for specific type (positive or negative)"""
+        if self.current_folder is None or self.selected_group is None:
+            self.update_processing_description("Please select a group first", img_type)
+            self.clear_processing_canvas(img_type)
+            return
+        
+        type_name = "Positive" if img_type == 'positive' else "Negative"
+        type_folder = self.current_folder / type_name / self.selected_group
+        
+        if not type_folder.exists():
+            self.update_processing_description(f"Folder not found:\n{type_folder}", img_type)
+            self.clear_processing_canvas(img_type)
+            return
+        
+        # Find first image folder
+        image_folders = [d for d in type_folder.iterdir() if d.is_dir()]
+        
+        if not image_folders:
+            self.update_processing_description(f"No image folders found", img_type)
+            self.clear_processing_canvas(img_type)
+            return
+        
+        first_image_folder = sorted(image_folders)[0]
+        image_path = first_image_folder / filename
+        
+        # Update title
+        if img_type == 'positive':
+            self.pos_title.config(text=f"{self.selected_group} / {first_image_folder.name}")
+        else:
+            self.neg_title.config(text=f"{self.selected_group} / {first_image_folder.name}")
+        
+        if not image_path.exists():
+            self.update_processing_description(f"Image not found:\n{filename}", img_type)
+            self.clear_processing_canvas(img_type)
+            return
+        
+        # Display image
+        try:
+            self.display_processing_step_image(image_path, img_type)
+            self.update_processing_description(description, img_type)
+            
+            # Store current path
+            if img_type == 'positive':
+                self.current_pos_path = image_path
+            else:
+                self.current_neg_path = image_path
+                
+        except Exception as e:
+            self.update_processing_description(f"Error loading image:\n{str(e)}", img_type)
+            self.clear_processing_canvas(img_type)
+    
+    def display_processing_step_image(self, image_path, img_type):
+        """Display a processing step image on the appropriate canvas"""
+        canvas = self.pos_canvas if img_type == 'positive' else self.neg_canvas
+        
+        # Load image
+        image = Image.open(image_path)
+        
+        # Store original
+        if img_type == 'positive':
+            self.current_pos_image = image
+        else:
+            self.current_neg_image = image
+        
+        # Fit to canvas
+        self.fit_image_to_canvas(image, canvas, img_type)
+    
+    def fit_image_to_canvas(self, image, canvas, img_type):
+        """Fit image to canvas size"""
+        # Get canvas dimensions
+        canvas.update()
+        canvas_width = canvas.winfo_width()
+        canvas_height = canvas.winfo_height()
+        
+        if canvas_width <= 1 or canvas_height <= 1:
+            canvas_width = 400
+            canvas_height = 400
+        
+        # Calculate scaling
+        img_width, img_height = image.size
+        scale_w = canvas_width / img_width
+        scale_h = canvas_height / img_height
+        scale = min(scale_w, scale_h) * 0.95  # 95% to leave some margin
+        
+        new_width = int(img_width * scale)
+        new_height = int(img_height * scale)
+        
+        # Resize image
+        resized = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Convert to PhotoImage
+        photo = ImageTk.PhotoImage(resized)
+        
+        # Store reference
+        if img_type == 'positive':
+            self.photo_positive = photo
+        else:
+            self.photo_negative = photo
+        
+        # Display on canvas
+        canvas.delete("all")
+        x = canvas_width // 2
+        y = canvas_height // 2
+        canvas.create_image(x, y, image=photo, anchor='center')
+        
+        # Update zoom label
+        zoom_pct = int(scale * 100)
+        if img_type == 'positive':
+            self.pos_zoom_label.config(text=f"{zoom_pct}%")
+        else:
+            self.neg_zoom_label.config(text=f"{zoom_pct}%")
+    
+    def fit_to_window(self, img_type):
+        """Fit image to window"""
+        image = self.current_pos_image if img_type == 'positive' else self.current_neg_image
+        canvas = self.pos_canvas if img_type == 'positive' else self.neg_canvas
+        
+        if image:
+            self.fit_image_to_canvas(image, canvas, img_type)
+    
+    def clear_processing_canvas(self, img_type):
+        """Clear the specified processing canvas"""
+        canvas = self.pos_canvas if img_type == 'positive' else self.neg_canvas
+        canvas.delete("all")
+        
+        # Clear stored image and path
+        if img_type == 'positive':
+            self.current_pos_image = None
+            self.photo_positive = None
+            self.current_pos_path = None
+        else:
+            self.current_neg_image = None
+            self.photo_negative = None
+            self.current_neg_path = None
+    
+    def update_processing_description(self, text, img_type):
+        """Update processing step description text"""
+        if img_type == 'both':
+            text_widgets = [self.pos_description, self.neg_description]
+        elif img_type == 'positive':
+            text_widgets = [self.pos_description]
+        else:
+            text_widgets = [self.neg_description]
+        
+        for widget in text_widgets:
+            widget.config(state='normal')
+            widget.delete('1.0', tk.END)
+            widget.insert('1.0', text)
+            widget.config(state='disabled')
+    
+    def save_processing_image(self, img_type):
+        """Save the current processing step image"""
+        image_path = self.current_pos_path if img_type == 'positive' else self.current_neg_path
+        
+        if not image_path:
+            messagebox.showwarning("No Image", "No image to save")
+            return
+        
+        if self.selected_group is None:
+            messagebox.showwarning("No Group", "No group selected")
+            return
+        
+        # Suggest filename
+        type_label = "Positive" if img_type == 'positive' else "Negative"
+        default_name = f"{self.selected_group}_{type_label}_{image_path.name}"
+        
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            initialfile=default_name,
+            filetypes=[("PNG files", "*.png"), ("All files", "*.*")]
+        )
+        
+        if filename:
+            try:
+                image = self.current_pos_image if img_type == 'positive' else self.current_neg_image
+                if image:
+                    image.save(filename)
+                    messagebox.showinfo("Success", f"Image saved to:\n{filename}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save image:\n{str(e)}")
     
     def create_status_bar(self):
         """Create status bar at bottom"""
@@ -513,7 +914,58 @@ class ClinicalResultsViewer:
         self.display_plots()
         self.display_raw_data()
         
+        # Update processing steps availability
+        self.update_step_availability()
+        
         self.info_var.set(f"Selected: {group_text}")
+    
+    def update_step_availability(self):
+        """Update step tree to show which images are available"""
+        if self.selected_group is None or self.current_folder is None:
+            return
+        
+        # Check both folders
+        pos_folder = self.current_folder / "Positive" / self.selected_group
+        neg_folder = self.current_folder / "Negative" / self.selected_group
+        
+        # Get first image folders
+        pos_images = None
+        neg_images = None
+        
+        if pos_folder.exists():
+            pos_image_folders = [d for d in pos_folder.iterdir() if d.is_dir()]
+            if pos_image_folders:
+                pos_images = sorted(pos_image_folders)[0]
+        
+        if neg_folder.exists():
+            neg_image_folders = [d for d in neg_folder.iterdir() if d.is_dir()]
+            if neg_image_folders:
+                neg_images = sorted(neg_image_folders)[0]
+        
+        # Update tree items
+        for phase_item in self.steps_tree.get_children():
+            for step_item in self.steps_tree.get_children(phase_item):
+                current_text = self.steps_tree.item(step_item, "text")
+                filename = current_text.replace("○ ", "").replace("✓ ", "").replace("◐ ", "").replace("✗ ", "")
+                
+                # Check if file exists in either location
+                pos_exists = pos_images is not None and (pos_images / filename).exists()
+                neg_exists = neg_images is not None and (neg_images / filename).exists()
+                
+                if pos_exists and neg_exists:
+                    self.steps_tree.item(step_item, text=f"✓ {filename}", 
+                                       tags=('step', 'both'))
+                elif pos_exists or neg_exists:
+                    self.steps_tree.item(step_item, text=f"◐ {filename}",
+                                       tags=('step', 'partial'))
+                else:
+                    self.steps_tree.item(step_item, text=f"✗ {filename}",
+                                       tags=('step', 'missing'))
+        
+        # Configure tags
+        self.steps_tree.tag_configure('both', foreground='green')
+        self.steps_tree.tag_configure('partial', foreground='orange')
+        self.steps_tree.tag_configure('missing', foreground='gray')
     
     def display_overview(self):
         """Display overview for selected group"""
@@ -1061,16 +1513,17 @@ Clinical Action:
     def show_about(self):
         """Show about dialog"""
         about_text = """
-Microgel Clinical Results Viewer
-Version 1.0
+Particle-Scout Clinical Results Viewer
+Version 2.0 - Now with Processing Steps Viewer
 
 A cross-platform application for reviewing
 bacterial detection results using microgel
 fluorescence analysis.
 
-Supports:
+Features:
 • Batch processing (G+ and G-)
 • Clinical classification
+• Processing steps visualization
 • Data export (CSV/PDF)
 
 © 2026 - Clinical Diagnostics
@@ -1082,7 +1535,7 @@ Supports:
         """Show help dialog"""
         help_window = tk.Toplevel(self.root)
         help_window.title("User Guide")
-        help_window.geometry("700x600")
+        help_window.geometry("700x650")
         
         # Scrolled text for help
         help_text = scrolledtext.ScrolledText(help_window, wrap=tk.WORD,
@@ -1090,7 +1543,7 @@ Supports:
         help_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         help_content = """
-MICROGEL CLINICAL RESULTS VIEWER - USER GUIDE
+PARTICLE-SCOUT CLINICAL RESULTS VIEWER - USER GUIDE
 
 1. LOADING RESULTS
    • Click "Load Results" or use Ctrl+O
@@ -1110,34 +1563,46 @@ MICROGEL CLINICAL RESULTS VIEWER - USER GUIDE
    • Click any group to view details
    • Overview tab: Summary and interpretation
    • G+/G- tabs: Individual microgel statistics
+   • Processing Steps tab: View processing pipeline images (NEW!)
    • Plots tab: Visual comparisons
    • Raw Data tab: Complete dataset
 
-4. FILTERING
+4. PROCESSING STEPS VIEWER (NEW!)
+   • View processing pipeline images side-by-side for G+ and G-
+   • Select a processing step from the tree
+   • Images show up for both Positive and Negative samples
+   • Save individual images if needed
+   • Color indicators show availability:
+     ✓ Green: Available for both G+ and G-
+     ◐ Orange: Available for one type only
+     ✗ Gray: Not available
+
+5. FILTERING
    • Use the filter dropdown to show specific classifications
    • Filter by: All, POSITIVE, NEGATIVE, NO OBVIOUS BACTERIA, MIXED
 
-5. EXPORTING
+6. EXPORTING
    • Export to CSV: Raw data table
    • Export to PDF: Complete formatted report
    • Open Output Folder: View all files
 
-6. KEYBOARD SHORTCUTS
+7. KEYBOARD SHORTCUTS
    • Ctrl+O: Open results folder
    • Ctrl+R: Open recent folder
    • F5: Refresh view
    • Ctrl+Q: Quit application
 
-7. INTERPRETATION
+8. INTERPRETATION
    • POSITIVE: Bacteria detected, consider treatment
    • NEGATIVE: No bacteria detected
    • NO OBVIOUS BACTERIA: Within control range
    • MIXED: Conflicting results, repeat testing recommended
 
-8. TROUBLESHOOTING
+9. TROUBLESHOOTING
    • If plots don't display: Check image files in output folder
    • If data is missing: Ensure complete processing pipeline
    • For batch mode: Both G+ and G- folders must exist
+   • Processing images: Must be in subfolder structure
 
 For additional support, refer to the processing pipeline documentation.
         """

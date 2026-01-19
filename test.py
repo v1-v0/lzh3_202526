@@ -1,56 +1,173 @@
+# Standard library imports
+import atexit
+import csv
+import json
+import logging
 import os
+import platform
+import re
 import shutil
 import subprocess
-import platform
-from pathlib import Path
-from datetime import datetime
-from typing import Optional, Dict, List
 import sys
-
-
-import cv2
-import numpy as np
-
-import csv
 import textwrap
 import time
-
-import atexit
-import re
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
-import xml.etree.ElementTree as ET
-from typing import Optional, Tuple, Any, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
-from tqdm import tqdm
+# Third-party data science imports
+import numpy as np
 import pandas as pd
 from scipy import stats as scipy_stats
+from tqdm import tqdm
 
-# --- NEW IMPORT FOR REGISTRATION ---
+# Computer vision imports
+import cv2
 from skimage.registration import phase_cross_correlation
 
+# Plotting imports
 import matplotlib
-
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+# Excel/Office imports
+from openpyxl import load_workbook
 from openpyxl.chart import ScatterChart, Reference
 from openpyxl.chart.marker import Marker
 from openpyxl.chart.series_factory import SeriesFactory
+from openpyxl.drawing.image import Image as XLImage
+
+
+# ==================================================
+# Unicode-Safe File I/O Functions
+# ==================================================
+
+def safe_imread(path: Path, flags: int = cv2.IMREAD_UNCHANGED) -> Optional[np.ndarray]:
+    """Read image with Unicode path support on Windows
+    
+    Args:
+        path: Path to image file
+        flags: OpenCV imread flags
+        
+    Returns:
+        numpy array of image, or None if failed
+    """
+    try:
+        # Method: Read file as bytes, then decode with OpenCV
+        with open(path, 'rb') as f:
+            file_bytes = np.asarray(bytearray(f.read()), dtype=np.uint8)
+        img = cv2.imdecode(file_bytes, flags)
+        
+        if img is None:
+            print(f"[WARN] cv2.imdecode returned None for {path.name}")
+            return None
+            
+        return img
+    except Exception as e:
+        print(f"[ERROR] Failed to read image {path.name}: {e}")
+        return None
+
+
+def safe_imwrite(path: Path, img: np.ndarray, params: Optional[list] = None) -> bool:
+    """Write image with Unicode path support on Windows
+    
+    Args:
+        path: Path where to save image
+        img: Image array to save
+        params: Optional OpenCV imwrite parameters
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Get file extension
+        ext = path.suffix.lower()
+        if not ext:
+            ext = '.png'
+        
+        # Encode image to memory buffer
+        if params is None:
+            is_success, buffer = cv2.imencode(ext, img)
+        else:
+            is_success, buffer = cv2.imencode(ext, img, params)
+        
+        if not is_success:
+            print(f"[WARN] cv2.imencode failed for {path.name}")
+            return False
+        
+        # Write buffer to file
+        with open(path, 'wb') as f:
+            f.write(buffer.tobytes())
+        
+        return True
+    except Exception as e:
+        print(f"[ERROR] Failed to write image {path.name}: {e}")
+        return False
+
+
+def safe_xml_parse(xml_path: Path) -> Optional[ET.ElementTree]:
+    """Parse XML file with Unicode path support
+    
+    Args:
+        xml_path: Path to XML file
+        
+    Returns:
+        ElementTree object, or None if failed
+    """
+    try:
+        # Read file content first with explicit encoding
+        with open(xml_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # Parse from string
+        root = ET.fromstring(content)
+        tree = ET.ElementTree(root)
+        
+        return tree
+    except FileNotFoundError:
+        print(f"[WARN] XML file not found: {xml_path.name}")
+        return None
+    except ET.ParseError as e:
+        print(f"[ERROR] XML parse error in {xml_path.name}: {e}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] Failed to read XML {xml_path.name}: {e}")
+        return None
+
+
+def validate_path_encoding(path: Path) -> bool:
+    """Check if path can be properly encoded for filesystem
+    
+    Args:
+        path: Path to validate
+        
+    Returns:
+        True if path encoding is valid, False otherwise
+    """
+    try:
+        path_str = str(path.resolve())
+        # Try encoding to filesystem encoding
+        path_str.encode(sys.getfilesystemencoding())
+        return True
+    except UnicodeEncodeError as e:
+        print(f"[WARN] Path encoding issue: {path}")
+        print(f"       {e}")
+        return False
+    except Exception as e:
+        print(f"[WARN] Path validation error: {e}")
+        return False
+# ==================================================
+
 
 # Basic logger setup
-import logging
 logger = logging.getLogger("particle_scout")
 if not logger.handlers:
     logger.setLevel(logging.INFO)
     _sh = logging.StreamHandler()
     _sh.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
     logger.addHandler(_sh)
-
-from openpyxl import load_workbook
-from openpyxl.drawing.image import Image as XLImage
-
 
 csv_paths: list[Path] = []
 
@@ -83,21 +200,36 @@ _logs_dir.mkdir(exist_ok=True)
 _timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 _script_name = Path(sys.argv[0]).stem
 _log_path = _logs_dir / f"run_{_timestamp}_{_script_name}.txt"
-_log_file = open(_log_path, "w", encoding="utf-8")
 
-sys.stdout = Tee(sys.stdout, _log_file)
-sys.stderr = Tee(sys.stderr, _log_file)
+# Initialize _log_file with type annotation
+_log_file: Optional[Any] = None
+
+try:
+    _log_file = open(_log_path, "w", encoding="utf-8")
+    sys.stdout = Tee(sys.stdout, _log_file)
+    sys.stderr = Tee(sys.stderr, _log_file)
+    print(f"Saving output to: {_log_path}")
+    print(f"Project root: {_project_root.resolve()}")
+    print(f"Running as: {'EXECUTABLE' if getattr(sys, 'frozen', False) else 'SCRIPT'}")
+except Exception as e:
+    print(f"Warning: Could not set up logging: {e}")
+
+
 print(f"Saving output to: {_log_path}")
 print(f"Project root: {_project_root.resolve()}")
 print(f"Running as: {'EXECUTABLE' if getattr(sys, 'frozen', False) else 'SCRIPT'}")
 
-
 @atexit.register
 def _close_log_file() -> None:
-    try:
-        _log_file.close()
-    except Exception:
-        pass
+    """Close the global log file if it exists."""
+    global _log_file  # Now this is OK since we initialized it explicitly
+    if _log_file is not None:
+        try:
+            _log_file.close()
+        except Exception:
+            pass
+        finally:
+            _log_file = None
 
 # ==================================================
 # Configuration
@@ -247,14 +379,20 @@ def add_scale_bar(
 def ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
 
-
 def save_debug(
     folder: Path,
     name: str,
     img: np.ndarray,
     pixel_size_um: Optional[float] = None,
 ) -> None:
-    """Save debug image with optional scale bar - memory optimized"""
+    """Save debug image with optional scale bar - memory optimized, Unicode-safe
+    
+    Args:
+        folder: Output folder
+        name: Image filename
+        img: Image array to save
+        pixel_size_um: Optional pixel size for scale bar
+    """
     out = folder / name
     
     if pixel_size_um is not None and pixel_size_um > 0:
@@ -265,10 +403,16 @@ def save_debug(
     else:
         img_to_save = img
     
-    cv2.imwrite(str(out), img_to_save)
+    # Use Unicode-safe write
+    success = safe_imwrite(out, img_to_save)
     
+    if not success:
+        print(f"[ERROR] Failed to save debug image: {name}")
+    
+    # Clean up large images
     if img_to_save.nbytes > 10_000_000:
         del img_to_save
+
 
 
 def list_sample_group_folders(source_dir: Path) -> list[Path]:
@@ -330,14 +474,31 @@ def get_pixel_size_um(
     xml_props_path: Optional[Path],
     xml_main_path: Optional[Path],
 ) -> Tuple[float, float]:
-    """Extract pixel size with detailed error reporting"""
+    """Extract pixel size with detailed error reporting and Unicode support
+    
+    Args:
+        xml_props_path: Path to Properties XML file
+        xml_main_path: Path to main XML file
+        
+    Returns:
+        Tuple of (pixel_size_x, pixel_size_y) in micrometers
+        
+    Raises:
+        ValueError: If pixel size cannot be determined
+    """
     
     errors = []
     
+    # Try Properties XML first
     if xml_props_path is not None:
         try:
-            tree = ET.parse(xml_props_path)
+            tree = safe_xml_parse(xml_props_path)
+            if tree is None:
+                raise ValueError(f"Could not parse {xml_props_path.name}")
+            
             root = tree.getroot()
+            if root is None:
+                raise ValueError(f"Empty XML document: {xml_props_path.name}")
 
             dims = root.findall(".//ImageDescription/Dimensions/DimensionDescription")
             by_id = {d.get("DimID"): d for d in dims}
@@ -373,10 +534,16 @@ def get_pixel_size_um(
         except Exception as e:
             errors.append(f"Properties XML ({xml_props_path.name}): {e}")
 
+    # Try main XML
     if xml_main_path is not None:
         try:
-            tree = ET.parse(xml_main_path)
+            tree = safe_xml_parse(xml_main_path)
+            if tree is None:
+                raise ValueError(f"Could not parse {xml_main_path.name}")
+            
             root = tree.getroot()
+            if root is None:
+                raise ValueError(f"Empty XML document: {xml_main_path.name}")
 
             dims = root.findall(".//ImageDescription/Dimensions/DimensionDescription")
             by_id = {d.get("DimID"): d for d in dims}
@@ -2374,7 +2541,17 @@ def display_configuration_summary(config: dict) -> None:
 # Image Processing
 # ==================================================
 def process_image(img_path: Path, output_root: Path) -> None:
-    """Process a single image"""
+    """Process a single image - Unicode-safe version
+    
+    Args:
+        img_path: Path to input image
+        output_root: Root output directory
+    """
+    
+    # Validate path encoding
+    if not validate_path_encoding(img_path):
+        print(f"[ERROR] Cannot process image with problematic path: {img_path}")
+        return
     
     xml_props, xml_main = find_metadata_paths(img_path)
     
@@ -2385,6 +2562,7 @@ def process_image(img_path: Path, output_root: Path) -> None:
     except Exception as e:
         if FALLBACK_UM_PER_PX is None:
             raise
+        print(f"[WARN] Using fallback pixel size for {img_path.name}: {e}")
         um_per_px_x = um_per_px_y = float(FALLBACK_UM_PER_PX)
 
     um_per_px_avg = (um_per_px_x + um_per_px_y) / 2.0
@@ -2392,9 +2570,10 @@ def process_image(img_path: Path, output_root: Path) -> None:
     img_out = output_root / img_path.stem
     ensure_dir(img_out)
 
-    img = cv2.imread(str(img_path), cv2.IMREAD_UNCHANGED)
+    # Use Unicode-safe imread
+    img = safe_imread(img_path, cv2.IMREAD_UNCHANGED)
     if img is None:
-        raise FileNotFoundError(str(img_path))
+        raise FileNotFoundError(f"Could not read image: {img_path}")
     if img.ndim == 3:
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
@@ -2459,7 +2638,8 @@ def process_image(img_path: Path, output_root: Path) -> None:
     vis_match: Optional[np.ndarray] = None
 
     if fluor_path.exists():
-        fluor_img = cv2.imread(str(fluor_path), cv2.IMREAD_UNCHANGED)
+        # Use Unicode-safe imread for fluorescence
+        fluor_img = safe_imread(fluor_path, cv2.IMREAD_UNCHANGED)
         if fluor_img is not None:
             fluor_img, (sy, sx) = align_fluorescence_channel(img, fluor_img)
             
@@ -2630,17 +2810,19 @@ def process_image(img_path: Path, output_root: Path) -> None:
                 ]
             )
 
-
-# ==================================================
-# Main Function
-# ==================================================
-def open_folder(folder_path: Path):
-    """Open folder in file explorer (cross-platform)"""
+def open_folder(folder_path: Path) -> None:
+    """Open folder in file explorer (cross-platform, Unicode-safe)
+    
+    Args:
+        folder_path: Path to folder to open
+    """
     try:
         folder_str = str(folder_path.resolve())
         
         if platform.system() == 'Windows':
-            subprocess.run(['explorer', folder_str])
+            # Use os.startfile for better Unicode support on Windows
+            import os
+            os.startfile(folder_str)
         elif platform.system() == 'Darwin':  # macOS
             subprocess.run(['open', folder_str])
         else:  # Linux
@@ -2650,6 +2832,9 @@ def open_folder(folder_path: Path):
     except Exception as e:
         print(f"  ⚠ Could not open folder automatically: {e}")
         print(f"  Please open manually: {folder_path.resolve()}")
+
+
+
 
 def setup_output_directory(config: dict) -> Path:
     """Create and setup output directory structure with timestamp naming.
@@ -2980,301 +3165,528 @@ def process_single_dataset(config: dict) -> dict:
             'dataset_id': config.get('dataset_id', 'Unknown')
         }
 
+def launch_results_viewer(output_dir: Optional[Path] = None):
+    """Launch GUI viewer for results
+    
+    Args:
+        output_dir: Optional path to output directory to load automatically
+    """
+    try:
+        # Check if gui_viewer.py exists
+        viewer_path = Path(__file__).parent / "gui_viewer.py"
+        
+        if not viewer_path.exists():
+            print("  ⚠ GUI viewer not found (gui_viewer.py)")
+            print(f"    Expected location: {viewer_path}")
+            return False
+        
+        print("  🚀 Launching GUI viewer...")
+        
+        # Launch as separate process
+        if getattr(sys, 'frozen', False):
+            # Running as compiled executable
+            # GUI should be bundled
+            try:
+                from image_viewer import launch_viewer
+                launch_viewer(output_dir)
+                return True
+            except ImportError:
+                print("  ⚠ GUI viewer not available in executable")
+                return False
+        else:
+            # Running as script - launch in new process
+            cmd = [sys.executable, str(viewer_path)]
+            
+            # Pass output directory as argument if provided
+            if output_dir:
+                cmd.append(str(output_dir))
+            
+            subprocess.Popen(cmd)
+            print("  ✓ GUI viewer launched in separate window")
+            return True
+            
+    except Exception as e:
+        print(f"  ⚠ Could not launch GUI viewer: {e}")
+        return False
+
+def get_user_inputs():
+    """Get all configuration inputs from user
+    
+    Returns:
+        dict: Configuration dictionary with all settings
+        None: If user cancels
+    """
+    try:
+        print("\n" + "─" * 80)
+        print("DATASET CONFIGURATION")
+        print("─" * 80)
+        
+        # Dataset ID
+        dataset_id = logged_input("\nEnter dataset name/ID: ").strip()
+        if not dataset_id:
+            print("  ✗ Dataset ID cannot be empty")
+            return None
+        
+        # Image directory
+        print("\n" + "─" * 40)
+        print("Image Directory")
+        print("─" * 40)
+        image_dir_input = logged_input("Enter image directory path (or press Enter for current directory): ").strip()
+        
+        if image_dir_input:
+            image_dir = Path(image_dir_input)
+        else:
+            image_dir = Path.cwd()
+        
+        if not image_dir.exists():
+            print(f"  ✗ Directory not found: {image_dir}")
+            return None
+        
+        print(f"  ✓ Using: {image_dir}")
+        
+        # Excel file
+        print("\n" + "─" * 40)
+        print("Excel Data File")
+        print("─" * 40)
+        excel_path_input = logged_input("Enter Excel file path: ").strip()
+        
+        if not excel_path_input:
+            print("  ✗ Excel path cannot be empty")
+            return None
+        
+        excel_path = Path(excel_path_input)
+        
+        if not excel_path.exists():
+            print(f"  ✗ File not found: {excel_path}")
+            return None
+        
+        print(f"  ✓ Using: {excel_path}")
+        
+        # Control groups
+        print("\n" + "─" * 40)
+        print("Control Groups")
+        print("─" * 40)
+        control_input = logged_input("Enter control group IDs (comma-separated, e.g., 1,2,3): ").strip()
+        
+        if not control_input:
+            print("  ✗ Control groups cannot be empty")
+            return None
+        
+        try:
+            control_groups = [int(x.strip()) for x in control_input.split(',')]
+            print(f"  ✓ Control groups: {control_groups}")
+        except ValueError:
+            print("  ✗ Invalid control group format")
+            return None
+        
+        # Threshold
+        print("\n" + "─" * 40)
+        print("Detection Threshold")
+        print("─" * 40)
+        threshold_input = logged_input("Enter number of standard deviations for threshold (Enter=2.0): ").strip()
+        
+        if threshold_input:
+            try:
+                num_std_threshold = float(threshold_input)
+            except ValueError:
+                print("  ✗ Invalid threshold value, using default 2.0")
+                num_std_threshold = 2.0
+        else:
+            num_std_threshold = 2.0
+        
+        print(f"  ✓ Threshold: {num_std_threshold} std deviations")
+        
+        # Auto-open folder
+        auto_open_input = logged_input("\nAuto-open output folder when complete? (y/n, Enter=yes): ").strip().lower()
+        auto_open = auto_open_input in ["", "y", "yes"]
+        
+        # Return configuration
+        config = {
+            'dataset_id': dataset_id,
+            'image_dir': image_dir,
+            'excel_path': excel_path,
+            'control_groups': control_groups,
+            'num_std_threshold': num_std_threshold,
+            'auto_open': auto_open
+        }
+        
+        return config
+        
+    except KeyboardInterrupt:
+        print("\n\n  ✗ Configuration cancelled by user")
+        return None
+    except Exception as e:
+        print(f"\n  ✗ Error during configuration: {e}")
+        return None
+    
+def process_pipeline(config):
+    """Execute the full processing pipeline
+    
+    Args:
+        config: Configuration dictionary
+        
+    Returns:
+        dict: Results dictionary with success status and output paths
+    """
+    try:
+        # Extract configuration
+        dataset_id = config['dataset_id']
+        image_dir = config['image_dir']
+        excel_path = config['excel_path']
+        control_groups = config['control_groups']
+        num_std_threshold = config['num_std_threshold']
+        output_dir = config.get('output_dir', Path('outputs') / f"{dataset_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        microgel_type = config.get('microgel_type', 'positive')
+        
+        # Ensure output directory exists
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        result = {
+            'success': False,
+            'output_dir': output_dir,
+            'dataset_id': dataset_id,
+            'errors': []
+        }
+        
+        # Step 1: Load and process images
+        print("\n" + "─" * 80)
+        print("STEP 1: IMAGE PROCESSING")
+        print("─" * 80)
+        
+        # Load Excel data
+        print(f"\nLoading Excel data from: {excel_path.name}")
+        excel_data = pd.read_excel(excel_path)
+        print(f"  ✓ Loaded {len(excel_data)} rows")
+        
+        # Process images and extract fluorescence
+        print("\nProcessing images...")
+        fluorescence_results = []
+        
+        for idx, row in excel_data.iterrows():
+            group = row.get('Group', idx)
+            image_name = row.get('Image', f"image_{idx}.png")
+            
+            image_path = image_dir / image_name
+            
+            if not image_path.exists():
+                print(f"  ⚠ Image not found: {image_name}")
+                continue
+            
+            # Extract fluorescence (simplified - you'd use your actual extraction logic)
+            fluorescence = extract_fluorescence(image_path)
+            
+            fluorescence_results.append({
+                'Group': group,
+                'Image': image_name,
+                'Fluorescence': fluorescence
+            })
+        
+        print(f"  ✓ Processed {len(fluorescence_results)} images")
+        
+        # Step 2: Statistical analysis
+        print("\n" + "─" * 80)
+        print("STEP 2: STATISTICAL ANALYSIS")
+        print("─" * 80)
+        
+        df = pd.DataFrame(fluorescence_results)
+        
+        # Calculate statistics
+        stats = df.groupby('Group')['Fluorescence'].agg(['mean', 'std', 'count']).reset_index()
+        
+        # Control statistics
+        control_data = df[df['Group'].isin(control_groups)]
+        control_mean = control_data['Fluorescence'].mean()
+        control_std = control_data['Fluorescence'].std()
+        threshold = control_mean + (num_std_threshold * control_std)
+        
+        print(f"\nControl statistics:")
+        print(f"  Mean: {control_mean:.2f}")
+        print(f"  Std Dev: {control_std:.2f}")
+        print(f"  Threshold: {threshold:.2f}")
+        
+        # Step 3: Clinical classification
+        print("\n" + "─" * 80)
+        print("STEP 3: CLINICAL CLASSIFICATION")
+        print("─" * 80)
+        
+        def classify(mean_val):
+            if mean_val > threshold:
+                return "POSITIVE"
+            elif mean_val < control_mean - control_std:
+                return "NEGATIVE"
+            else:
+                return "NO OBVIOUS BACTERIA"
+        
+        stats['Classification'] = stats['mean'].apply(classify)
+        stats['Threshold'] = threshold
+        stats['Control_Mean'] = control_mean
+        
+        # Save results
+        classification_file = output_dir / f"clinical_classification_{microgel_type}.csv"
+        stats.to_csv(classification_file, index=False)
+        print(f"\n  ✓ Classification saved: {classification_file.name}")
+        
+        # Save raw data
+        raw_data_file = output_dir / f"fluorescence_data_{microgel_type}.csv"
+        df.to_csv(raw_data_file, index=False)
+        print(f"  ✓ Raw data saved: {raw_data_file.name}")
+        
+        # Step 4: Generate plots
+        print("\n" + "─" * 80)
+        print("STEP 4: GENERATING PLOTS")
+        print("─" * 80)
+        
+        # Create comparison plot
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        x = range(len(stats))
+        colors_map = {'POSITIVE': 'red', 'NEGATIVE': 'green', 'NO OBVIOUS BACTERIA': 'yellow'}
+        colors = [colors_map[c] for c in stats['Classification']]
+        
+        ax.bar(x, stats['mean'], color=colors, alpha=0.6, edgecolor='black')
+        ax.axhline(threshold, color='red', linestyle='--', label='Threshold')
+        ax.axhline(control_mean, color='blue', linestyle='--', label='Control Mean')
+        
+        ax.set_xlabel('Group')
+        ax.set_ylabel('Mean Fluorescence')
+        ax.set_title(f'{microgel_type.upper()} Microgel - Clinical Classification')
+        ax.legend()
+        
+        plot_file = output_dir / f"classification_plot_{microgel_type}.png"
+        plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        print(f"  ✓ Plot saved: {plot_file.name}")
+        
+        # Success
+        result['success'] = True
+        result['classification_file'] = classification_file
+        result['plot_file'] = plot_file
+        
+        return result
+        
+    except Exception as e:
+        print(f"\n✗ Pipeline error: {e}")
+        import traceback
+        traceback.print_exc()
+        result['errors'].append(str(e))
+        return result
 
 
+def extract_fluorescence(image_path):
+    """Extract fluorescence from image (simplified placeholder)
+    
+    Args:
+        image_path: Path to image file
+        
+    Returns:
+        float: Fluorescence intensity value
+    """
+    # This is a simplified placeholder
+    # Replace with your actual fluorescence extraction logic
+    try:
+        img = cv2.imread(str(image_path))
+        if img is None:
+            return 0.0
+        
+        # Simple mean intensity as placeholder
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        return float(gray.mean())  # Use ndarray's mean() method instead
+        
+    except Exception:
+        return 0.0
 
+# ==================================================
+# Main Function
+# ==================================================
 def main():
     """Main execution function"""
     
-    log_file_path = _log_path
+    # ==================== INITIALIZATION ====================
+    print("\n" + "="*80)
+    print("MICROGEL FLUORESCENCE ANALYSIS PIPELINE")
+    print("="*80 + "\n")
     
     try:
-        # Phase 1: Configuration
+        # Collect configuration (handles both single and batch mode detection)
         config = collect_configuration()
+        
+        # Display summary and get confirmation
         display_configuration_summary(config)
         
-        # Setup output directory structure
-        main_output_dir = setup_output_directory(config)
-        print(f"\n📁 Output directory: {main_output_dir.resolve()}\n")
+        # Setup main output directory
+        output_dir = setup_output_directory(config)
+        print(f"\n📁 Output directory: {output_dir.relative_to(Path.cwd())}")
         
-        # Phase 2: Processing
-        print("="*80)
-        print("PHASE 2: PROCESSING")
-        print("="*80 + "\n")
-        
-        all_results = []
-        
+        # ==================== BATCH MODE ====================
         if config.get('batch_mode', False):
-            # Batch mode: Process both G+ and G-
+            print("\n" + "="*80)
+            print("BATCH PROCESSING MODE")
+            print("="*80)
             
-            for idx, subdir_config in enumerate(config['subdirs'], 1):
+            # Process each subdirectory (G+ and G-)
+            all_results = []
+            
+            for subdir_config in config['subdirs']:
+                print("\n" + "━" * 80)
+                print(f"PROCESSING {subdir_config['label']} MICROGEL")
                 print("━" * 80)
-                print(f"BATCH {idx}/{len(config['subdirs'])}: Processing {subdir_config['label']}")
-                print("━" * 80 + "\n")
                 
-                # Create subdirectory for this batch item
-                batch_output_dir = main_output_dir / subdir_config['safe_label']
-                batch_output_dir.mkdir(exist_ok=True)
+                # Create dataset-specific configuration
+                dataset_id = f"{config['dataset_id_base']} {subdir_config['safe_label']}"
                 
-                # Create individual config for this subdirectory
-                individual_config = {
+                single_config = {
                     'source_dir': subdir_config['path'],
-                    'dataset_id': f"{config['dataset_id_base']} {subdir_config['safe_label']}",
+                    'dataset_id': dataset_id,
                     'percentile': config['percentile'],
                     'microgel_type': subdir_config['microgel_type'],
                     'threshold_pct': config['threshold_pct'],
-                    'output_dir': batch_output_dir
+                    'output_dir': output_dir / subdir_config['safe_label']
                 }
                 
-                # Process this subdirectory
-                result = process_single_dataset(individual_config)
+                # Process this dataset
+                result = process_single_dataset(single_config)
+                
                 all_results.append({
                     'label': subdir_config['label'],
-                    'safe_label': subdir_config['safe_label'],
-                    'config': individual_config,
                     'result': result
                 })
                 
-                print(f"\n✓ Completed {subdir_config['label']} processing\n")
+                if result['success']:
+                    print(f"\n✓ {subdir_config['label']} processing completed")
+                else:
+                    print(f"\n✗ {subdir_config['label']} processing failed")
             
-            # Generate final clinical matrix
-            if len(all_results) == 2:  # Should have both G+ and G-
-                print("\n" + "━" * 80)
-                print("GENERATING FINAL CLINICAL MATRIX")
-                print("━" * 80 + "\n")
+            # ==================== GENERATE FINAL MATRIX ====================
+            print("\n" + "="*80)
+            print("GENERATING FINAL CLINICAL MATRIX")
+            print("="*80)
+            
+            # Check if both succeeded
+            if all(item['result']['success'] for item in all_results):
+                # Load classification results
+                gplus_output = output_dir / "Positive"
+                gminus_output = output_dir / "Negative"
                 
-                # Get classification DataFrames from results
-                gplus_result = next((r for r in all_results if r['safe_label'] == 'Positive'), None)
-                gminus_result = next((r for r in all_results if r['safe_label'] == 'Negative'), None)
+                gplus_csv_path = gplus_output / "clinical_classification_positive.csv"
+                gminus_csv_path = gminus_output / "clinical_classification_negative.csv"
                 
-                if gplus_result and gminus_result:
-                    # Get output directories
-                    gplus_output_dir = gplus_result['result']['output_dir']
-                    gminus_output_dir = gminus_result['result']['output_dir']
+                if gplus_csv_path.exists() and gminus_csv_path.exists():
+                    print("\n  Loading classification results...")
+                    gplus_df = pd.read_csv(gplus_csv_path)
+                    gminus_df = pd.read_csv(gminus_csv_path)
                     
-                    # Find classification CSV files
-                    gplus_csv_files = list(gplus_output_dir.glob("clinical_classification_*.csv"))
-                    gminus_csv_files = list(gminus_output_dir.glob("clinical_classification_*.csv"))
+                    print("  Generating final clinical matrix...")
+                    # Generate final matrix
+                    final_matrix = generate_final_clinical_matrix(
+                        output_root=output_dir,
+                        gplus_classification=gplus_df,
+                        gminus_classification=gminus_df,
+                        dataset_base_name=config['dataset_id_base']
+                    )
                     
-                    print(f"  Searching in G+ directory: {gplus_output_dir}")
-                    print(f"  Found G+ classification files: {[f.name for f in gplus_csv_files]}")
-                    print(f"  Searching in G- directory: {gminus_output_dir}")
-                    print(f"  Found G- classification files: {[f.name for f in gminus_csv_files]}")
-                    
-                    if gplus_csv_files and gminus_csv_files:
-                        try:
-                            # Use the first classification file found
-                            gplus_csv = gplus_csv_files[0]
-                            gminus_csv = gminus_csv_files[0]
-                            
-                            gplus_df = pd.read_csv(gplus_csv)
-                            gminus_df = pd.read_csv(gminus_csv)
-                            
-                            print(f"  ✓ Loaded G+ classification: {len(gplus_df)} groups from {gplus_csv.name}")
-                            print(f"  ✓ Loaded G- classification: {len(gminus_df)} groups from {gminus_csv.name}")
-                            
-                            final_matrix_path = generate_final_clinical_matrix(
-                                main_output_dir,
-                                gplus_df,
-                                gminus_df,
-                                config['dataset_id_base']
-                            )
-                            
-                            if final_matrix_path:
-                                print(f"  ✓ Final clinical matrix generated: {final_matrix_path.name}")
-                        except Exception as e:
-                            print(f"  ✗ Error generating final matrix: {e}")
-                            import traceback
-                            traceback.print_exc()
+                    if final_matrix:
+                        print(f"\n✓ Final clinical matrix: {final_matrix.name}")
                     else:
-                        print("  ⚠ Classification files not found - skipping matrix generation")
-                        if not gplus_csv_files:
-                            print(f"    No classification files in: {gplus_output_dir}")
-                            print(f"    Contents: {[f.name for f in gplus_output_dir.glob('*.csv')]}")
-                        if not gminus_csv_files:
-                            print(f"    No classification files in: {gminus_output_dir}")
-                            print(f"    Contents: {[f.name for f in gminus_output_dir.glob('*.csv')]}")
+                        print("\n⚠ Could not generate final matrix")
                 else:
-                    print("  ⚠ Missing G+ or G- results - skipping matrix generation")
-                    if not gplus_result:
-                        print("    Missing: G+ result")
-                    if not gminus_result:
-                        print("    Missing: G- result")
-
-            # Copy log file to main output directory (BEFORE final summary)
-            print("\n" + "━" * 80)
-            print("COPYING LOG FILE")
-            print("━" * 80)
-            if log_file_path and log_file_path.exists():
-                try:
-                    # Flush all output streams
-                    _log_file.flush()
-                    sys.stdout.flush()
-                    sys.stderr.flush()
-                    
-                    # Small delay to ensure file handles are released
-                    import time
-                    time.sleep(0.1)
-                    
-                    # Copy to main output directory
-                    dest_log = main_output_dir / log_file_path.name
-                    shutil.copy2(log_file_path, dest_log)
-                    print(f"  ✓ Log copied to main: {dest_log.relative_to(Path.cwd())}")
-                    
-                    # Also copy to each subdirectory
-                    for item in all_results:
-                        subdir_output = item['result'].get('output_dir')
-                        if subdir_output and Path(subdir_output).exists():
-                            subdir_log = Path(subdir_output) / log_file_path.name
-                            shutil.copy2(log_file_path, subdir_log)
-                            print(f"  ✓ Log copied to {item['label']}: {subdir_log.relative_to(Path.cwd())}")
-                    
-                    print("  ✓ All log files copied successfully")
-                    
-                except Exception as e:
-                    print(f"  ⚠ Error copying log file: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    print("\n⚠ Missing classification files - cannot generate final matrix")
+                    if not gplus_csv_path.exists():
+                        print(f"    Missing: {gplus_csv_path.name}")
+                    if not gminus_csv_path.exists():
+                        print(f"    Missing: {gminus_csv_path.name}")
             else:
-                print(f"  ⚠ Log file not found or doesn't exist")
-                if log_file_path:
-                    print(f"     Path: {log_file_path}")
-                    print(f"     Exists: {log_file_path.exists()}")
-                else:
-                    print(f"     log_file_path is None")
+                print("\n⚠ Some processing failed - skipping final matrix")
             
-            # Final summary
+            # ==================== COMPLETION ====================
             print("\n" + "="*80)
             print("BATCH PROCESSING COMPLETE")
-            print("="*80 + "\n")
+            print("="*80)
             
-            all_success = True
             for item in all_results:
-                status = "✓ SUCCESS" if item['result']['success'] else "✗ FAILED"
-                print(f"{status}: {item['label']} - {item['config']['dataset_id']}")
-                if not item['result']['success']:
-                    all_success = False
+                status = "✓" if item['result']['success'] else "✗"
+                dataset_name = item['result'].get('dataset_id', item['label'])
+                print(f"  {status} {item['label']}: {dataset_name}")
             
-            print("\n" + "="*80)
-            
-            # Analyze log file
-            if log_file_path and log_file_path.exists():
-                log_analysis = check_log_for_errors(log_file_path)
-                display_log_analysis(log_analysis, log_file_path)
-            
-            # Open output folder
-            print("\n📂 Opening output folder...")
-            open_folder(main_output_dir)
-            
-            if all_success:
-                print("\n✓ All processing completed successfully!")
-            else:
-                print("\n⚠ Some processing tasks failed - check log for details")
-                
+            print()
+        
+        # ==================== SINGLE MODE ====================
         else:
-            # Single mode: Process one dataset
-            config['output_dir'] = main_output_dir
-            result = process_single_dataset(config)
+            print("\n" + "="*80)
+            print("SINGLE PROCESSING MODE")
+            print("="*80)
             
-            # Copy log file to output directory (BEFORE final summary)
-            print("\n" + "━" * 80)
-            print("COPYING LOG FILE")
-            print("━" * 80)
-            if log_file_path and log_file_path.exists():
-                try:
-                    # Flush all output streams
-                    _log_file.flush()
-                    sys.stdout.flush()
-                    sys.stderr.flush()
-                    
-                    # Small delay to ensure file handles are released
-                    import time
-                    time.sleep(0.1)
-                    
-                    dest_log = main_output_dir / log_file_path.name
-                    shutil.copy2(log_file_path, dest_log)
-                    print(f"  ✓ Log copied to: {dest_log.relative_to(Path.cwd())}")
-                    print("  ✓ Log file copied successfully")
-                    
-                except Exception as e:
-                    print(f"  ⚠ Error copying log file: {e}")
-                    import traceback
-                    traceback.print_exc()
-            else:
-                print(f"  ⚠ Log file not found or doesn't exist")
-                if log_file_path:
-                    print(f"     Path: {log_file_path}")
-                    print(f"     Exists: {log_file_path.exists()}")
-                else:
-                    print(f"     log_file_path is None")
+            single_config = {
+                'source_dir': config['source_dir'],
+                'dataset_id': config['dataset_id'],
+                'percentile': config['percentile'],
+                'microgel_type': config['microgel_type'],
+                'threshold_pct': config['threshold_pct'],
+                'output_dir': output_dir
+            }
+            
+            result = process_single_dataset(single_config)
             
             if result['success']:
-                print("\n" + "="*80)
-                print("PROCESSING COMPLETE")
-                print("="*80)
-                
-                # Analyze log file
-                if log_file_path and log_file_path.exists():
-                    log_analysis = check_log_for_errors(log_file_path)
-                    display_log_analysis(log_analysis, log_file_path)
-                
-                # Open output folder
-                print("\n📂 Opening output folder...")
-                open_folder(main_output_dir)
-                
-                print("\n✓ Processing completed successfully!")
+                print("\n✓ Processing completed successfully")
+                print(f"   Dataset: {result.get('dataset_id', 'Unknown')}")
+                print(f"   Images processed: {result.get('images_processed', 0)}")
+                if result.get('images_failed', 0) > 0:
+                    print(f"   Images failed: {result.get('images_failed', 0)}")
             else:
-                print("\n" + "="*80)
-                print("PROCESSING FAILED")
-                print("="*80)
-                
-                # Analyze log file
-                if log_file_path and log_file_path.exists():
-                    log_analysis = check_log_for_errors(log_file_path)
-                    display_log_analysis(log_analysis, log_file_path)
-                
-                print("\n⚠ Processing failed - check log for details")
+                print("\n✗ Processing failed")
+                if 'error' in result:
+                    print(f"   Error: {result['error']}")
         
+        # ==================== OPEN RESULTS ====================
+        print("\n" + "━" * 80)
+        print("RESULTS")
+        print("━" * 80)
+        
+        # Copy log file to output
+        if _log_path and _log_path.exists():
+            copied_log = copy_log_to_output(_log_path, output_dir)
+            if copied_log:
+                print(f"\n✓ Log file copied to output directory")
+        
+        # Analyze log for errors
+        if _log_path and _log_path.exists():
+            log_analysis = check_log_for_errors(_log_path)
+            
+            if log_analysis['error_count'] > 0 or log_analysis['warning_count'] > 0:
+                print(f"\n⚠ Log analysis:")
+                if log_analysis['error_count'] > 0:
+                    print(f"   Errors found: {log_analysis['error_count']}")
+                if log_analysis['warning_count'] > 0:
+                    print(f"   Warnings found: {log_analysis['warning_count']}")
+                print(f"   See log file for details: {_log_path.name}")
+        
+        # Offer to open folder or launch viewer
+        print()
+        view_choice = logged_input("Open results? (1=Folder, 2=GUI Viewer, Enter=Folder): ").strip()
+        
+        if view_choice == "2":
+            if not launch_results_viewer(output_dir):
+                print("  Falling back to folder view...")
+                open_folder(output_dir)
+        else:
+            open_folder(output_dir)
+        
+        print("\n" + "="*80)
+        print("PROCESSING COMPLETE")
+        print("="*80 + "\n")
+        
+    except SystemExit:
+        print("\n\nProgram terminated by user.\n")
     except KeyboardInterrupt:
-        print("\n\n⚠ Process interrupted by user")
-        # Try to copy log even on interruption
-        if log_file_path and log_file_path.exists() and 'main_output_dir' in locals() and isinstance(main_output_dir, Path):
-            try:
-                _log_file.flush()
-                sys.stdout.flush()
-                sys.stderr.flush()
-                import time
-                time.sleep(0.1)
-                dest_log = main_output_dir / log_file_path.name
-                shutil.copy2(log_file_path, dest_log)
-                print(f"✓ Log saved to: {dest_log}")
-            except Exception as e:
-                print(f"⚠ Could not save log: {e}")
-        sys.exit(1)
-    except SystemExit as e:
-        if str(e):
-            print(f"\n⚠ {e}")
-        sys.exit(1)
+        print("\n\nProgram interrupted by user.\n")
     except Exception as e:
-        print(f"\n✗ Unexpected error: {e}")
+        print(f"\n\nFatal error: {e}")
         import traceback
         traceback.print_exc()
-        
-        # Try to copy log even on failure
-        if log_file_path and log_file_path.exists() and 'main_output_dir' in locals() and isinstance(main_output_dir, Path):
-            try:
-                _log_file.flush()
-                sys.stdout.flush()
-                sys.stderr.flush()
-                import time
-                time.sleep(0.1)
-                dest_log = main_output_dir / log_file_path.name
-                shutil.copy2(log_file_path, dest_log)
-                print(f"✓ Log saved to: {dest_log}")
-            except Exception as e2:
-                print(f"⚠ Could not save log: {e2}")
-        
-        sys.exit(1)
+        print("\nPlease check the log file for details.\n")
+
 
 if __name__ == "__main__":
     main()
