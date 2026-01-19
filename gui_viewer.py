@@ -340,7 +340,14 @@ class ClinicalResultsViewer:
         )
         
         if folder:
-            self.load_results_from_folder(Path(folder))
+            try:
+                folder_path = Path(folder)
+                # Test if path is accessible
+                folder_path.exists()
+                self.load_results_from_folder(folder_path)
+            except (OSError, UnicodeDecodeError) as e:
+                messagebox.showerror("Path Error", 
+                    f"Cannot access folder with non-ASCII characters:\n{folder}\n\nError: {str(e)}")
     
     def auto_load_recent(self):
         """Try to load the most recent output folder"""
@@ -392,7 +399,12 @@ class ClinicalResultsViewer:
     
     def load_batch_results(self, folder_path: Path, clinical_matrix: Path):
         """Load batch mode results (G+ and G-)"""
-        self.clinical_data = pd.read_csv(clinical_matrix)
+        try:
+            self.clinical_data = pd.read_csv(clinical_matrix, encoding='utf-8')
+        except UnicodeDecodeError:
+            # Fallback to GB18030 for Simplified Chinese
+            self.clinical_data = pd.read_csv(clinical_matrix, encoding='gb18030')
+        
         self.dataset_name = folder_path.name
         
         # Load G+ and G- classifications
@@ -400,10 +412,16 @@ class ClinicalResultsViewer:
         gminus_csv = folder_path / "Negative" / "clinical_classification_negative.csv"
         
         if gplus_csv.exists():
-            self.gplus_data = pd.read_csv(gplus_csv)
+            try:
+                self.gplus_data = pd.read_csv(gplus_csv, encoding='utf-8')
+            except UnicodeDecodeError:
+                self.gplus_data = pd.read_csv(gplus_csv, encoding='gb18030')
         
         if gminus_csv.exists():
-            self.gminus_data = pd.read_csv(gminus_csv)
+            try:
+                self.gminus_data = pd.read_csv(gminus_csv, encoding='utf-8')
+            except UnicodeDecodeError:
+                self.gminus_data = pd.read_csv(gminus_csv, encoding='gb18030')
         
         # Populate tree
         for _, row in self.clinical_data.iterrows():
@@ -432,7 +450,11 @@ class ClinicalResultsViewer:
             raise FileNotFoundError("No clinical classification file found")
         
         classification_csv = classification_files[0]
-        self.clinical_data = pd.read_csv(classification_csv)
+        try:
+            self.clinical_data = pd.read_csv(classification_csv, encoding='utf-8')
+        except UnicodeDecodeError:
+            self.clinical_data = pd.read_csv(classification_csv, encoding='gb18030')
+        
         self.dataset_name = folder_path.name
         
         # Determine type from filename
@@ -793,8 +815,8 @@ Clinical Action:
         notebook.add(tab, text=plot_path.stem[:20])
         
         try:
-            # Load and display image
-            img = Image.open(plot_path)
+            # Ensure path is properly encoded
+            img = Image.open(str(plot_path))
             
             # Calculate size to fit in window
             max_width = 1000
@@ -816,6 +838,8 @@ Clinical Action:
             
             label.pack(expand=True)
             
+        except (OSError, UnicodeDecodeError) as e:
+            ttk.Label(tab, text=f"Error loading plot (path encoding issue):\n{str(e)}").pack(pady=20)
         except Exception as e:
             ttk.Label(tab, text=f"Error loading plot:\n{str(e)}").pack(pady=20)
     
@@ -928,7 +952,8 @@ Clinical Action:
         
         if filename:
             try:
-                self.clinical_data.to_csv(filename, index=False)
+                # UTF-8 with BOM for Excel compatibility with Chinese characters
+                self.clinical_data.to_csv(filename, index=False, encoding='utf-8-sig')
                 messagebox.showinfo("Success", f"Data exported to:\n{filename}")
                 self.status_var.set(f"Exported to {Path(filename).name}")
             except Exception as e:
@@ -1019,8 +1044,9 @@ Clinical Action:
         
         try:
             if sys.platform == 'win32':
-                import subprocess
-                subprocess.Popen(['explorer', str(self.current_folder)])
+                import os
+                # Use os.startfile for better Unicode support on Windows
+                os.startfile(str(self.current_folder))
             elif sys.platform == 'darwin':
                 import subprocess
                 subprocess.Popen(['open', str(self.current_folder)])

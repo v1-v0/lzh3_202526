@@ -39,128 +39,6 @@ from openpyxl.chart.marker import Marker
 from openpyxl.chart.series_factory import SeriesFactory
 from openpyxl.drawing.image import Image as XLImage
 
-
-# ==================================================
-# Unicode-Safe File I/O Functions
-# ==================================================
-
-def safe_imread(path: Path, flags: int = cv2.IMREAD_UNCHANGED) -> Optional[np.ndarray]:
-    """Read image with Unicode path support on Windows
-    
-    Args:
-        path: Path to image file
-        flags: OpenCV imread flags
-        
-    Returns:
-        numpy array of image, or None if failed
-    """
-    try:
-        # Method: Read file as bytes, then decode with OpenCV
-        with open(path, 'rb') as f:
-            file_bytes = np.asarray(bytearray(f.read()), dtype=np.uint8)
-        img = cv2.imdecode(file_bytes, flags)
-        
-        if img is None:
-            print(f"[WARN] cv2.imdecode returned None for {path.name}")
-            return None
-            
-        return img
-    except Exception as e:
-        print(f"[ERROR] Failed to read image {path.name}: {e}")
-        return None
-
-
-def safe_imwrite(path: Path, img: np.ndarray, params: Optional[list] = None) -> bool:
-    """Write image with Unicode path support on Windows
-    
-    Args:
-        path: Path where to save image
-        img: Image array to save
-        params: Optional OpenCV imwrite parameters
-        
-    Returns:
-        True if successful, False otherwise
-    """
-    try:
-        # Get file extension
-        ext = path.suffix.lower()
-        if not ext:
-            ext = '.png'
-        
-        # Encode image to memory buffer
-        if params is None:
-            is_success, buffer = cv2.imencode(ext, img)
-        else:
-            is_success, buffer = cv2.imencode(ext, img, params)
-        
-        if not is_success:
-            print(f"[WARN] cv2.imencode failed for {path.name}")
-            return False
-        
-        # Write buffer to file
-        with open(path, 'wb') as f:
-            f.write(buffer.tobytes())
-        
-        return True
-    except Exception as e:
-        print(f"[ERROR] Failed to write image {path.name}: {e}")
-        return False
-
-
-def safe_xml_parse(xml_path: Path) -> Optional[ET.ElementTree]:
-    """Parse XML file with Unicode path support
-    
-    Args:
-        xml_path: Path to XML file
-        
-    Returns:
-        ElementTree object, or None if failed
-    """
-    try:
-        # Read file content first with explicit encoding
-        with open(xml_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Parse from string
-        root = ET.fromstring(content)
-        tree = ET.ElementTree(root)
-        
-        return tree
-    except FileNotFoundError:
-        print(f"[WARN] XML file not found: {xml_path.name}")
-        return None
-    except ET.ParseError as e:
-        print(f"[ERROR] XML parse error in {xml_path.name}: {e}")
-        return None
-    except Exception as e:
-        print(f"[ERROR] Failed to read XML {xml_path.name}: {e}")
-        return None
-
-
-def validate_path_encoding(path: Path) -> bool:
-    """Check if path can be properly encoded for filesystem
-    
-    Args:
-        path: Path to validate
-        
-    Returns:
-        True if path encoding is valid, False otherwise
-    """
-    try:
-        path_str = str(path.resolve())
-        # Try encoding to filesystem encoding
-        path_str.encode(sys.getfilesystemencoding())
-        return True
-    except UnicodeEncodeError as e:
-        print(f"[WARN] Path encoding issue: {path}")
-        print(f"       {e}")
-        return False
-    except Exception as e:
-        print(f"[WARN] Path validation error: {e}")
-        return False
-# ==================================================
-
-
 # Basic logger setup
 logger = logging.getLogger("particle_scout")
 if not logger.handlers:
@@ -379,20 +257,14 @@ def add_scale_bar(
 def ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
 
+
 def save_debug(
     folder: Path,
     name: str,
     img: np.ndarray,
     pixel_size_um: Optional[float] = None,
 ) -> None:
-    """Save debug image with optional scale bar - memory optimized, Unicode-safe
-    
-    Args:
-        folder: Output folder
-        name: Image filename
-        img: Image array to save
-        pixel_size_um: Optional pixel size for scale bar
-    """
+    """Save debug image with optional scale bar - memory optimized"""
     out = folder / name
     
     if pixel_size_um is not None and pixel_size_um > 0:
@@ -403,16 +275,10 @@ def save_debug(
     else:
         img_to_save = img
     
-    # Use Unicode-safe write
-    success = safe_imwrite(out, img_to_save)
+    cv2.imwrite(str(out), img_to_save)
     
-    if not success:
-        print(f"[ERROR] Failed to save debug image: {name}")
-    
-    # Clean up large images
     if img_to_save.nbytes > 10_000_000:
         del img_to_save
-
 
 
 def list_sample_group_folders(source_dir: Path) -> list[Path]:
@@ -474,31 +340,14 @@ def get_pixel_size_um(
     xml_props_path: Optional[Path],
     xml_main_path: Optional[Path],
 ) -> Tuple[float, float]:
-    """Extract pixel size with detailed error reporting and Unicode support
-    
-    Args:
-        xml_props_path: Path to Properties XML file
-        xml_main_path: Path to main XML file
-        
-    Returns:
-        Tuple of (pixel_size_x, pixel_size_y) in micrometers
-        
-    Raises:
-        ValueError: If pixel size cannot be determined
-    """
+    """Extract pixel size with detailed error reporting"""
     
     errors = []
     
-    # Try Properties XML first
     if xml_props_path is not None:
         try:
-            tree = safe_xml_parse(xml_props_path)
-            if tree is None:
-                raise ValueError(f"Could not parse {xml_props_path.name}")
-            
+            tree = ET.parse(xml_props_path)
             root = tree.getroot()
-            if root is None:
-                raise ValueError(f"Empty XML document: {xml_props_path.name}")
 
             dims = root.findall(".//ImageDescription/Dimensions/DimensionDescription")
             by_id = {d.get("DimID"): d for d in dims}
@@ -534,16 +383,10 @@ def get_pixel_size_um(
         except Exception as e:
             errors.append(f"Properties XML ({xml_props_path.name}): {e}")
 
-    # Try main XML
     if xml_main_path is not None:
         try:
-            tree = safe_xml_parse(xml_main_path)
-            if tree is None:
-                raise ValueError(f"Could not parse {xml_main_path.name}")
-            
+            tree = ET.parse(xml_main_path)
             root = tree.getroot()
-            if root is None:
-                raise ValueError(f"Empty XML document: {xml_main_path.name}")
 
             dims = root.findall(".//ImageDescription/Dimensions/DimensionDescription")
             by_id = {d.get("DimID"): d for d in dims}
@@ -2541,17 +2384,7 @@ def display_configuration_summary(config: dict) -> None:
 # Image Processing
 # ==================================================
 def process_image(img_path: Path, output_root: Path) -> None:
-    """Process a single image - Unicode-safe version
-    
-    Args:
-        img_path: Path to input image
-        output_root: Root output directory
-    """
-    
-    # Validate path encoding
-    if not validate_path_encoding(img_path):
-        print(f"[ERROR] Cannot process image with problematic path: {img_path}")
-        return
+    """Process a single image"""
     
     xml_props, xml_main = find_metadata_paths(img_path)
     
@@ -2562,7 +2395,6 @@ def process_image(img_path: Path, output_root: Path) -> None:
     except Exception as e:
         if FALLBACK_UM_PER_PX is None:
             raise
-        print(f"[WARN] Using fallback pixel size for {img_path.name}: {e}")
         um_per_px_x = um_per_px_y = float(FALLBACK_UM_PER_PX)
 
     um_per_px_avg = (um_per_px_x + um_per_px_y) / 2.0
@@ -2570,10 +2402,9 @@ def process_image(img_path: Path, output_root: Path) -> None:
     img_out = output_root / img_path.stem
     ensure_dir(img_out)
 
-    # Use Unicode-safe imread
-    img = safe_imread(img_path, cv2.IMREAD_UNCHANGED)
+    img = cv2.imread(str(img_path), cv2.IMREAD_UNCHANGED)
     if img is None:
-        raise FileNotFoundError(f"Could not read image: {img_path}")
+        raise FileNotFoundError(str(img_path))
     if img.ndim == 3:
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
@@ -2638,8 +2469,7 @@ def process_image(img_path: Path, output_root: Path) -> None:
     vis_match: Optional[np.ndarray] = None
 
     if fluor_path.exists():
-        # Use Unicode-safe imread for fluorescence
-        fluor_img = safe_imread(fluor_path, cv2.IMREAD_UNCHANGED)
+        fluor_img = cv2.imread(str(fluor_path), cv2.IMREAD_UNCHANGED)
         if fluor_img is not None:
             fluor_img, (sy, sx) = align_fluorescence_channel(img, fluor_img)
             
@@ -2810,19 +2640,15 @@ def process_image(img_path: Path, output_root: Path) -> None:
                 ]
             )
 
-def open_folder(folder_path: Path) -> None:
-    """Open folder in file explorer (cross-platform, Unicode-safe)
-    
-    Args:
-        folder_path: Path to folder to open
-    """
+
+
+def open_folder(folder_path: Path):
+    """Open folder in file explorer (cross-platform)"""
     try:
         folder_str = str(folder_path.resolve())
         
         if platform.system() == 'Windows':
-            # Use os.startfile for better Unicode support on Windows
-            import os
-            os.startfile(folder_str)
+            subprocess.run(['explorer', folder_str])
         elif platform.system() == 'Darwin':  # macOS
             subprocess.run(['open', folder_str])
         else:  # Linux
@@ -2832,9 +2658,6 @@ def open_folder(folder_path: Path) -> None:
     except Exception as e:
         print(f"  ⚠ Could not open folder automatically: {e}")
         print(f"  Please open manually: {folder_path.resolve()}")
-
-
-
 
 def setup_output_directory(config: dict) -> Path:
     """Create and setup output directory structure with timestamp naming.
