@@ -2822,7 +2822,8 @@ def open_folder(folder_path: Path) -> None:
         if platform.system() == 'Windows':
             # Use os.startfile for better Unicode support on Windows
             import os
-            os.startfile(folder_str)
+            if hasattr(os, 'startfile'):
+                os.startfile(folder_str)  # type: ignore[attr-defined]
         elif platform.system() == 'Darwin':  # macOS
             subprocess.run(['open', folder_str])
         else:  # Linux
