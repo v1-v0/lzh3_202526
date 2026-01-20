@@ -156,11 +156,11 @@ class ClinicalResultsViewer:
         
         # Load button
         ttk.Button(toolbar, text="📁 Load Results", 
-                  command=self.load_results).pack(side=tk.LEFT, padx=2, pady=2)
+                command=self.load_results).pack(side=tk.LEFT, padx=2, pady=2)
         
         # Refresh button
         ttk.Button(toolbar, text="🔄 Refresh", 
-                  command=self.refresh_view).pack(side=tk.LEFT, padx=2, pady=2)
+                command=self.refresh_view).pack(side=tk.LEFT, padx=2, pady=2)
         
         # Separator
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=2)
@@ -171,7 +171,7 @@ class ClinicalResultsViewer:
         self.filter_var = tk.StringVar(value="All")
         filter_combo = ttk.Combobox(toolbar, textvariable=self.filter_var,
                                     values=["All", "POSITIVE", "NEGATIVE", 
-                                           "NO OBVIOUS BACTERIA", "MIXED/CONTRADICTORY"],
+                                        "NO OBVIOUS BACTERIA", "MIXED/CONTRADICTORY"],
                                     state="readonly", width=20)
         filter_combo.pack(side=tk.LEFT, padx=2)
         filter_combo.bind("<<ComboboxSelected>>", lambda e: self.apply_filter())
@@ -181,17 +181,27 @@ class ClinicalResultsViewer:
         
         # Export buttons
         ttk.Button(toolbar, text="💾 Export CSV", 
-                  command=self.export_csv).pack(side=tk.LEFT, padx=2, pady=2)
+                command=self.export_csv).pack(side=tk.LEFT, padx=2, pady=2)
         
         if REPORTLAB_AVAILABLE:
             ttk.Button(toolbar, text="📄 Export PDF", 
-                      command=self.export_pdf).pack(side=tk.LEFT, padx=2, pady=2)
+                    command=self.export_pdf).pack(side=tk.LEFT, padx=2, pady=2)
+        
+        # Separator
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=2)
+        
+        # Close button (NEW)
+        ttk.Button(toolbar, text="❌ Close", 
+                command=self.close_application).pack(side=tk.LEFT, padx=2, pady=2)
         
         # Dataset label (right side)
         self.dataset_label = ttk.Label(toolbar, text="No dataset loaded", 
-                                      style='Status.TLabel')
+                                    style='Status.TLabel')
         self.dataset_label.pack(side=tk.RIGHT, padx=10)
-    
+    def close_application(self):
+        """Close the application"""
+        self.root.quit()
+
     def create_main_panels(self):
         """Create main content area with panels"""
         # Main container with paned window
