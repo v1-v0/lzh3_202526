@@ -2819,11 +2819,10 @@ def open_folder(folder_path: Path) -> None:
     try:
         folder_str = str(folder_path.resolve())
         
-        if platform.system() == 'Windows':
+        if sys.platform == 'win32':
             # Use os.startfile for better Unicode support on Windows
-            import os
             os.startfile(folder_str)
-        elif platform.system() == 'Darwin':  # macOS
+        elif sys.platform == 'darwin':  # macOS
             subprocess.run(['open', folder_str])
         else:  # Linux
             subprocess.run(['xdg-open', folder_str])
