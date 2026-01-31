@@ -278,10 +278,86 @@ CLEAR_OUTPUT_DIR_EACH_RUN = True
 SEPARATE_OUTPUT_BY_GROUP = True
 FALLBACK_UM_PER_PX: Optional[float] = 0.109492
 
+# ==================================================
+# Bacteria-Specific Profiles
+# ==================================================
+BACTERIA_PROFILES = {
+    'proteus_mirabilis': {
+        'microgel_type': 'negative',
+        'name': 'Proteus mirabilis',
+        'gram_stain': 'negative',
+        'description': 'Highly motile, urease-positive, swarming behavior',
+        # Morphology considerations
+        'typical_size_um': (0.5, 2.0),  # Width x length range
+        'expected_shape': 'rod',
+        # Detection parameters
+        'area_adjustment_factor': 1.2,  # Swarming may create larger clusters
+        'threshold_sensitivity': 0.95,  # Standard sensitivity
+        'min_confidence_score': 0.7,
+    },
+    'klebsiella_pneumoniae': {
+        'microgel_type': 'negative',
+        'name': 'Klebsiella pneumoniae',
+        'gram_stain': 'negative',
+        'description': 'Encapsulated, non-motile, lactose-fermenting',
+        # Morphology considerations
+        'typical_size_um': (0.5, 2.0),
+        'expected_shape': 'rod',
+        # Detection parameters - capsule may shield binding
+        'area_adjustment_factor': 1.3,  # Thick capsule
+        'threshold_sensitivity': 0.90,  # Slightly reduced for capsule
+        'min_confidence_score': 0.65,
+    },
+    'streptococcus_mitis': {
+        'microgel_type': 'positive',
+        'name': 'Streptococcus mitis',
+        'gram_stain': 'positive',
+        'description': 'Alpha-hemolytic, cocci in chains',
+        # Morphology considerations
+        'typical_size_um': (0.5, 1.0),  # Smaller cocci
+        'expected_shape': 'coccus',
+        # Detection parameters
+        'area_adjustment_factor': 0.8,  # Smaller cells
+        'threshold_sensitivity': 1.0,  # Standard sensitivity
+        'min_confidence_score': 0.7,
+    },
+    'default': {
+        'microgel_type': 'negative',
+        'name': 'Unknown bacteria',
+        'gram_stain': 'unknown',
+        'description': 'Generic detection profile',
+        'typical_size_um': (0.5, 2.0),
+        'expected_shape': 'unknown',
+        'area_adjustment_factor': 1.0,
+        'threshold_sensitivity': 1.0,
+        'min_confidence_score': 0.7,
+    }
+}
+
+# Mapping for user-friendly selection
+BACTERIA_DISPLAY_OPTIONS = [
+    ('proteus_mirabilis', '1', 'Proteus mirabilis (G- rod, highly motile)'),
+    ('klebsiella_pneumoniae', '2', 'Klebsiella pneumoniae (G- rod, encapsulated)'),
+    ('streptococcus_mitis', '3', 'Streptococcus mitis (G+ coccus, chains)'),
+    ('default', '4', 'Unknown/Mixed bacteria (use adaptive detection)'),
+]
+
 
 # ==================================================
 # Helper Functions
 # ==================================================
+def normalize_group_folder_name(folder_name: str) -> str:
+    """Standardize group folder naming"""
+    name = folder_name.strip()
+    
+    # Control group: always "Control"
+    if name.lower() == 'control':
+        return "Control"
+    
+    # Numbered groups: keep as-is
+    return name
+
+
 def logged_input(prompt: str) -> str:
     """Input function that logs both prompt and user response"""
     print(prompt, end='', flush=True)
@@ -677,6 +753,191 @@ def save_debug_ids(
     """Save a labeled (Object_ID) version of an existing debug view."""
     labeled = draw_object_ids(img_bgr, accepted_contours, labels=object_ids)
     save_debug(folder, _ids_name(original_name), labeled, pixel_size_um)
+
+
+# ==================================================
+# Adaptive Thresholding System
+# ==================================================
+def calculate_adaptive_thresholds(
+    control_data: pd.DataFrame,
+    bacteria_profile: str = "default",
+    confidence_level: float = 0.95
+) -> Dict[str, Any]:
+    """
+    Calculate adaptive detection thresholds based on control statistics
+    and bacteria characteristics.
+    
+    Args:
+        control_data: DataFrame with Fluor_Density_per_BF_Area column
+        bacteria_profile: Key from BACTERIA_PROFILES
+        confidence_level: Statistical confidence (0.90, 0.95, or 0.99)
+        
+    Returns:
+        Dictionary with threshold values and metadata
+    """
+    
+    if 'Fluor_Density_per_BF_Area' not in control_data.columns:
+        raise ValueError("Control data missing Fluor_Density_per_BF_Area column")
+    
+    # Get profile
+    profile = BACTERIA_PROFILES.get(bacteria_profile, BACTERIA_PROFILES['default'])
+    
+    # Extract clean data
+    values = pd.to_numeric(
+        control_data['Fluor_Density_per_BF_Area'], 
+        errors='coerce'
+    ).dropna()
+    
+    if len(values) < 3:
+        print(f"[WARN] Insufficient control data (n={len(values)}), using fallback")
+        return {
+            'threshold_method': 'fallback',
+            'threshold_value': 0.0,
+            'confidence': 'low',
+            'use_default': True
+        }
+    
+    # Calculate base statistics
+    control_mean = float(values.mean())
+    control_std = float(values.std(ddof=1))
+    control_median = float(values.median())
+    
+    # Confidence interval multipliers
+    z_scores = {0.90: 1.645, 0.95: 1.96, 0.99: 2.576}
+    z = z_scores.get(confidence_level, 1.96)
+    
+    # Method 1: Standard deviation based (robust to outliers)
+    threshold_std = control_mean - (z * control_std)
+    
+    # Method 2: Percentile based (non-parametric)
+    threshold_percentile = float(values.quantile(0.05))
+    
+    # Method 3: Interquartile range (IQR) based (very robust)
+    q1 = float(values.quantile(0.25))
+    q3 = float(values.quantile(0.75))
+    iqr = q3 - q1
+    threshold_iqr = q1 - (1.5 * iqr)
+    
+    # Method 4: Bacteria-specific adjustment
+    sensitivity_factor = profile.get('threshold_sensitivity', 1.0)
+    threshold_bacteria = control_mean * (1 - (0.05 / sensitivity_factor))
+    
+    # Ensemble decision: use most conservative (lowest) threshold
+    candidate_thresholds = {
+        'std_based': threshold_std,
+        'percentile_based': threshold_percentile,
+        'iqr_based': threshold_iqr,
+        'bacteria_adjusted': threshold_bacteria,
+    }
+    
+    # Select final threshold (most conservative)
+    final_threshold = min(candidate_thresholds.values())
+    winning_method = min(candidate_thresholds.items(), key=lambda kv: kv[1])[0]
+    
+    # Calculate confidence score
+    threshold_spread = max(candidate_thresholds.values()) - min(candidate_thresholds.values())
+    spread_ratio = threshold_spread / control_mean if control_mean > 0 else 1.0
+    
+    if spread_ratio < 0.1:
+        confidence = 'high'
+    elif spread_ratio < 0.3:
+        confidence = 'medium'
+    else:
+        confidence = 'low'
+    
+    # Compile results
+    result = {
+        'threshold_method': winning_method,
+        'threshold_value': final_threshold,
+        'control_mean': control_mean,
+        'control_std': control_std,
+        'control_median': control_median,
+        'control_n': len(values),
+        'confidence': confidence,
+        'confidence_level': confidence_level,
+        'bacteria_profile': bacteria_profile,
+        'bacteria_name': profile['name'],
+        'all_thresholds': candidate_thresholds,
+        'threshold_spread': threshold_spread,
+        'use_default': False,
+    }
+    
+    return result
+
+
+def apply_adaptive_classification(
+    group_mean: float,
+    threshold_result: Dict[str, Any],
+    bacteria_profile: str = "default"
+) -> Dict[str, Any]:
+    """
+    Classify a group using adaptive thresholds with confidence scoring.
+    
+    Args:
+        group_mean: Mean fluorescence density for the group
+        threshold_result: Output from calculate_adaptive_thresholds
+        bacteria_profile: Bacteria profile key
+        
+    Returns:
+        Dictionary with classification and confidence
+    """
+    
+    profile = BACTERIA_PROFILES.get(bacteria_profile, BACTERIA_PROFILES['default'])
+    threshold = threshold_result['threshold_value']
+    control_mean = threshold_result['control_mean']
+    control_std = threshold_result['control_std']
+    
+    # Calculate distance from control in standard deviations
+    if control_std > 0:
+        z_score = (group_mean - control_mean) / control_std
+    else:
+        z_score = 0.0
+    
+    # Calculate confidence score
+    distance_from_threshold = abs(group_mean - threshold)
+    normalized_distance = distance_from_threshold / control_mean if control_mean > 0 else 0.0
+    
+    # Confidence increases with distance from threshold
+    if normalized_distance > 0.2:
+        detection_confidence = 'high'
+        confidence_score = min(0.95, 0.7 + normalized_distance)
+    elif normalized_distance > 0.1:
+        detection_confidence = 'medium'
+        confidence_score = min(0.85, 0.6 + normalized_distance)
+    else:
+        detection_confidence = 'low'
+        confidence_score = min(0.75, 0.5 + normalized_distance)
+    
+    # Classification decision
+    if group_mean < threshold:
+        # Below threshold = bacteria detected
+        if profile['microgel_type'] == 'negative':
+            classification = "NEGATIVE"
+            interpretation = f"Gram-negative bacteria detected ({profile['name']})"
+        else:
+            classification = "POSITIVE"
+            interpretation = f"Gram-positive bacteria detected ({profile['name']})"
+    else:
+        # Above threshold = no bacteria
+        if profile['microgel_type'] == 'negative':
+            classification = "POSITIVE/No obvious bacteria"
+            interpretation = "No obvious bacteria"
+        else:
+            classification = "NEGATIVE/No obvious bacteria"
+            interpretation = "No obvious bacteria"
+    
+    return {
+        'classification': classification,
+        'interpretation': interpretation,
+        'confidence': detection_confidence,
+        'confidence_score': confidence_score,
+        'z_score': z_score,
+        'distance_from_threshold': distance_from_threshold,
+        'group_mean': group_mean,
+        'threshold_used': threshold,
+    }
+
+
 
 
 # ==================================================
@@ -1264,7 +1525,9 @@ def embed_comparison_plots_into_all_excels(
 
 def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -> None:
     """Consolidate all CSVs in a group folder into one Excel workbook"""
-    csv_files = list(output_dir.glob("*/object_stats.csv"))
+    group_name = normalize_group_folder_name(group_name)
+    
+    csv_files = list(output_dir.glob("*/object_stats.csv"))    
 
     if not csv_files:
         print(f"[WARN] No CSV files found in {output_dir}")
@@ -1777,10 +2040,14 @@ def export_group_statistics_to_csv(output_root: Path) -> None:
 def classify_groups_clinical(
     output_root: Path, 
     microgel_type: str = "negative",
-    threshold_pct: float = 0.05
+    threshold_pct: float = 0.05,
+    bacteria_profile: str = "default",
+    threshold_mode: str = "adaptive",
+    confidence_level: float = 0.95
 ) -> pd.DataFrame:
-    """Classify all groups based on clinical thresholds."""
+    """Classify all groups - Enhanced with adaptive thresholding."""
     
+    # Load control data
     control_mean: Optional[float] = None
     control_std: Optional[float] = None
     control_folder = None
@@ -1791,10 +2058,12 @@ def classify_groups_clinical(
             break
     
     if control_folder is None:
+        print("[WARN] No control folder found")
         return pd.DataFrame()
     
     control_master = control_folder / f"{control_folder.name}_master.xlsx"
     if not control_master.exists():
+        print(f"[WARN] Control master file not found: {control_master.name}")
         return pd.DataFrame()
     
     try:
@@ -1802,42 +2071,91 @@ def classify_groups_clinical(
         df_control = pd.read_excel(control_master, sheet_name=typical_sheet)
         
         if "Fluor_Density_per_BF_Area" not in df_control.columns:
+            print("[WARN] Missing Fluor_Density_per_BF_Area in control data")
             return pd.DataFrame()
         
-        control_values = pd.to_numeric(df_control["Fluor_Density_per_BF_Area"], errors='coerce').dropna()
-        control_mean = float(control_values.mean())
-        control_std = float(control_values.std(ddof=1))
+        control_values = pd.to_numeric(
+            df_control["Fluor_Density_per_BF_Area"], 
+            errors='coerce'
+        ).dropna()
         
-    except Exception:
+        if len(control_values) < 3:
+            print(f"[WARN] Insufficient control data (n={len(control_values)})")
+            return pd.DataFrame()
+        
+        # Calculate thresholds based on mode
+        if threshold_mode == 'adaptive':
+            print(f"\n  Using ADAPTIVE thresholding:")
+            print(f"    Bacteria profile: {BACTERIA_PROFILES[bacteria_profile]['name']}")
+            print(f"    Confidence level: {confidence_level*100:.0f}%")
+            
+            threshold_result = calculate_adaptive_thresholds(
+                df_control,
+                bacteria_profile=bacteria_profile,
+                confidence_level=confidence_level
+            )
+            
+            threshold = threshold_result['threshold_value']
+            control_mean = threshold_result['control_mean']
+            control_std = threshold_result['control_std']
+            
+            print(f"\n    Control statistics:")
+            print(f"      Mean: {control_mean:.2f}")
+            print(f"      Std Dev: {control_std:.2f}")
+            print(f"      Median: {threshold_result['control_median']:.2f}")
+            print(f"\n    Adaptive threshold: {threshold:.2f}")
+            print(f"      Method: {threshold_result['threshold_method']}")
+            print(f"      Confidence: {threshold_result['confidence']}")
+            print(f"\n    All calculated thresholds:")
+            for method, value in threshold_result['all_thresholds'].items():
+                marker = "←" if method == threshold_result['threshold_method'] else ""
+                print(f"      {method}: {value:.2f} {marker}")
+        
+        else:
+            # Fixed threshold mode
+            control_mean = float(control_values.mean())
+            control_std = float(control_values.std(ddof=1))
+            threshold = control_mean * (1 - threshold_pct)
+            
+            threshold_result = {
+                'threshold_value': threshold,
+                'control_mean': control_mean,
+                'control_std': control_std,
+                'threshold_method': 'fixed_percentage',
+                'confidence': 'user_defined'
+            }
+            
+            print(f"\n  Using FIXED thresholding:")
+            print(f"    Control mean: {control_mean:.2f}")
+            print(f"    Threshold: {threshold:.2f} ({threshold_pct*100:.1f}% below control)")
+        
+    except Exception as e:
+        print(f"[ERROR] Could not load control data: {e}")
         return pd.DataFrame()
     
-    if control_mean is None:
-        return pd.DataFrame()
-    
-    # Calculate threshold (same for both types: BELOW control mean)
-    threshold = control_mean * (1 - threshold_pct)
-    
+    # Classify all groups
     results = []
     
-    # ✅ FIX: Add Control group to results FIRST
+    # Add control group
     results.append({
         'Group': 'Control',
         'N': len(control_values),
-        'Mean': round(control_mean, 2),
-        'Std_Dev': round(control_std, 2),
-        'Control_Mean': round(control_mean, 2),
-        'Threshold': round(threshold, 2),
+        'Mean': round(control_mean, 2) if control_mean is not None else 0.0,
+        'Std_Dev': round(control_std, 2) if control_std is not None else 0.0,
+        'Control_Mean': round(control_mean, 2) if control_mean is not None else 0.0,
+        'Threshold': round(threshold, 2) if threshold is not None else 0.0,
+        'Threshold_Method': threshold_result.get('threshold_method', 'unknown'),
         'Diff_from_Threshold': 0.0,
-        'Diff_from_Control': 0.0,
-        'Pct_Diff_from_Control': 0.0,
-        'Classification': 'CONTROL/Reference',  # Special classification for control
+        'Z_Score': 0.0,
+        'Classification': 'CONTROL/Reference',
+        'Confidence': 'reference',
+        'Confidence_Score': 1.0,
     })
     
     # Process test groups
     for excel_path in sorted(output_root.glob("*/*_master.xlsx")):
         group_name = excel_path.parent.name
         
-        # ✅ Skip control (already added above)
         if group_name.lower().startswith("control"):
             continue
         
@@ -1848,7 +2166,10 @@ def classify_groups_clinical(
             if "Fluor_Density_per_BF_Area" not in df.columns:
                 continue
             
-            values = pd.to_numeric(df["Fluor_Density_per_BF_Area"], errors='coerce').dropna()
+            values = pd.to_numeric(
+                df["Fluor_Density_per_BF_Area"], 
+                errors='coerce'
+            ).dropna()
             
             if values.empty:
                 continue
@@ -1857,50 +2178,38 @@ def classify_groups_clinical(
             std_val = float(values.std(ddof=1))
             n = len(values)
             
-            # Classification logic - SAME threshold, different labels
-            if mean_val < threshold:
-                # Below threshold = bacteria detected
-                if microgel_type.lower() == "negative":
-                    classification = "NEGATIVE"
-                    bacteria_status = "Gram-negative bacteria detected"
-                else:
-                    classification = "POSITIVE"
-                    bacteria_status = "Gram-positive bacteria detected"
-            else:
-                # Above/equal threshold = no bacteria
-                if microgel_type.lower() == "negative":
-                    classification = "POSITIVE/No obvious bacteria"
-                    bacteria_status = "No obvious bacteria"
-                else:
-                    classification = "NEGATIVE/No obvious bacteria"
-                    bacteria_status = "No obvious bacteria"
-            
-            diff_from_threshold = mean_val - threshold
-            diff_from_control = mean_val - control_mean
-            pct_diff_from_control = (diff_from_control / control_mean) * 100
+            # Apply adaptive classification
+            class_result = apply_adaptive_classification(
+                mean_val,
+                threshold_result,
+                bacteria_profile
+            )
             
             results.append({
                 'Group': group_name,
                 'N': n,
                 'Mean': round(mean_val, 2),
                 'Std_Dev': round(std_val, 2),
-                'Control_Mean': round(control_mean, 2),
+                'Control_Mean': round(control_mean, 2) if control_mean is not None else 0.0,
                 'Threshold': round(threshold, 2),
-                'Diff_from_Threshold': round(diff_from_threshold, 2),
-                'Diff_from_Control': round(diff_from_control, 2),
-                'Pct_Diff_from_Control': round(pct_diff_from_control, 1),
-                'Classification': classification,
+                'Threshold_Method': threshold_result.get('threshold_method', 'unknown'),
+                'Diff_from_Threshold': round(class_result['distance_from_threshold'], 2),
+                'Z_Score': round(class_result['z_score'], 2),
+                'Classification': class_result['classification'],
+                'Confidence': class_result['confidence'],
+                'Confidence_Score': round(class_result['confidence_score'], 2),
             })
             
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[WARN] Could not classify {group_name}: {e}")
+            continue
     
     if not results:
         return pd.DataFrame()
     
     results_df = pd.DataFrame(results)
     
-    # ✅ FIX: Sort with Control last
+    # Sort: Control last
     results_df['sort_key'] = results_df['Group'].apply(
         lambda x: (1, 999) if x == 'Control' else (0, int(x) if x.isdigit() else 999)
     )
@@ -1912,17 +2221,20 @@ def classify_groups_clinical(
 def export_clinical_classification(
     output_root: Path,
     classification_df: pd.DataFrame,
-    microgel_type: str = "negative"
+    microgel_type: str = "negative",
+    bacteria_profile: str = "default"
 ) -> Optional[Path]:
-    """Export clinical classification results to CSV with color coding"""
+    """Export clinical classification - Enhanced with confidence scores"""
     
     if classification_df.empty:
         return None
     
-    csv_path = output_root / f"clinical_classification_{microgel_type}.csv"
+    profile = BACTERIA_PROFILES.get(bacteria_profile, BACTERIA_PROFILES['default'])
+    
+    csv_path = output_root / f"clinical_classification_{microgel_type}_{bacteria_profile}.csv"
     classification_df.to_csv(csv_path, index=False)
     
-    excel_path = output_root / f"clinical_classification_{microgel_type}.xlsx"
+    excel_path = output_root / f"clinical_classification_{microgel_type}_{bacteria_profile}.xlsx"
     
     try:
         from openpyxl.styles import PatternFill, Font, Alignment
@@ -1933,33 +2245,55 @@ def export_clinical_classification(
             
             ws = writer.sheets['Classification']
             
+            # Color definitions
             header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
             safe_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
             warning_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+            medium_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+            low_conf_fill = PatternFill(start_color="F4B084", end_color="F4B084", fill_type="solid")
+            
             header_font = Font(bold=True, color="FFFFFF")
             center_align = Alignment(horizontal="center", vertical="center")
             
+            # Format header
             for cell in ws[1]:
                 cell.fill = header_fill
                 cell.font = header_font
                 cell.alignment = center_align
             
+            # Format data rows with confidence-aware coloring
             for row_idx in range(len(classification_df)):
                 excel_row = row_idx + 2
                 row_data = classification_df.iloc[row_idx]
                 
-                if "NEGATIVE" in row_data['Classification'] or "POSITIVE" in row_data['Classification']:
-                    if "No obvious bacteria" in row_data['Classification']:
+                # Determine fill based on classification AND confidence
+                classification = row_data['Classification']
+                confidence = row_data.get('Confidence', 'medium')
+                
+                if 'CONTROL' in classification:
+                    fill = PatternFill(start_color="E7E6E6", end_color="E7E6E6", fill_type="solid")
+                elif "No obvious bacteria" in classification:
+                    if confidence == 'high':
                         fill = safe_fill
+                    elif confidence == 'medium':
+                        fill = medium_fill
                     else:
-                        fill = warning_fill
+                        fill = low_conf_fill
                 else:
-                    fill = safe_fill
+                    # Bacteria detected
+                    if confidence == 'high':
+                        fill = warning_fill
+                    elif confidence == 'medium':
+                        fill = medium_fill
+                    else:
+                        fill = low_conf_fill
                 
                 for col_idx in range(1, len(classification_df.columns) + 1):
-                    ws.cell(row=excel_row, column=col_idx).fill = fill
-                    ws.cell(row=excel_row, column=col_idx).alignment = Alignment(horizontal="center")
+                    cell = ws.cell(row=excel_row, column=col_idx)
+                    cell.fill = fill
+                    cell.alignment = Alignment(horizontal="center")
             
+            # Auto-width columns
             for column in ws.columns:
                 max_length = 0
                 column_letter = get_column_letter(column[0].column)
@@ -1971,11 +2305,51 @@ def export_clinical_classification(
                         pass
                 adjusted_width = min((max_length + 2) * 1.1, 50)
                 ws.column_dimensions[column_letter].width = adjusted_width
+            
+            # Add metadata sheet
+            metadata = pd.DataFrame({
+                'Parameter': [
+                    'Bacteria Profile',
+                    'Bacteria Name',
+                    'Gram Stain',
+                    'Microgel Type',
+                    'Description',
+                    'Detection Method',
+                    'Typical Size (μm)',
+                    'Expected Shape',
+                ],
+                'Value': [
+                    bacteria_profile,
+                    profile['name'],
+                    profile['gram_stain'],
+                    profile['microgel_type'],
+                    profile['description'],
+                    'Adaptive Thresholding',
+                    f"{profile['typical_size_um'][0]} - {profile['typical_size_um'][1]}",
+                    profile['expected_shape'],
+                ]
+            })
+            
+            metadata.to_excel(writer, sheet_name='Detection_Parameters', index=False)
+            ws_meta = writer.sheets['Detection_Parameters']
+            
+            for cell in ws_meta[1]:
+                cell.fill = header_fill
+                cell.font = header_font
+            
+            ws_meta.column_dimensions['A'].width = 25
+            ws_meta.column_dimensions['B'].width = 50
         
-    except Exception:
-        pass
-    
-    return csv_path
+        print(f"\n  ✓ Classification saved: {excel_path.name}")
+        print(f"    Bacteria: {profile['name']}")
+        print(f"    Method: Adaptive thresholding")
+        
+        return excel_path
+        
+    except Exception as e:
+        print(f"[ERROR] Could not create Excel: {e}")
+        return None
+
 
 def generate_final_clinical_matrix(
     output_root: Path,
@@ -2301,9 +2675,8 @@ def select_source_directory(max_depth=2) -> Optional[Path]:
         else:
             print("Invalid selection. Please enter a valid number or folder name.")
 
-
 def collect_configuration() -> dict:
-    """Collect all user configuration upfront
+    """Collect all user configuration upfront - Enhanced with bacteria selection
     
     Returns:
         dict: Configuration dictionary with all user settings
@@ -2321,7 +2694,7 @@ def collect_configuration() -> dict:
     
     # Step 1: Source Directory
     print("━" * 80)
-    print("STEP 1/4: Select Source Directory")
+    print("STEP 1/5: Select Source Directory")
     print("━" * 80)
     config['source_dir'] = select_source_directory()
     if config['source_dir'] is None:
@@ -2335,7 +2708,6 @@ def collect_configuration() -> dict:
     has_gminus = gminus_path.is_dir()
     
     if has_gplus and has_gminus:
-        # Batch mode detected
         config['batch_mode'] = True
         config['dataset_base_name'] = config['source_dir'].name
         config['subdirs'] = []
@@ -2346,178 +2718,196 @@ def collect_configuration() -> dict:
         print(f"    → {config['dataset_base_name']}/G+ (Gram-positive)")
         print(f"    → {config['dataset_base_name']}/G- (Gram-negative)")
         
-        # Store subdirectory configurations with safe filenames
         config['subdirs'].append({
             'path': gplus_path,
             'microgel_type': 'positive',
             'label': 'G+',
-            'safe_label': 'Positive'  # For filenames
+            'safe_label': 'Positive'
         })
         config['subdirs'].append({
             'path': gminus_path,
             'microgel_type': 'negative',
             'label': 'G-',
-            'safe_label': 'Negative'  # For filenames
+            'safe_label': 'Negative'
         })
         
     else:
-        # Single mode
         config['batch_mode'] = False
+        config['dataset_base_name'] = None
         
-        # Try to detect microgel type from directory structure or name
-        if has_gplus:
-            config['microgel_type'] = "positive"
-            detected_type = "Positive (G+)"
-        elif has_gminus:
-            config['microgel_type'] = "negative"
-            detected_type = "Negative (G-)"
-        elif 'G+' in config['source_dir'].name.upper():
-            config['microgel_type'] = "positive"
-            detected_type = "Positive (G+)"
-        elif 'G-' in config['source_dir'].name.upper():
-            config['microgel_type'] = "negative"
-            detected_type = "Negative (G-)"
-        else:
-            # Ask user
-            print("\n⚠ Could not auto-detect microgel type")
-            print("\nSelect microgel type:")
-            print("  [1] Positive microgel (G+)")
-            print("  [2] Negative microgel (G-)")
-            
-            while True:
-                mg_choice = logged_input("Enter number: ").strip()
-                if mg_choice == "1":
-                    config['microgel_type'] = "positive"
-                    detected_type = "Positive (G+)"
-                    break
-                elif mg_choice == "2":
-                    config['microgel_type'] = "negative"
-                    detected_type = "Negative (G-)"
-                    break
-                else:
-                    print("Invalid choice. Enter 1 or 2.")
+        # Detect microgel type from folder structure
+        has_control = any(
+            d.name.lower().startswith('control') 
+            for d in config['source_dir'].iterdir() 
+            if d.is_dir()
+        )
         
-        print(f"  Microgel type: {detected_type}")
+        if not has_control:
+            print("\n⚠ No Control folder found in source directory")
+            print("  A Control folder is required for processing")
+            raise SystemExit("Missing Control folder")
     
-    # Step 2: Dataset ID
+    # Step 2: Bacteria Type Selection
     print("\n" + "━" * 80)
-    print("STEP 2/4: Dataset Identifier")
+    print("STEP 2/5: Expected Bacteria Type")
+    print("━" * 80)
+    print("\nSelect expected bacteria for optimized detection:")
+    print("(This will auto-tune thresholds and validation)")
+    print()
+    
+    for key, num, desc in BACTERIA_DISPLAY_OPTIONS:
+        print(f"  [{num}] {desc}")
+    
+    print("\n  → Press Enter to use adaptive detection (recommended for unknown samples)")
+    
+    while True:
+        bacteria_choice = logged_input("\nEnter number: ").strip()
+        
+        if bacteria_choice == "":
+            config['bacteria_profile'] = 'default'
+            print("  Using adaptive detection mode")
+            break
+        
+        # Find matching profile
+        selected_profile = None
+        for key, num, desc in BACTERIA_DISPLAY_OPTIONS:
+            if bacteria_choice == num:
+                selected_profile = key
+                break
+        
+        if selected_profile:
+            config['bacteria_profile'] = selected_profile
+            profile = BACTERIA_PROFILES[selected_profile]
+            print(f"\n  ✓ Selected: {profile['name']}")
+            print(f"    Gram stain: {profile['gram_stain']}")
+            print(f"    Description: {profile['description']}")
+            
+            # Auto-set microgel type if not batch mode
+            if not config.get('batch_mode', False):
+                config['microgel_type'] = profile['microgel_type']
+                print(f"    Auto-selected: {profile['microgel_type']} microgel")
+            
+            break
+        else:
+            print("  Invalid selection. Please enter 1-4 or press Enter.")
+    
+    # Step 3: Dataset ID
+    print("\n" + "━" * 80)
+    print("STEP 3/5: Dataset Identifier")
     print("━" * 80)
     
     if config.get('batch_mode', False):
-        print(f"\nEnter base dataset identifier:")
-        print(f"  Current folder: '{config['dataset_base_name']}'")
-        print(f"  Will create: '[your_id] Positive' and '[your_id] Negative'")
-        print(f"  Example: '{config['dataset_base_name']}'")
-        print(f"  → Press Enter to use folder name: '{config['dataset_base_name']}'")
+        # Batch mode: ask for base ID
+        print("\nEnter base dataset identifier:")
+        print(f"  Example: 'v48_PD' will create:")
+        print(f"    - v48_PD Positive")
+        print(f"    - v48_PD Negative")
+        
+        while True:
+            dataset_id_base = logged_input("\nDataset base ID: ").strip()
+            if dataset_id_base:
+                config['dataset_id_base'] = dataset_id_base
+                print(f"  ✓ Base ID: {dataset_id_base}")
+                break
+            else:
+                print("  Dataset ID cannot be empty")
     else:
+        # Single mode: ask for full ID
         print("\nEnter dataset identifier:")
-        print(f"  Example: 'PD Negative', 'Spike Positive'")
-        print(f"  → Press Enter to use timestamp")
-    
-    while True:
-        dataset_id = logged_input("Dataset label: ").strip()
+        print(f"  Example: 'v48_PD_Sample1'")
         
-        if dataset_id == "":
-            if config.get('batch_mode', False):
-                config['dataset_id_base'] = config['dataset_base_name']
-                print(f"  Using folder name: {config['dataset_base_name']}")
-            else:
-                timestamp_label = datetime.now().strftime("%Y%m%d_%H%M%S")
-                config['dataset_id'] = timestamp_label
-                print(f"  Using timestamp: {timestamp_label}")
-            break
-        
-        if len(dataset_id) > 50:
-            print("  Too long (max 50 characters)")
-            continue
-        
-        invalid_chars = set('<>:"|?*\\/')
-        found_invalid = [c for c in dataset_id if c in invalid_chars]
-        if found_invalid:
-            print(f"  Invalid characters: {', '.join(repr(c) for c in set(found_invalid))}")
-            continue
-        
-        if config.get('batch_mode', False):
-            print(f"  → Will create:")
-            print(f"     • '{dataset_id} Positive'")
-            print(f"     • '{dataset_id} Negative'")
-            confirm = logged_input(f"  → Confirm? (y/n, Enter=yes): ").strip().lower()
-        else:
-            confirm = logged_input(f"  → Confirm '{dataset_id}'? (y/n, Enter=yes): ").strip().lower()
-        
-        if confirm in ["", "y", "yes"]:
-            if config.get('batch_mode', False):
-                config['dataset_id_base'] = dataset_id
-                print(f"  Confirmed: {dataset_id}")
-            else:
+        while True:
+            dataset_id = logged_input("\nDataset ID: ").strip()
+            if dataset_id:
                 config['dataset_id'] = dataset_id
-                print(f"  Confirmed: {dataset_id}")
-            break
+                print(f"  ✓ Dataset ID: {dataset_id}")
+                break
+            else:
+                print("  Dataset ID cannot be empty")
     
-    # Step 3: Percentile
+    # Step 4: Percentile
     print("\n" + "━" * 80)
-    print("STEP 3/4: Percentile for Top/Bottom Filtering")
+    print("STEP 4/5: Percentile for Top/Bottom Filtering")
     print("━" * 80)
-    print("\nEnter threshold percentage:")
-    print("  → Default: 30% (recommended)")
-    print("  → Range: 1-40%")
-
-    while True:
-        choice = logged_input("Threshold (% or Enter for 30%): ").strip()
-        
-        if choice == "":
-            config['percentile'] = 0.3
-            print("  Using default: 30%")
-            break
-        else:
-            try:
-                value = float(choice)
-                if 1 <= value <= 40:
-                    config['percentile'] = value / 100
-                    print(f"  Selected: {value}%")
-                    break
-                else:
-                    print("Invalid input. Enter a number between 1 and 40, or press Enter.")
-            except ValueError:
-                print("Invalid input. Enter a number between 1 and 40, or press Enter.")
-    
-    # Step 4: Clinical Classification Threshold
-    print("\n" + "━" * 80)
-    print("STEP 4/4: Clinical Classification Threshold")
-    print("━" * 80)
-    print("\nEnter threshold percentage:")
-    print("  → Default: 5% (recommended)")
-    print("  → Range: 1-20%")
+    print("\nEnter percentile to exclude from top and bottom:")
+    print("  → Default: 20% (excludes top 20% and bottom 20%)")
+    print("  → Range: 0-40%")
+    print("  → Enter 0 to include all particles")
     
     while True:
-        choice = logged_input("Threshold (% or Enter for 5%): ").strip()
+        percentile_input = logged_input("\nPercentile (%): ").strip()
         
-        if choice == "":
-            config['threshold_pct'] = 0.05
-            print("  Using default: 5%")
+        if percentile_input == "":
+            config['percentile'] = 0.20
+            print("  Using default: 20%")
             break
         
         try:
-            value = float(choice)
+            value = float(percentile_input)
             if value > 1:
                 value = value / 100
             
-            if 0.01 <= value <= 0.20:
-                config['threshold_pct'] = value
-                print(f"  Threshold set: {value*100:.1f}%")
+            if 0 <= value <= 0.40:
+                config['percentile'] = value
+                print(f"  Percentile: {value*100:.0f}%")
                 break
             else:
-                print("  Must be between 1% and 20%")
+                print("  Must be between 0-40%")
         except ValueError:
-            print("  Please enter a valid number")
+            print("  Invalid number")
+    
+    # Step 5: Clinical Threshold
+    print("\n" + "━" * 80)
+    print("STEP 5/5: Clinical Classification Method")
+    print("━" * 80)
+    print("\nChoose threshold calculation method:")
+    print("  [1] Adaptive (recommended) - Auto-calculates from control data")
+    print("  [2] Fixed percentage - Manual threshold setting")
+    print()
+    
+    method_choice = logged_input("Enter number (Enter=Adaptive): ").strip()
+    
+    if method_choice == "2":
+        # Fixed threshold mode
+        config['threshold_mode'] = 'fixed'
+        print("\nEnter threshold percentage:")
+        print("  → Default: 5%")
+        print("  → Range: 1-20%")
+        
+        while True:
+            choice = logged_input("Threshold (%): ").strip()
+            if choice == "":
+                config['threshold_pct'] = 0.05
+                print("  Using default: 5%")
+                break
+            try:
+                value = float(choice)
+                if value > 1:
+                    value = value / 100
+                if 0.01 <= value <= 0.20:
+                    config['threshold_pct'] = value
+                    print(f"  Threshold: {value*100:.1f}%")
+                    break
+                else:
+                    print("  Must be 1-20%")
+            except ValueError:
+                print("  Invalid number")
+    else:
+        # Adaptive mode1
+        config['threshold_mode'] = 'adaptive'
+        config['confidence_level'] = 0.95
+        config['threshold_pct'] = 0.05  # Fallback value
+        print("  ✓ Using adaptive thresholding")
+        print("    - Calculates optimal threshold from control statistics")
+        print("    - Adjusts for bacteria-specific characteristics")
+        print("    - Confidence level: 95%")
     
     return config
 
 
 
 def display_configuration_summary(config: dict) -> None:
-    """Display configuration summary before processing"""
+    """Display configuration summary - Enhanced"""
     print("\n" + "="*80)
     print("CONFIGURATION SUMMARY")
     print("="*80 + "\n")
@@ -2526,19 +2916,30 @@ def display_configuration_summary(config: dict) -> None:
         print(f"Mode: BATCH PROCESSING")
         print(f"1. Base Directory: {config['source_dir']}")
         print(f"2. Dataset Base ID: {config.get('dataset_id_base', 'N/A')}")
+        print(f"3. Bacteria Profile: {BACTERIA_PROFILES[config['bacteria_profile']]['name']}")  # NEW
         print(f"   → Processing:")
         for subdir in config['subdirs']:
             dataset_name = f"{config.get('dataset_id_base', '')} {subdir['safe_label']}"
             print(f"     • {subdir['label']}: {dataset_name}")
-        print(f"3. Percentile: {config['percentile']*100:.0f}%")
-        print(f"4. Clinical Threshold: {config['threshold_pct']*100:.1f}%")
+        print(f"4. Percentile: {config['percentile']*100:.0f}%")
+        print(f"5. Threshold Mode: {config.get('threshold_mode', 'adaptive').upper()}")  # NEW
+        if config.get('threshold_mode') == 'fixed':
+            print(f"   Fixed threshold: {config['threshold_pct']*100:.1f}%")
+        else:
+            print(f"   Confidence level: {config.get('confidence_level', 0.95)*100:.0f}%")
     else:
         print(f"Mode: SINGLE PROCESSING")
         print(f"1. Source Directory: {config['source_dir']}")
         print(f"2. Dataset ID: {config['dataset_id']}")
-        print(f"3. Percentile: {config['percentile']*100:.0f}%")
-        print(f"4. Microgel Type: {config['microgel_type'].capitalize()}")
-        print(f"5. Clinical Threshold: {config['threshold_pct']*100:.1f}%")
+        print(f"3. Bacteria Profile: {BACTERIA_PROFILES[config['bacteria_profile']]['name']}")  # NEW
+        print(f"   Gram stain: {BACTERIA_PROFILES[config['bacteria_profile']]['gram_stain']}")  # NEW
+        print(f"4. Percentile: {config['percentile']*100:.0f}%")
+        print(f"5. Microgel Type: {config['microgel_type'].capitalize()}")
+        print(f"6. Threshold Mode: {config.get('threshold_mode', 'adaptive').upper()}")  # NEW
+        if config.get('threshold_mode') == 'fixed':
+            print(f"   Fixed threshold: {config['threshold_pct']*100:.1f}%")
+        else:
+            print(f"   Adaptive with {config.get('confidence_level', 0.95)*100:.0f}% confidence")
     
     print("\n" + "="*80 + "\n")
     
@@ -2548,7 +2949,6 @@ def display_configuration_summary(config: dict) -> None:
         raise SystemExit("Configuration cancelled by user.")
     
     print("\nConfiguration confirmed - starting processing...\n")
-
 
 
 # ==================================================
@@ -2581,7 +2981,14 @@ def process_image(img_path: Path, output_root: Path) -> None:
 
     um_per_px_avg = (um_per_px_x + um_per_px_y) / 2.0
 
-    img_out = output_root / img_path.stem
+    original_folder_name = img_path.parent.name
+    if original_folder_name.lower().strip() == 'control':
+        normalized_folder_name = "Control"  # Standardize to "Control"
+    else:
+        normalized_folder_name = original_folder_name
+    
+    img_out = output_root / normalized_folder_name
+
     ensure_dir(img_out)
 
     # Use Unicode-safe imread
@@ -3003,6 +3410,9 @@ def process_single_dataset(config: dict) -> dict:
         dataset_id = config['dataset_id']
         percentile = config['percentile']
         microgel_type = config['microgel_type']
+        bacteria_profile = config.get('bacteria_profile', 'default')  # NEW
+        threshold_mode = config.get('threshold_mode', 'adaptive')  # NEW
+        confidence_level = config.get('confidence_level', 0.95)  # NEW
         threshold_pct = config['threshold_pct']
         
         # Setup output directory
@@ -3145,14 +3555,18 @@ def process_single_dataset(config: dict) -> dict:
         classification_df = classify_groups_clinical(
             output_dir,
             microgel_type=microgel_type,
-            threshold_pct=threshold_pct
+            threshold_pct=threshold_pct,
+            bacteria_profile=bacteria_profile,
+            threshold_mode=threshold_mode,
+            confidence_level=confidence_level
         )
         
         if not classification_df.empty:
             export_clinical_classification(
                 output_dir,
                 classification_df,
-                microgel_type=microgel_type
+                microgel_type=microgel_type,
+                bacteria_profile=bacteria_profile
             )
             print("  Classification complete")
         else:
@@ -3582,10 +3996,13 @@ def main():
                 gplus_output = output_dir / "Positive"
                 gminus_output = output_dir / "Negative"
                 
-                gplus_csv_path = gplus_output / "clinical_classification_positive.csv"
-                gminus_csv_path = gminus_output / "clinical_classification_negative.csv"
-                
-                if gplus_csv_path.exists() and gminus_csv_path.exists():
+                gplus_csv_files = list(gplus_output.glob("clinical_classification_positive*.csv"))
+                gminus_csv_files = list(gminus_output.glob("clinical_classification_negative*.csv"))
+
+                gplus_csv_path = gplus_csv_files[0] if gplus_csv_files else None
+                gminus_csv_path = gminus_csv_files[0] if gminus_csv_files else None
+
+                if gplus_csv_path and gminus_csv_path:
                     print("\n  Loading classification results...")
                     gplus_df = pd.read_csv(gplus_csv_path)
                     gminus_df = pd.read_csv(gminus_csv_path)
@@ -3605,10 +4022,10 @@ def main():
                         print("\n⚠ Could not generate final matrix")
                 else:
                     print("\n⚠ Missing classification files - cannot generate final matrix")
-                    if not gplus_csv_path.exists():
-                        print(f"    Missing: {gplus_csv_path.name}")
-                    if not gminus_csv_path.exists():
-                        print(f"    Missing: {gminus_csv_path.name}")
+                    if not gplus_csv_path:
+                        print(f"    Missing: G+ classification CSV in {gplus_output}")
+                    if not gminus_csv_path:
+                        print(f"    Missing: G- classification CSV in {gminus_output}")
             else:
                 print("\n⚠ Some processing failed - skipping final matrix")
             

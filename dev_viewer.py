@@ -2,6 +2,7 @@
 Cross-Platform Clinical Results Viewer
 Compatible with Windows, macOS, and Linux
 Now includes Processing Steps Viewer with Control Group Support
+Version 2.1 - Enhanced Unicode support and Control group handling
 """
 
 import tkinter as tk
@@ -13,7 +14,8 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import sys
-from typing import Optional, Dict, List
+import json
+from typing import Optional, Dict, List, Set
 import webbrowser
 
 # Try to import reportlab for PDF generation
@@ -31,7 +33,7 @@ except ImportError:
 class ClinicalResultsViewer:
     def __init__(self, root):
         self.root = root
-        self.root.title("Particle-Scout Clinical Results Viewer")
+        self.root.title("Particle-Scout Clinical Results Viewer v2.1")
         self.root.geometry("1920x1080")
         
         # Data storage
@@ -74,8 +76,11 @@ class ClinicalResultsViewer:
         self.create_main_panels()
         self.create_status_bar()
         
-        # Try to auto-load if run from outputs directory
-        self.auto_load_recent()
+        # Bind window close event
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        
+        # Load preferences
+        self.load_preferences()
     
     def setup_styles(self):
         """Configure ttk styles"""
@@ -111,7 +116,7 @@ class ClinicalResultsViewer:
                              accelerator="F5")
         file_menu.add_separator()
         file_menu.add_command(label="Exit", 
-                             command=self.root.quit,
+                             command=self.on_closing,
                              accelerator="Ctrl+Q")
         menubar.add_cascade(label="File", menu=file_menu)
         
@@ -148,7 +153,7 @@ class ClinicalResultsViewer:
         self.root.bind('<Control-o>', lambda e: self.load_results())
         self.root.bind('<Control-r>', lambda e: self.auto_load_recent())
         self.root.bind('<F5>', lambda e: self.refresh_view())
-        self.root.bind('<Control-q>', lambda e: self.root.quit())
+        self.root.bind('<Control-q>', lambda e: self.on_closing())
     
     def create_toolbar(self):
         """Create toolbar with main actions"""
@@ -193,7 +198,7 @@ class ClinicalResultsViewer:
         
         # Close button
         ttk.Button(toolbar, text="❌ Close", 
-                command=self.close_application).pack(side=tk.LEFT, padx=2, pady=2)
+                command=self.on_closing).pack(side=tk.LEFT, padx=2, pady=2)
         
         # Dataset label (right side)
         self.dataset_label = ttk.Label(toolbar, text="No dataset loaded", 
@@ -202,7 +207,7 @@ class ClinicalResultsViewer:
     
     def close_application(self):
         """Close the application"""
-        self.root.quit()
+        self.on_closing()
 
     def create_main_panels(self):
         """Create main content area with panels"""
@@ -544,7 +549,7 @@ class ClinicalResultsViewer:
         self.load_processing_image('negative', filename, description)
     
     
-    def load_processing_image(self, img_type, filename, description):
+    def load_processing_image(self, img_type: str, filename: str, description: str):
         """Load processing image for specific type (positive or negative)"""
         if self.current_folder is None or self.selected_group is None:
             self.update_processing_description("Please select a group first", img_type)
@@ -553,11 +558,12 @@ class ClinicalResultsViewer:
         
         type_name = "Positive" if img_type == 'positive' else "Negative"
         
-        # === CORRECTED: Handle "Control group" folder name ===
-        # Control folder is named "Control group" (with space)
-        folder_name = "Control group" if self.selected_group.lower() == 'control' else self.selected_group
+        # ✅ FIX: Standardized folder naming - use "Control" (no space)
+        # This matches the output from dev2.py which creates folders as:
+        # - "Control" (for control group)
+        # - "1", "2", "3" (for numbered groups)
+        folder_name = "Control" if self.selected_group.lower() == 'control' else self.selected_group
         type_folder = self.current_folder / type_name / folder_name
-        # === END CORRECTION ===
         
         if not type_folder.exists():
             self.update_processing_description(f"Folder not found:\n{type_folder}", img_type)
@@ -603,12 +609,12 @@ class ClinicalResultsViewer:
             self.clear_processing_canvas(img_type)
 
 
-    def display_processing_step_image(self, image_path, img_type):
+    def display_processing_step_image(self, image_path: Path, img_type: str):
         """Display a processing step image on the appropriate canvas"""
         canvas = self.pos_canvas if img_type == 'positive' else self.neg_canvas
         
         # Load image
-        image = Image.open(image_path)
+        image = Image.open(str(image_path))
         
         # Store original
         if img_type == 'positive':
@@ -619,7 +625,7 @@ class ClinicalResultsViewer:
         # Fit to canvas
         self.fit_image_to_canvas(image, canvas, img_type)
     
-    def fit_image_to_canvas(self, image, canvas, img_type):
+    def fit_image_to_canvas(self, image: Image.Image, canvas: tk.Canvas, img_type: str):
         """Fit image to canvas size"""
         # Get canvas dimensions
         canvas.update()
@@ -664,7 +670,7 @@ class ClinicalResultsViewer:
         else:
             self.neg_zoom_label.config(text=f"{zoom_pct}%")
     
-    def fit_to_window(self, img_type):
+    def fit_to_window(self, img_type: str):
         """Fit image to window"""
         image = self.current_pos_image if img_type == 'positive' else self.current_neg_image
         canvas = self.pos_canvas if img_type == 'positive' else self.neg_canvas
@@ -672,7 +678,7 @@ class ClinicalResultsViewer:
         if image:
             self.fit_image_to_canvas(image, canvas, img_type)
     
-    def clear_processing_canvas(self, img_type):
+    def clear_processing_canvas(self, img_type: str):
         """Clear the specified processing canvas"""
         canvas = self.pos_canvas if img_type == 'positive' else self.neg_canvas
         canvas.delete("all")
@@ -687,7 +693,7 @@ class ClinicalResultsViewer:
             self.photo_negative = None
             self.current_neg_path = None
     
-    def update_processing_description(self, text, img_type):
+    def update_processing_description(self, text: str, img_type: str):
         """Update processing step description text"""
         if img_type == 'both':
             text_widgets = [self.pos_description, self.neg_description]
@@ -702,7 +708,7 @@ class ClinicalResultsViewer:
             widget.insert('1.0', text)
             widget.config(state='disabled')
     
-    def save_processing_image(self, img_type):
+    def save_processing_image(self, img_type: str):
         """Save the current processing step image"""
         image_path = self.current_pos_path if img_type == 'positive' else self.current_neg_path
         
@@ -750,6 +756,18 @@ class ClinicalResultsViewer:
         info_label.pack(side=tk.RIGHT, padx=5, pady=2)
     
     # ==================== Data Loading ====================
+    
+    def safe_read_csv(self, path: Path) -> pd.DataFrame:
+        """Read CSV with multiple encoding attempts"""
+        encodings = ['utf-8', 'utf-8-sig', 'gb18030', 'gbk', 'latin1']
+        
+        for encoding in encodings:
+            try:
+                return pd.read_csv(path, encoding=encoding)
+            except (UnicodeDecodeError, UnicodeError):
+                continue
+        
+        raise ValueError(f"Could not read CSV with any supported encoding: {path.name}")
     
     def load_results(self):
         """Open file dialog to load results folder"""
@@ -800,8 +818,8 @@ class ClinicalResultsViewer:
             for item in self.tree.get_children():
                 self.tree.delete(item)
             
-            # Clear photo references
-            self.photo_refs.clear()
+            # ✅ Clean up photo references
+            self.cleanup_photo_refs()
             
             # Try to load final clinical results
             clinical_matrix = folder_path / "final_clinical_results.csv"
@@ -816,35 +834,40 @@ class ClinicalResultsViewer:
             self.status_var.set(f"Loaded: {folder_path.name}")
             self.info_var.set(f"{len(self.tree.get_children())} groups loaded")
             
+            # ✅ Auto-select first item
+            if self.tree.get_children():
+                first_item = self.tree.get_children()[0]
+                self.tree.selection_set(first_item)
+                self.tree.focus(first_item)
+                self.on_select(None)
+            
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load results:\n{str(e)}")
             self.status_var.set("Error loading results")
     
     def load_batch_results(self, folder_path: Path, clinical_matrix: Path):
         """Load batch mode results (G+ and G-)"""
-        try:
-            self.clinical_data = pd.read_csv(clinical_matrix, encoding='utf-8')
-        except UnicodeDecodeError:
-            # Fallback to GB18030 for Simplified Chinese
-            self.clinical_data = pd.read_csv(clinical_matrix, encoding='gb18030')
-        
+        self.clinical_data = self.safe_read_csv(clinical_matrix)
         self.dataset_name = folder_path.name
         
         # Load G+ and G- classifications
-        gplus_csv = folder_path / "Positive" / "clinical_classification_positive.csv"
-        gminus_csv = folder_path / "Negative" / "clinical_classification_negative.csv"
+        gplus_csv = folder_path / "Positive" / "clinical_classification_positive_default.csv"
+        gminus_csv = folder_path / "Negative" / "clinical_classification_negative_default.csv"
         
-        if gplus_csv.exists():
-            try:
-                self.gplus_data = pd.read_csv(gplus_csv, encoding='utf-8')
-            except UnicodeDecodeError:
-                self.gplus_data = pd.read_csv(gplus_csv, encoding='gb18030')
+        # Try with bacteria profile suffix if not found
+        if not gplus_csv.exists():
+            gplus_csv = list((folder_path / "Positive").glob("clinical_classification_positive*.csv"))
+            gplus_csv = gplus_csv[0] if gplus_csv else None
         
-        if gminus_csv.exists():
-            try:
-                self.gminus_data = pd.read_csv(gminus_csv, encoding='utf-8')
-            except UnicodeDecodeError:
-                self.gminus_data = pd.read_csv(gminus_csv, encoding='gb18030')
+        if not gminus_csv.exists():
+            gminus_csv = list((folder_path / "Negative").glob("clinical_classification_negative*.csv"))
+            gminus_csv = gminus_csv[0] if gminus_csv else None
+        
+        if gplus_csv and gplus_csv.exists():
+            self.gplus_data = self.safe_read_csv(gplus_csv)
+        
+        if gminus_csv and gminus_csv.exists():
+            self.gminus_data = self.safe_read_csv(gminus_csv)
         
         # Populate tree
         for _, row in self.clinical_data.iterrows():
@@ -873,10 +896,7 @@ class ClinicalResultsViewer:
             raise FileNotFoundError("No clinical classification file found")
         
         classification_csv = classification_files[0]
-        try:
-            self.clinical_data = pd.read_csv(classification_csv, encoding='utf-8')
-        except UnicodeDecodeError:
-            self.clinical_data = pd.read_csv(classification_csv, encoding='gb18030')
+        self.clinical_data = self.safe_read_csv(classification_csv)
         
         self.dataset_name = folder_path.name
         
@@ -888,62 +908,49 @@ class ClinicalResultsViewer:
             self.gminus_data = self.clinical_data
             microgel_type = "G-"
         
-        # === ADD CONTROL GROUP BY SCANNING FOLDERS ===
-        # Check if Control group folder exists
-        control_folder = folder_path / "Control group"
-        if not control_folder.exists():
-            # Try alternative names
-            control_folder = folder_path / "Control"
+        # ✅ FIX: Check for Control folder with correct naming
+        control_folder = folder_path / "Control"
         
         if control_folder.exists() and control_folder.is_dir():
-            # Try to get Control group statistics from group_statistics_summary.csv
+            # Try to get Control group statistics
             stats_summary_csv = folder_path / "group_statistics_summary.csv"
-            control_mean = None
-            control_n = None
-            control_std = None
             
             if stats_summary_csv.exists():
                 try:
-                    stats_data = pd.read_csv(stats_summary_csv, encoding='utf-8')
-                except UnicodeDecodeError:
-                    stats_data = pd.read_csv(stats_summary_csv, encoding='gb18030')
-                
-                # Find Control row (case-insensitive)
-                control_rows = stats_data[stats_data['Group'].astype(str).str.lower() == 'control']
-                if not control_rows.empty:
-                    control_row = control_rows.iloc[0]
-                    control_mean = control_row.get('Mean', None)
-                    control_n = control_row.get('N', None)
-                    control_std = control_row.get('Std_Dev', None)
-            
-            # If we couldn't find statistics, use placeholder values
-            if control_mean is None:
-                # Get control_mean from clinical_data if available
-                if 'Control_Mean' in self.clinical_data.columns and not self.clinical_data.empty:
-                    control_mean = self.clinical_data.iloc[0]['Control_Mean']
-                else:
-                    control_mean = 0
-            
-            # Check if Control is already in clinical_data
-            if 'Control' not in self.clinical_data['Group'].astype(str).values and \
-               'control' not in self.clinical_data['Group'].astype(str).str.lower().values:
-                # Add Control group entry
-                control_entry = {
-                    'Group': 'Control',
-                    'N': control_n if control_n is not None else 0,
-                    'Mean': control_mean,
-                    'Std_Dev': control_std if control_std is not None else 0,
-                    'Control_Mean': control_mean,
-                    'Threshold': control_mean,
-                    'Diff_from_Threshold': 0,
-                    'Diff_from_Control': 0,
-                    'Pct_Diff_from_Control': 0,
-                    'Classification': 'CONTROL (Reference)'
-                }
-                # Append to clinical_data
-                self.clinical_data = pd.concat([self.clinical_data, pd.DataFrame([control_entry])], 
-                                            ignore_index=True)
-        # === END OF CONTROL GROUP ADDITION ===
+                    stats_data = self.safe_read_csv(stats_summary_csv)
+                    
+                    # Find Control row
+                    control_rows = stats_data[stats_data['Group'].astype(str).str.lower() == 'control']
+                    
+                    if not control_rows.empty:
+                        control_row = control_rows.iloc[0]
+                        control_mean = control_row.get('Mean', None)
+                        control_n = control_row.get('N', None)
+                        control_std = control_row.get('Std_Dev', None)
+                        
+                        # ✅ Only add if we have valid data
+                        if control_mean is not None and control_mean > 0:
+                            # Check if Control is already in data
+                            if 'Control' not in self.clinical_data['Group'].astype(str).values and \
+                               'control' not in self.clinical_data['Group'].astype(str).str.lower().values:
+                                
+                                control_entry = {
+                                    'Group': 'Control',
+                                    'N': control_n if control_n is not None else 0,
+                                    'Mean': control_mean,
+                                    'Std_Dev': control_std if control_std is not None else 0,
+                                    'Control_Mean': control_mean,
+                                    'Threshold': control_mean,
+                                    'Diff_from_Threshold': 0,
+                                    'Classification': 'CONTROL (Reference)'
+                                }
+                                
+                                self.clinical_data = pd.concat([
+                                    self.clinical_data, 
+                                    pd.DataFrame([control_entry])
+                                ], ignore_index=True)
+                except Exception as e:
+                    print(f"Warning: Could not load control statistics: {e}")
         
         # Populate tree
         for _, row in self.clinical_data.iterrows():
@@ -978,6 +985,23 @@ class ClinicalResultsViewer:
     
     # ==================== UI Actions ====================
     
+    def cleanup_photo_refs(self):
+        """Clean up old photo references to prevent memory leaks"""
+        # Get all current widget IDs
+        current_ids = set()
+        for widget in self.root.winfo_children():
+            current_ids.update(self._get_widget_ids(widget))
+        
+        # Remove old references
+        self.photo_refs = {k: v for k, v in self.photo_refs.items() if k in current_ids}
+    
+    def _get_widget_ids(self, widget) -> Set[int]:
+        """Recursively get all widget IDs"""
+        ids = {id(widget)}
+        for child in widget.winfo_children():
+            ids.update(self._get_widget_ids(child))
+        return ids
+    
     def on_select(self, event):
         """Handle tree selection"""
         selection = self.tree.selection()
@@ -989,6 +1013,9 @@ class ClinicalResultsViewer:
         
         # Extract group number
         self.selected_group = group_text.replace("Group ", "")
+        
+        # Clean up old photos before loading new data
+        self.cleanup_photo_refs()
         
         # Update all tabs
         self.display_overview()
@@ -1007,12 +1034,10 @@ class ClinicalResultsViewer:
         if self.selected_group is None or self.current_folder is None:
             return
         
-        # === CORRECTED: Handle "Control group" folder name ===
-        # Control folder is named "Control group" (with space)
-        folder_name = "Control group" if self.selected_group.lower() == 'control' else self.selected_group
+        # ✅ FIX: Use correct folder naming (matches dev2.py output)
+        folder_name = "Control" if self.selected_group.lower() == 'control' else self.selected_group
         pos_folder = self.current_folder / "Positive" / folder_name
         neg_folder = self.current_folder / "Negative" / folder_name
-        # === END CORRECTION ===
         
         # Get first image folders
         pos_images = None
@@ -1052,8 +1077,6 @@ class ClinicalResultsViewer:
         self.steps_tree.tag_configure('both', foreground='green')
         self.steps_tree.tag_configure('partial', foreground='orange')
         self.steps_tree.tag_configure('missing', foreground='gray')
-
-
 
     def display_overview(self):
         """Display overview for selected group"""
@@ -1294,8 +1317,7 @@ Purpose:
             ("Control Mean:", f"{data.get('Control_Mean', 'N/A'):.2f}" if isinstance(data.get('Control_Mean'), (int, float)) else 'N/A'),
             ("Threshold:", f"{data.get('Threshold', 'N/A'):.2f}" if isinstance(data.get('Threshold'), (int, float)) else 'N/A'),
             ("Diff from Threshold:", f"{data.get('Diff_from_Threshold', 'N/A'):.2f}" if isinstance(data.get('Diff_from_Threshold'), (int, float)) else 'N/A'),
-            ("Diff from Control:", f"{data.get('Diff_from_Control', 'N/A'):.2f}" if isinstance(data.get('Diff_from_Control'), (int, float)) else 'N/A'),
-            ("% Diff from Control:", f"{data.get('Pct_Diff_from_Control', 'N/A'):.1f}%" if isinstance(data.get('Pct_Diff_from_Control'), (int, float)) else 'N/A'),
+            ("Z-Score:", f"{data.get('Z_Score', 'N/A'):.2f}" if isinstance(data.get('Z_Score'), (int, float)) else 'N/A'),
         ]
         
         for i, (label, value) in enumerate(stats):
@@ -1328,9 +1350,8 @@ Purpose:
         for widget in self.plots_tab.winfo_children():
             widget.destroy()
         
-        # Clear old photo references for plots tab
-        self.photo_refs = {k: v for k, v in self.photo_refs.items() 
-                          if k not in [id(w) for w in self.plots_tab.winfo_children()]}
+        # ✅ Clean up old photo references for plots tab
+        plt.close('all')  # Close any matplotlib figures
         
         if self.current_folder is None:
             ttk.Label(self.plots_tab,
@@ -1622,13 +1643,60 @@ Purpose:
         except Exception as e:
             messagebox.showerror("Error", f"Could not open folder:\n{str(e)}")
     
+    # ==================== Preferences ====================
+    
+    def save_preferences(self):
+        """Save user preferences"""
+        prefs = {
+            'last_folder': str(self.current_folder) if self.current_folder else None,
+            'filter': self.filter_var.get(),
+            'window_geometry': self.root.geometry()
+        }
+        
+        prefs_file = Path.home() / '.particle_scout_viewer.json'
+        try:
+            with open(prefs_file, 'w') as f:
+                json.dump(prefs, f)
+        except Exception:
+            pass
+    
+    def load_preferences(self):
+        """Load user preferences"""
+        prefs_file = Path.home() / '.particle_scout_viewer.json'
+        if prefs_file.exists():
+            try:
+                with open(prefs_file, 'r') as f:
+                    prefs = json.load(f)
+                    
+                if prefs.get('last_folder'):
+                    last_folder = Path(prefs['last_folder'])
+                    if last_folder.exists():
+                        # Don't auto-load on startup, just store the path
+                        # User can use Ctrl+R to load recent
+                        pass
+                
+                if prefs.get('window_geometry'):
+                    try:
+                        self.root.geometry(prefs['window_geometry'])
+                    except:
+                        pass
+                    
+            except Exception:
+                pass
+    
+    def on_closing(self):
+        """Handle window close event"""
+        self.save_preferences()
+        self.root.quit()
+        self.root.destroy()
+    
     # ==================== Help Functions ====================
     
     def show_about(self):
         """Show about dialog"""
         about_text = """
 Particle-Scout Clinical Results Viewer
-Version 2.0 - Now with Control Group Support
+Version 2.1 - Enhanced Control Group Support
 
 A cross-platform application for reviewing
 bacterial detection results using microgel
@@ -1640,6 +1708,7 @@ Features:
 • Control group visualization
 • Processing steps visualization
 • Data export (CSV/PDF)
+• Adaptive thresholding support
 
 © 2026 - Clinical Diagnostics
         """
@@ -1658,7 +1727,7 @@ Features:
         help_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         help_content = """
-PARTICLE-SCOUT CLINICAL RESULTS VIEWER - USER GUIDE
+PARTICLE-SCOUT CLINICAL RESULTS VIEWER - USER GUIDE v2.1
 
 1. LOADING RESULTS
    • Click "Load Results" or use Ctrl+O
@@ -1675,11 +1744,12 @@ PARTICLE-SCOUT CLINICAL RESULTS VIEWER - USER GUIDE
      - Orange: MIXED/CONTRADICTORY
      - Light Blue: CONTROL (reference group)
    
-3. CONTROL GROUP (NEW!)
+3. CONTROL GROUP
    • Control group appears in light blue
    • Used as reference standard for calculations
    • View processing steps same as other groups
    • Shows baseline fluorescence levels
+   • Folder must be named "Control" (no space)
 
 4. DETAILED ANALYSIS
    • Click any group to view details
@@ -1706,7 +1776,7 @@ PARTICLE-SCOUT CLINICAL RESULTS VIEWER - USER GUIDE
 
 7. EXPORTING
    • Export to CSV: Raw data table
-   • Export to PDF: Complete formatted report
+   • Export to PDF: Complete formatted report (requires reportlab)
    • Open Output Folder: View all files
 
 8. KEYBOARD SHORTCUTS
@@ -1727,7 +1797,16 @@ PARTICLE-SCOUT CLINICAL RESULTS VIEWER - USER GUIDE
     • If data is missing: Ensure complete processing pipeline
     • For batch mode: Both G+ and G- folders must exist
     • Processing images: Must be in subfolder structure
-    • Control group: Folder must be named "Control group" or "Control"
+    • Control group: Folder must be named "Control" (no space)
+    • Unicode paths: Ensure proper encoding in folder names
+
+11. NEW IN VERSION 2.1
+    • Enhanced Control group handling (standardized naming)
+    • Improved Unicode path support
+    • Better memory management for large datasets
+    • Fixed Control group folder detection
+    • Enhanced error handling for missing data
+    • Preferences persistence (window size, last folder)
 
 For additional support, refer to the processing pipeline documentation.
         """
