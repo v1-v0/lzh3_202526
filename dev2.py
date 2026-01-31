@@ -346,12 +346,33 @@ BACTERIA_DISPLAY_OPTIONS = [
 # ==================================================
 # Helper Functions
 # ==================================================
+
+
+def debug_folder_structure(output_root: Path):
+    """Debug: Print actual folder names created"""
+    print("\n" + "="*80)
+    print("DEBUG: ACTUAL FOLDER STRUCTURE")
+    print("="*80)
+    
+    for microgel_dir in output_root.iterdir():
+        if not microgel_dir.is_dir():
+            continue
+        
+        print(f"\n{microgel_dir.name}/")
+        for group_dir in microgel_dir.iterdir():
+            if group_dir.is_dir():
+                # Show exact folder name with repr() to reveal hidden characters
+                print(f"  └─ {repr(group_dir.name)}")
+    
+    print("="*80 + "\n")
+
 def normalize_group_folder_name(folder_name: str) -> str:
     """Standardize group folder naming"""
     name = folder_name.strip()
     
-    # Control group: always "Control"
-    if name.lower() == 'control':
+    # Control group: always "Control" (handle various naming)
+    # Match: "Control", "control", "Control group", "control group", etc.
+    if 'control' in name.lower():
         return "Control"
     
     # Numbered groups: keep as-is
@@ -1412,7 +1433,11 @@ def generate_pairwise_group_vs_control_plots(
         print("[WARN] No Control group folder found - skipping pairwise plots")
         return
     
-    control_master = control_folder / f"{control_folder.name}_master.xlsx"
+    normalized_control_name = normalize_group_folder_name(control_folder.name)
+    control_master = control_folder / f"{normalized_control_name}_master.xlsx"
+    
+
+
     if not control_master.exists():
         print(f"[WARN] Control group master file not found: {control_master}")
         return
@@ -1981,7 +2006,7 @@ def export_group_statistics_to_csv(output_root: Path) -> None:
     stats_list = []
     
     for excel_path in sorted(output_root.glob("*/*_master.xlsx")):
-        group_name = excel_path.parent.name
+        group_name = normalize_group_folder_name(excel_path.parent.name)
         
         try:
             typical_sheet = f"{group_name}_Typical_Particles"
@@ -2061,7 +2086,9 @@ def classify_groups_clinical(
         print("[WARN] No control folder found")
         return pd.DataFrame()
     
-    control_master = control_folder / f"{control_folder.name}_master.xlsx"
+    
+    normalized_control_name = normalize_group_folder_name(control_folder.name)
+    control_master = control_folder / f"{normalized_control_name}_master.xlsx"
     if not control_master.exists():
         print(f"[WARN] Control master file not found: {control_master.name}")
         return pd.DataFrame()
@@ -2799,9 +2826,9 @@ def collect_configuration() -> dict:
     if config.get('batch_mode', False):
         # Batch mode: ask for base ID
         print("\nEnter base dataset identifier:")
-        print(f"  Example: 'v48_PD' will create:")
-        print(f"    - v48_PD Positive")
-        print(f"    - v48_PD Negative")
+        print(f"  Example: 'test' will create:")
+        print(f"    - test Positive")
+        print(f"    - test Negative")
         
         while True:
             dataset_id_base = logged_input("\nDataset base ID: ").strip()
@@ -2814,7 +2841,7 @@ def collect_configuration() -> dict:
     else:
         # Single mode: ask for full ID
         print("\nEnter dataset identifier:")
-        print(f"  Example: 'v48_PD_Sample1'")
+        print(f"  Example: 'test_Sample1'")
         
         while True:
             dataset_id = logged_input("\nDataset ID: ").strip()
@@ -2830,7 +2857,7 @@ def collect_configuration() -> dict:
     print("STEP 4/5: Percentile for Top/Bottom Filtering")
     print("━" * 80)
     print("\nEnter percentile to exclude from top and bottom:")
-    print("  → Default: 20% (excludes top 20% and bottom 20%)")
+    print("  → Default: 30% (excludes top 30% and bottom 30%)")
     print("  → Range: 0-40%")
     print("  → Enter 0 to include all particles")
     
@@ -2838,8 +2865,8 @@ def collect_configuration() -> dict:
         percentile_input = logged_input("\nPercentile (%): ").strip()
         
         if percentile_input == "":
-            config['percentile'] = 0.20
-            print("  Using default: 20%")
+            config['percentile'] = 0.30
+            print("  Using default: 30%")
             break
         
         try:
@@ -2982,12 +3009,13 @@ def process_image(img_path: Path, output_root: Path) -> None:
     um_per_px_avg = (um_per_px_x + um_per_px_y) / 2.0
 
     original_folder_name = img_path.parent.name
-    if original_folder_name.lower().strip() == 'control':
-        normalized_folder_name = "Control"  # Standardize to "Control"
-    else:
-        normalized_folder_name = original_folder_name
-    
-    img_out = output_root / normalized_folder_name
+    normalized_folder_name = normalize_group_folder_name(original_folder_name)
+
+    group_folder = output_root / normalized_folder_name
+    ensure_dir(group_folder)
+
+    image_name = img_path.stem
+    img_out = group_folder / image_name
 
     ensure_dir(img_out)
 
@@ -3463,16 +3491,20 @@ def process_single_dataset(config: dict) -> dict:
             for img_path in all_image_paths:
                 try:
                     # Process each image into group-specific output folder
-                    group_output_dir = output_dir / img_path.parent.name
+                    # ✅ FIX: Normalize folder name before creating output directory
+                    normalized_folder_name = normalize_group_folder_name(img_path.parent.name)
+                    group_output_dir = output_dir / normalized_folder_name
                     ensure_dir(group_output_dir)
-                    process_image(img_path, group_output_dir)
+                    process_image(img_path, output_dir)  # Pass parent output_dir, not group_output_dir
                     success_count += 1
                 except Exception as e:
                     print(f"\n[ERROR] Failed to process {img_path.name}: {e}")
                     fail_count += 1
                 finally:
                     pbar.update(1)
-        
+
+
+
         print(f"\n  Processed: {success_count} succeeded, {fail_count} failed")
         
         # Step 3: Consolidate to Excel
@@ -4069,6 +4101,10 @@ def main():
                 if 'error' in result:
                     print(f"   Error: {result['error']}")
         
+        debug_folder_structure(output_dir)
+
+
+
         # ==================== OPEN RESULTS ====================
         print("\n" + "━" * 80)
         print("RESULTS")

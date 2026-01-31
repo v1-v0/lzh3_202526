@@ -1,8 +1,8 @@
 """
 Cross-Platform Clinical Results Viewer
 Compatible with Windows, macOS, and Linux
-Now includes Processing Steps Viewer with Control Group Support
-Version 2.1 - Enhanced Unicode support and Control group handling
+Now includes Processing Steps Viewer with Control Group Support and Multi-Sample Navigation
+Version 2.2 - Enhanced multi-sample browsing
 """
 
 import tkinter as tk
@@ -31,9 +31,10 @@ except ImportError:
 
 
 class ClinicalResultsViewer:
+
     def __init__(self, root):
         self.root = root
-        self.root.title("Particle-Scout Clinical Results Viewer v2.1")
+        self.root.title("Particle-Scout Clinical Results Viewer v2.2")
         self.root.geometry("1920x1080")
         
         # Data storage
@@ -54,6 +55,14 @@ class ClinicalResultsViewer:
         self.current_neg_path: Optional[Path] = None
         self.photo_positive: Optional[ImageTk.PhotoImage] = None
         self.photo_negative: Optional[ImageTk.PhotoImage] = None
+        
+        # Multi-sample navigation
+        self.pos_sample_folders: List[Path] = []
+        self.neg_sample_folders: List[Path] = []
+        self.current_pos_sample_index: int = 0
+        self.current_neg_sample_index: int = 0
+        self.current_step_filename: Optional[str] = None
+        self.current_step_description: str = ""
         
         # Color scheme
         self.colors = {
@@ -82,6 +91,33 @@ class ClinicalResultsViewer:
         # Load preferences
         self.load_preferences()
     
+    def find_group_folder(self, parent_dir: Path, group_name: str) -> Optional[Path]:
+        """Find group folder with flexible naming (handles 'Control group' vs 'Control')
+        
+        Args:
+            parent_dir: Parent directory to search in (e.g., outputs/test5/Positive)
+            group_name: Group name to search for (e.g., 'Control', '1', '2')
+            
+        Returns:
+            Path to found folder, or None if not found
+        """
+        if not parent_dir.exists():
+            return None
+        
+        # For control group, check multiple variations
+        if group_name.lower() == 'control':
+            for folder in parent_dir.iterdir():
+                if folder.is_dir() and 'control' in folder.name.lower():
+                    return folder
+            return None
+        
+        # For numbered groups, exact match
+        exact_match = parent_dir / group_name
+        if exact_match.exists():
+            return exact_match
+        
+        return None
+
     def setup_styles(self):
         """Configure ttk styles"""
         style = ttk.Style()
@@ -407,14 +443,33 @@ class ClinicalResultsViewer:
         pos_controls = ttk.Frame(positive_frame)
         pos_controls.pack(fill=tk.X, pady=(5, 0), padx=5)
         
-        ttk.Button(pos_controls, text="Fit to Window", 
-                  command=lambda: self.fit_to_window('positive')).pack(side=tk.LEFT, padx=2)
+        # Sample navigation (left side)
+        pos_nav_frame = ttk.Frame(pos_controls)
+        pos_nav_frame.pack(side=tk.LEFT)
         
-        self.pos_zoom_label = ttk.Label(pos_controls, text="100%")
-        self.pos_zoom_label.pack(side=tk.LEFT, padx=5)
+        ttk.Button(pos_nav_frame, text="◀ Prev Sample", 
+                  command=lambda: self.navigate_sample('positive', -1),
+                  width=12).pack(side=tk.LEFT, padx=2)
         
-        ttk.Button(pos_controls, text="Save Image",
+        self.pos_sample_label = ttk.Label(pos_nav_frame, text="1/1")
+        self.pos_sample_label.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(pos_nav_frame, text="Next Sample ▶",
+                  command=lambda: self.navigate_sample('positive', 1),
+                  width=12).pack(side=tk.LEFT, padx=2)
+        
+        # Zoom/Save controls (right side)
+        pos_zoom_frame = ttk.Frame(pos_controls)
+        pos_zoom_frame.pack(side=tk.RIGHT)
+        
+        ttk.Button(pos_zoom_frame, text="Save Image",
                   command=lambda: self.save_processing_image('positive')).pack(side=tk.RIGHT, padx=2)
+        
+        self.pos_zoom_label = ttk.Label(pos_zoom_frame, text="100%")
+        self.pos_zoom_label.pack(side=tk.RIGHT, padx=5)
+        
+        ttk.Button(pos_zoom_frame, text="Fit to Window", 
+                  command=lambda: self.fit_to_window('positive')).pack(side=tk.RIGHT, padx=2)
         
         # Positive description
         pos_desc_frame = ttk.LabelFrame(positive_frame, text="Description", padding=5)
@@ -449,14 +504,33 @@ class ClinicalResultsViewer:
         neg_controls = ttk.Frame(negative_frame)
         neg_controls.pack(fill=tk.X, pady=(5, 0), padx=5)
         
-        ttk.Button(neg_controls, text="Fit to Window",
-                  command=lambda: self.fit_to_window('negative')).pack(side=tk.LEFT, padx=2)
+        # Sample navigation (left side)
+        neg_nav_frame = ttk.Frame(neg_controls)
+        neg_nav_frame.pack(side=tk.LEFT)
         
-        self.neg_zoom_label = ttk.Label(neg_controls, text="100%")
-        self.neg_zoom_label.pack(side=tk.LEFT, padx=5)
+        ttk.Button(neg_nav_frame, text="◀ Prev Sample",
+                  command=lambda: self.navigate_sample('negative', -1),
+                  width=12).pack(side=tk.LEFT, padx=2)
         
-        ttk.Button(neg_controls, text="Save Image",
+        self.neg_sample_label = ttk.Label(neg_nav_frame, text="1/1")
+        self.neg_sample_label.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Button(neg_nav_frame, text="Next Sample ▶",
+                  command=lambda: self.navigate_sample('negative', 1),
+                  width=12).pack(side=tk.LEFT, padx=2)
+        
+        # Zoom/Save controls (right side)
+        neg_zoom_frame = ttk.Frame(neg_controls)
+        neg_zoom_frame.pack(side=tk.RIGHT)
+        
+        ttk.Button(neg_zoom_frame, text="Save Image",
                   command=lambda: self.save_processing_image('negative')).pack(side=tk.RIGHT, padx=2)
+        
+        self.neg_zoom_label = ttk.Label(neg_zoom_frame, text="100%")
+        self.neg_zoom_label.pack(side=tk.RIGHT, padx=5)
+        
+        ttk.Button(neg_zoom_frame, text="Fit to Window",
+                  command=lambda: self.fit_to_window('negative')).pack(side=tk.RIGHT, padx=2)
         
         # Negative description
         neg_desc_frame = ttk.LabelFrame(negative_frame, text="Description", padding=5)
@@ -538,76 +612,231 @@ class ClinicalResultsViewer:
         values = self.steps_tree.item(item, "values")
         description = values[0] if values else ""
         
+        # Store current step info
+        self.current_step_filename = filename
+        self.current_step_description = description
+        
         if self.selected_group is None or self.current_folder is None:
             self.update_processing_description("Please select a group first", 'both')
             return
         
-        # Load Positive image
-        self.load_processing_image('positive', filename, description)
+        # Reset sample indices when changing steps
+        self.current_pos_sample_index = 0
+        self.current_neg_sample_index = 0
         
-        # Load Negative image
-        self.load_processing_image('negative', filename, description)
+        # Load both images
+        self.load_processing_image_by_index('positive', filename, description, 0)
+        self.load_processing_image_by_index('negative', filename, description, 0)
     
-    
+
+    def navigate_sample(self, img_type: str, direction: int):
+        """Navigate to next/previous sample for both types (synchronized)"""
+        # Get the appropriate folder list to determine max length
+        if img_type == 'positive':
+            folders = self.pos_sample_folders
+            current_idx = self.current_pos_sample_index
+        else:
+            folders = self.neg_sample_folders
+            current_idx = self.current_neg_sample_index
+        
+        if not folders:
+            return
+        
+        # Calculate new index with wrap-around
+        new_idx = current_idx + direction
+        
+        if new_idx < 0:
+            new_idx = len(folders) - 1
+        elif new_idx >= len(folders):
+            new_idx = 0
+        
+        # **CRITICAL FIX: Update BOTH indices to keep them synchronized**
+        self.current_pos_sample_index = new_idx
+        self.current_neg_sample_index = new_idx
+        
+        # Reload the current step for BOTH types with the new sample
+        if self.current_step_filename:
+            self.load_processing_image_by_index('positive', 
+                                                self.current_step_filename,
+                                                self.current_step_description,
+                                                new_idx)
+            self.load_processing_image_by_index('negative',
+                                                self.current_step_filename,
+                                                self.current_step_description,
+                                                new_idx)
+
+
+
+
     def load_processing_image(self, img_type: str, filename: str, description: str):
-        """Load processing image for specific type (positive or negative)"""
+        """Load processing image for specific type (uses current index)"""
+        if img_type == 'positive':
+            idx = self.current_pos_sample_index
+        else:
+            idx = self.current_neg_sample_index
+        
+        self.load_processing_image_by_index(img_type, filename, description, idx)
+    
+    def load_processing_image_by_index(self, img_type: str, filename: str, 
+                                    description: str, sample_idx: int):
+        """Load processing image for specific type and sample index"""
         if self.current_folder is None or self.selected_group is None:
             self.update_processing_description("Please select a group first", img_type)
             self.clear_processing_canvas(img_type)
             return
         
-        type_name = "Positive" if img_type == 'positive' else "Negative"
+        # Get the appropriate folder list
+        sample_folders = self.pos_sample_folders if img_type == 'positive' else self.neg_sample_folders
         
-        # ✅ FIX: Standardized folder naming - use "Control" (no space)
-        # This matches the output from dev2.py which creates folders as:
-        # - "Control" (for control group)
-        # - "1", "2", "3" (for numbered groups)
-        folder_name = "Control" if self.selected_group.lower() == 'control' else self.selected_group
-        type_folder = self.current_folder / type_name / folder_name
-        
-        if not type_folder.exists():
-            self.update_processing_description(f"Folder not found:\n{type_folder}", img_type)
+        if not sample_folders:
+            self.update_processing_description(f"No {img_type} samples found", img_type)
             self.clear_processing_canvas(img_type)
             return
         
-        # Find first image folder
-        image_folders = [d for d in type_folder.iterdir() if d.is_dir()]
+        if sample_idx >= len(sample_folders):
+            sample_idx = len(sample_folders) - 1
+        if sample_idx < 0:
+            sample_idx = 0
         
-        if not image_folders:
-            self.update_processing_description(f"No image folders found", img_type)
-            self.clear_processing_canvas(img_type)
-            return
+        # Update BOTH indices together (dependent navigation)
+        self.current_pos_sample_index = sample_idx
+        self.current_neg_sample_index = sample_idx
         
-        first_image_folder = sorted(image_folders)[0]
-        image_path = first_image_folder / filename
-        
-        # Update title
-        display_name = "Control" if self.selected_group.lower() == 'control' else self.selected_group
-        if img_type == 'positive':
-            self.pos_title.config(text=f"{display_name} / {first_image_folder.name}")
-        else:
-            self.neg_title.config(text=f"{display_name} / {first_image_folder.name}")
+        sample_folder = sample_folders[sample_idx]
+        image_path = sample_folder / filename
         
         if not image_path.exists():
-            self.update_processing_description(f"Image not found:\n{filename}", img_type)
+            self.update_processing_description(
+                f"Image not found: {filename}\n{description}\nSample: {sample_idx + 1}/{len(sample_folders)}", 
+                img_type
+            )
             self.clear_processing_canvas(img_type)
+            self.update_sample_label(img_type, sample_idx + 1, len(sample_folders))
             return
         
-        # Display image
         try:
-            self.display_processing_step_image(image_path, img_type)
-            self.update_processing_description(description, img_type)
+            # Load and display image
+            img = Image.open(image_path)
             
-            # Store current path
-            if img_type == 'positive':
-                self.current_pos_path = image_path
-            else:
-                self.current_neg_path = image_path
-                
+            # Get canvas
+            canvas = self.pos_canvas if img_type == 'positive' else self.neg_canvas
+            
+            # Calculate scaling to fit canvas while maintaining aspect ratio
+            canvas_width = canvas.winfo_width()
+            canvas_height = canvas.winfo_height()
+            
+            # Use minimum size if canvas not yet rendered
+            if canvas_width <= 1:
+                canvas_width = 600
+            if canvas_height <= 1:
+                canvas_height = 300
+            
+            img_width, img_height = img.size
+            scale = min(canvas_width / img_width, canvas_height / img_height, 1.0)
+            
+            new_width = int(img_width * scale)
+            new_height = int(img_height * scale)
+            
+            img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            photo = ImageTk.PhotoImage(img_resized)
+            
+            # Store reference
+            self.photo_refs[id(photo)] = photo
+            
+            # Clear and display
+            canvas.delete("all")
+            canvas.create_image(canvas_width // 2, canvas_height // 2, image=photo, anchor=tk.CENTER)
+            
+            # Update description and sample counter
+            sample_name = sample_folder.name
+            desc_text = f"{description}\nSample: {sample_name} ({sample_idx + 1}/{len(sample_folders)})"
+            self.update_processing_description(desc_text, img_type)
+            self.update_sample_label(img_type, sample_idx + 1, len(sample_folders))
+            
         except Exception as e:
-            self.update_processing_description(f"Error loading image:\n{str(e)}", img_type)
+            self.update_processing_description(f"Error loading image: {str(e)}", img_type)
             self.clear_processing_canvas(img_type)
 
+    def prev_pos_sample(self):
+        """Navigate to previous positive sample (updates both)"""
+        if not self.current_step_filename or not self.current_step_description:
+            return
+        
+        new_idx = self.current_pos_sample_index - 1
+        if new_idx < 0:
+            new_idx = max(len(self.pos_sample_folders) - 1, 0)
+        
+        # Load both positive and negative with the same index
+        self.load_processing_image_by_index('positive', 
+                                            self.current_step_filename,
+                                            self.current_step_description,
+                                            new_idx)
+        self.load_processing_image_by_index('negative',
+                                            self.current_step_filename,
+                                            self.current_step_description,
+                                            new_idx)
+
+    def next_pos_sample(self):
+        """Navigate to next positive sample (updates both)"""
+        if not self.current_step_filename or not self.current_step_description:
+            return
+        
+        new_idx = self.current_pos_sample_index + 1
+        if new_idx >= len(self.pos_sample_folders):
+            new_idx = 0
+        
+        # Load both positive and negative with the same index
+        self.load_processing_image_by_index('positive',
+                                            self.current_step_filename,
+                                            self.current_step_description,
+                                            new_idx)
+        self.load_processing_image_by_index('negative',
+                                            self.current_step_filename,
+                                            self.current_step_description,
+                                            new_idx)
+
+    def prev_neg_sample(self):
+        """Navigate to previous negative sample (updates both)"""
+        if not self.current_step_filename or not self.current_step_description:
+            return
+        
+        new_idx = self.current_neg_sample_index - 1
+        if new_idx < 0:
+            new_idx = max(len(self.neg_sample_folders) - 1, 0)
+        
+        # Load both positive and negative with the same index
+        self.load_processing_image_by_index('positive',
+                                            self.current_step_filename,
+                                            self.current_step_description,
+                                            new_idx)
+        self.load_processing_image_by_index('negative',
+                                            self.current_step_filename,
+                                            self.current_step_description,
+                                            new_idx)
+
+    def next_neg_sample(self):
+        """Navigate to next negative sample (updates both)"""
+        if not self.current_step_filename or not self.current_step_description:
+            return
+        
+        new_idx = self.current_neg_sample_index + 1
+        if new_idx >= len(self.neg_sample_folders):
+            new_idx = 0
+        
+        # Load both positive and negative with the same index
+        self.load_processing_image_by_index('positive',
+                                            self.current_step_filename,
+                                            self.current_step_description,
+                                            new_idx)
+        self.load_processing_image_by_index('negative',
+                                            self.current_step_filename,
+                                            self.current_step_description,
+                                            new_idx)
+
+    def update_sample_label(self, img_type: str, current: int, total: int):
+        """Update the sample counter label"""
+        label = self.pos_sample_label if img_type == 'positive' else self.neg_sample_label
+        label.config(text=f"{current}/{total}")
 
     def display_processing_step_image(self, image_path: Path, img_type: str):
         """Display a processing step image on the appropriate canvas"""
@@ -720,9 +949,19 @@ class ClinicalResultsViewer:
             messagebox.showwarning("No Group", "No group selected")
             return
         
+        # Get sample info
+        if img_type == 'positive':
+            sample_idx = self.current_pos_sample_index
+            sample_folders = self.pos_sample_folders
+        else:
+            sample_idx = self.current_neg_sample_index
+            sample_folders = self.neg_sample_folders
+        
+        sample_name = sample_folders[sample_idx].name if sample_folders else "sample"
+        
         # Suggest filename
         type_label = "Positive" if img_type == 'positive' else "Negative"
-        default_name = f"{self.selected_group}_{type_label}_{image_path.name}"
+        default_name = f"{self.selected_group}_{type_label}_{sample_name}_{image_path.name}"
         
         filename = filedialog.asksaveasfilename(
             defaultextension=".png",
@@ -818,7 +1057,7 @@ class ClinicalResultsViewer:
             for item in self.tree.get_children():
                 self.tree.delete(item)
             
-            # ✅ Clean up photo references
+            # Clean up photo references
             self.cleanup_photo_refs()
             
             # Try to load final clinical results
@@ -834,7 +1073,7 @@ class ClinicalResultsViewer:
             self.status_var.set(f"Loaded: {folder_path.name}")
             self.info_var.set(f"{len(self.tree.get_children())} groups loaded")
             
-            # ✅ Auto-select first item
+            # Auto-select first item
             if self.tree.get_children():
                 first_item = self.tree.get_children()[0]
                 self.tree.selection_set(first_item)
@@ -908,7 +1147,7 @@ class ClinicalResultsViewer:
             self.gminus_data = self.clinical_data
             microgel_type = "G-"
         
-        # ✅ FIX: Check for Control folder with correct naming
+        # Check for Control folder
         control_folder = folder_path / "Control"
         
         if control_folder.exists() and control_folder.is_dir():
@@ -928,7 +1167,7 @@ class ClinicalResultsViewer:
                         control_n = control_row.get('N', None)
                         control_std = control_row.get('Std_Dev', None)
                         
-                        # ✅ Only add if we have valid data
+                        # Only add if we have valid data
                         if control_mean is not None and control_mean > 0:
                             # Check if Control is already in data
                             if 'Control' not in self.clinical_data['Group'].astype(str).values and \
@@ -1014,6 +1253,10 @@ class ClinicalResultsViewer:
         # Extract group number
         self.selected_group = group_text.replace("Group ", "")
         
+        # Reset sample indices
+        self.current_pos_sample_index = 0
+        self.current_neg_sample_index = 0
+        
         # Clean up old photos before loading new data
         self.cleanup_photo_refs()
         
@@ -1027,31 +1270,49 @@ class ClinicalResultsViewer:
         # Update processing steps availability
         self.update_step_availability()
         
+        # Reload current processing step if one was selected
+        if self.current_step_filename:
+            self.load_processing_image_by_index('positive', 
+                                                self.current_step_filename,
+                                                self.current_step_description, 
+                                                0)
+            self.load_processing_image_by_index('negative',
+                                                self.current_step_filename,
+                                                self.current_step_description,
+                                                0)
+        
         self.info_var.set(f"Selected: {group_text}")
     
+
     def update_step_availability(self):
         """Update step tree to show which images are available"""
         if self.selected_group is None or self.current_folder is None:
             return
         
-        # ✅ FIX: Use correct folder naming (matches dev2.py output)
+        # Use correct folder naming
         folder_name = "Control" if self.selected_group.lower() == 'control' else self.selected_group
         pos_folder = self.current_folder / "Positive" / folder_name
         neg_folder = self.current_folder / "Negative" / folder_name
         
-        # Get first image folders
+        # **CRITICAL FIX: Populate sample folder lists**
+        self.pos_sample_folders = []
+        self.neg_sample_folders = []
+        
+        if pos_folder.exists():
+            self.pos_sample_folders = sorted([d for d in pos_folder.iterdir() if d.is_dir()])
+        
+        if neg_folder.exists():
+            self.neg_sample_folders = sorted([d for d in neg_folder.iterdir() if d.is_dir()])
+        
+        # Get first image folders for checking availability
         pos_images = None
         neg_images = None
         
-        if pos_folder.exists():
-            pos_image_folders = [d for d in pos_folder.iterdir() if d.is_dir()]
-            if pos_image_folders:
-                pos_images = sorted(pos_image_folders)[0]
+        if self.pos_sample_folders:
+            pos_images = self.pos_sample_folders[0]
         
-        if neg_folder.exists():
-            neg_image_folders = [d for d in neg_folder.iterdir() if d.is_dir()]
-            if neg_image_folders:
-                neg_images = sorted(neg_image_folders)[0]
+        if self.neg_sample_folders:
+            neg_images = self.neg_sample_folders[0]
         
         # Update tree items
         for phase_item in self.steps_tree.get_children():
@@ -1077,6 +1338,8 @@ class ClinicalResultsViewer:
         self.steps_tree.tag_configure('both', foreground='green')
         self.steps_tree.tag_configure('partial', foreground='orange')
         self.steps_tree.tag_configure('missing', foreground='gray')
+
+
 
     def display_overview(self):
         """Display overview for selected group"""
@@ -1350,7 +1613,7 @@ Purpose:
         for widget in self.plots_tab.winfo_children():
             widget.destroy()
         
-        # ✅ Clean up old photo references for plots tab
+        # Clean up old photo references for plots tab
         plt.close('all')  # Close any matplotlib figures
         
         if self.current_folder is None:
@@ -1696,7 +1959,7 @@ Purpose:
         """Show about dialog"""
         about_text = """
 Particle-Scout Clinical Results Viewer
-Version 2.1 - Enhanced Control Group Support
+Version 2.2 - Multi-Sample Navigation
 
 A cross-platform application for reviewing
 bacterial detection results using microgel
@@ -1706,6 +1969,7 @@ Features:
 • Batch processing (G+ and G-)
 • Clinical classification
 • Control group visualization
+• Multi-sample browsing
 • Processing steps visualization
 • Data export (CSV/PDF)
 • Adaptive thresholding support
@@ -1719,7 +1983,7 @@ Features:
         """Show help dialog"""
         help_window = tk.Toplevel(self.root)
         help_window.title("User Guide")
-        help_window.geometry("700x700")
+        help_window.geometry("700x800")
         
         # Scrolled text for help
         help_text = scrolledtext.ScrolledText(help_window, wrap=tk.WORD,
@@ -1727,7 +1991,7 @@ Features:
         help_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         help_content = """
-PARTICLE-SCOUT CLINICAL RESULTS VIEWER - USER GUIDE v2.1
+PARTICLE-SCOUT CLINICAL RESULTS VIEWER - USER GUIDE v2.2
 
 1. LOADING RESULTS
    • Click "Load Results" or use Ctrl+O
@@ -1759,54 +2023,65 @@ PARTICLE-SCOUT CLINICAL RESULTS VIEWER - USER GUIDE v2.1
    • Plots tab: Visual comparisons
    • Raw Data tab: Complete dataset
 
-5. PROCESSING STEPS VIEWER
+5. PROCESSING STEPS VIEWER - MULTI-SAMPLE NAVIGATION
    • View processing pipeline images side-by-side for G+ and G-
-   • Control group shows same images for both columns
-   • Select a processing step from the tree
-   • Images show up for both Positive and Negative samples
-   • Save individual images if needed
+   • Navigate through multiple samples using arrow buttons:
+     - "◀ Prev Sample" / "Next Sample ▶"
+     - Sample counter shows current position (e.g., "2/5")
+   • Independent navigation for G+ and G-
+   • Select a processing step from the tree to view
    • Color indicators show availability:
      ✓ Green: Available for both G+ and G-
      ◐ Orange: Available for one type only
      ✗ Gray: Not available
+   • Save individual images for any sample
 
-6. FILTERING
+6. SAMPLE NAVIGATION
+   • Each group may contain multiple samples (biological replicates)
+   • Use navigation buttons to browse all samples
+   • Sample name displayed in title (e.g., "Sample 1/3 - image_001.tif")
+   • Navigation wraps around (first ↔ last)
+   • G+ and G- samples can be navigated independently
+
+7. FILTERING
    • Use the filter dropdown to show specific classifications
    • Filter by: All, POSITIVE, NEGATIVE, NO OBVIOUS BACTERIA, MIXED, CONTROL
 
-7. EXPORTING
+8. EXPORTING
    • Export to CSV: Raw data table
    • Export to PDF: Complete formatted report (requires reportlab)
    • Open Output Folder: View all files
 
-8. KEYBOARD SHORTCUTS
+9. KEYBOARD SHORTCUTS
    • Ctrl+O: Open results folder
    • Ctrl+R: Open recent folder
    • F5: Refresh view
    • Ctrl+Q: Quit application
 
-9. INTERPRETATION
-   • POSITIVE: Bacteria detected, consider treatment
-   • NEGATIVE: No bacteria detected
-   • NO OBVIOUS BACTERIA: Within control range
-   • MIXED: Conflicting results, repeat testing recommended
-   • CONTROL: Reference standard for comparison
+10. INTERPRETATION
+    • POSITIVE: Bacteria detected, consider treatment
+    • NEGATIVE: No bacteria detected
+    • NO OBVIOUS BACTERIA: Within control range
+    • MIXED: Conflicting results, repeat testing recommended
+    • CONTROL: Reference standard for comparison
 
-10. TROUBLESHOOTING
+11. TROUBLESHOOTING
     • If plots don't display: Check image files in output folder
     • If data is missing: Ensure complete processing pipeline
     • For batch mode: Both G+ and G- folders must exist
     • Processing images: Must be in subfolder structure
     • Control group: Folder must be named "Control" (no space)
+    • Multiple samples: Each sample in separate subfolder
     • Unicode paths: Ensure proper encoding in folder names
 
-11. NEW IN VERSION 2.1
-    • Enhanced Control group handling (standardized naming)
-    • Improved Unicode path support
-    • Better memory management for large datasets
-    • Fixed Control group folder detection
-    • Enhanced error handling for missing data
-    • Preferences persistence (window size, last folder)
+12. NEW IN VERSION 2.2
+    • Multi-sample navigation in Processing Steps viewer
+    • Independent sample browsing for G+ and G-
+    • Sample counter display
+    • Enhanced sample information in titles
+    • Wrap-around navigation
+    • Automatic sample detection
+    • Improved memory management
 
 For additional support, refer to the processing pipeline documentation.
         """
