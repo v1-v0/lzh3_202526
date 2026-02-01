@@ -10,7 +10,8 @@ from matplotlib.widgets import Slider, Button
 from typing import Dict, List, Tuple, Optional, Any
 
 from bacteria_configs import bacteria_configs
-
+from bacteria_configs import SegmentationConfig
+from datetime import datetime
 
 class SegmentationTuner:
     """Interactive segmentation parameter tuner with matplotlib/tkinter GUI"""
@@ -408,6 +409,118 @@ class SegmentationTuner:
         )
         self.target_analysis_label.pack(fill=tk.BOTH, expand=True)
     
+    def export_complete_config(self):
+        """Export comprehensive configuration for dev2.py compatibility"""
+        
+        
+        
+        if not self.bacterium or not self.structure or not self.mode:
+            messagebox.showerror("Error", "Please set bacterium, structure, and mode first")
+            return
+        
+        # Get current segmentation parameters
+        seg_params = {
+            'invert_image': self.invert_image,
+            'gaussian_sigma': self.params['gaussian_sigma'],
+            'brightness_adjust': self.params['brightness_adjust'],
+            'contrast_adjust': self.params['contrast_adjust'],
+            'threshold_offset': self.params['threshold_offset'],
+            'min_area': self.params['min_area'],
+            'max_area': self.params['max_area'],
+            'dilate_iterations': self.params['dilate_iterations'],
+            'erode_iterations': self.params['erode_iterations'],
+        }
+        
+        # Calculate derived parameters for dev2.py
+        # Assuming 0.109 µm/px (update if you have actual pixel size)
+        um_per_px = 0.109
+        um2_per_px2 = um_per_px ** 2
+        
+        min_area_um2 = seg_params['min_area'] * um2_per_px2
+        max_area_um2 = seg_params['max_area'] * um2_per_px2
+        
+        # Build complete configuration
+        complete_config = {
+            "bacterium": self.bacterium,
+            "structure": self.structure,
+            "mode": self.mode,
+            "export_version": "2.0",
+            "compatible_with": "dev2.py",
+            "pixel_size_um": um_per_px,
+            
+            # Original feedback_tuner parameters
+            "parameters": seg_params,
+            
+            # Extended parameters for dev2.py
+            "extended_parameters": {
+                # Size filtering (in µm²)
+                "min_area_um2": min_area_um2,
+                "max_area_um2": max_area_um2,
+                
+                # Morphological operations
+                "morph_kernel_size": 3,
+                "morph_iterations": 1,
+                "dilate_iterations": seg_params['dilate_iterations'],
+                "erode_iterations": seg_params['erode_iterations'],
+                
+                # Shape filters (reasonable defaults)
+                "min_circularity": 0.0,
+                "max_circularity": 1.0,
+                "min_aspect_ratio": 0.2,
+                "max_aspect_ratio": 10.0,
+                "min_solidity": 0.3,
+                
+                # Intensity filters
+                "min_mean_intensity": 0,
+                "max_mean_intensity": 255,
+                "max_edge_gradient": 200,
+                
+                # Image processing
+                "max_fraction_of_image": 0.25,
+                
+                # Fluorescence parameters
+                "fluor_gaussian_sigma": 1.5,
+                "fluor_morph_kernel_size": 3,
+                "fluor_min_area_um2": 3.0,
+                "fluor_match_min_intersection_px": 5.0,
+            },
+            
+            # Metadata
+            "notes": f"Exported from Feedback Tuner on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "tuner_version": "1.0",
+        }
+        
+        # Save file
+        default_name = f"segmentation_params_{self.bacterium}_{self.structure}_{self.mode}_COMPLETE.json"
+        file_path = filedialog.asksaveasfilename(
+            title="Export Complete Configuration",
+            defaultextension=".json",
+            initialfile=default_name,
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    json.dump(complete_config, f, indent=2)
+                
+                messagebox.showinfo(
+                    "Success",
+                    f"Complete configuration exported:\n{os.path.basename(file_path)}\n\n"
+                    f"Compatible with dev2.py\n"
+                    f"Includes {len(complete_config['extended_parameters'])} extended parameters"
+                )
+                print(f"✓ Exported complete config: {file_path}")
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to export:\n{e}")
+
+
+
+
+
+
+
     def _create_histogram_section(self, parent: ttk.Frame):
         """Create histogram section"""
         header = tk.Frame(parent, bg=self.COLORS['info'], height=26)
@@ -846,26 +959,188 @@ class SegmentationTuner:
             return False
     
     def save_and_apply(self, event=None):
-        """Save parameters and update bacteria_configs"""
+        
+        """Save parameters and update bacteria_configs.py file"""
         if not self.save():
             messagebox.showerror("Error", "Failed to save parameters")
             return
         
-        # Update bacteria_configs
-        if self.bacterium not in bacteria_configs:
-            bacteria_configs[self.bacterium] = {}
+        # Update bacteria_configs.py file
+        try:
+            from bacteria_configs import SegmentationConfig
+            
+            # Calculate area conversion (pixels² to µm²)
+            um2_per_px2 = 0.012  # Adjust if your pixel size is different
+            
+            # Create SegmentationConfig from tuned parameters
+            config = SegmentationConfig(
+                name=f"{self.bacterium}",
+                description=f"{self.structure} segmentation - Tuned {datetime.now().strftime('%Y-%m-%d')}",
+                
+                # Core segmentation
+                gaussian_sigma=float(self.params['gaussian_sigma']),
+                
+                # Size filtering (convert pixels² to µm²)
+                min_area_um2=float(self.params['min_area']) * um2_per_px2,
+                max_area_um2=float(self.params['max_area']) * um2_per_px2,
+                
+                # Morphology
+                dilate_iterations=int(self.params['dilate_iterations']),
+                erode_iterations=int(self.params['erode_iterations']),
+                morph_kernel_size=3,
+                morph_iterations=1,
+                
+                # Shape filters (keep defaults)
+                min_circularity=0.0,
+                max_circularity=1.0,
+                min_aspect_ratio=0.2,
+                max_aspect_ratio=10.0,
+                
+                # Intensity filters (keep defaults)
+                min_mean_intensity=0,
+                max_mean_intensity=255,
+                max_edge_gradient=200,
+                
+                # Other
+                min_solidity=0.3,
+                max_fraction_of_image=0.25,
+                
+                # Fluorescence
+                fluor_min_area_um2=3.0,
+                fluor_match_min_intersection_px=5.0,
+            )
+            
+            # Write to bacteria_configs.py
+            self._write_config_to_file(config)
+            
+            print(f"\n✅ Configuration saved and applied: {self.bacterium}")
+            messagebox.showinfo("Success", 
+                f"Parameters saved and applied!\n\n"
+                f"Configuration updated in bacteria_configs.py\n"
+                f"Next run of dev2.py will use these parameters automatically.")
+            
+        except Exception as e:
+            print(f"❌ Error updating bacteria_configs.py: {e}")
+            messagebox.showerror("Error", 
+                f"Parameters saved to JSON but failed to update bacteria_configs.py:\n{e}")
+
+
+    def _write_config_to_file(self, config: 'SegmentationConfig') -> None:
+        """Write configuration to bacteria_configs.py file
         
-        config_key = ("bacteria_segmentation" if self.structure == "bacteria"
-                     else f"inclusion_{self.mode.lower()}_segmentation")
+        Args:
+            config: SegmentationConfig object to write
+        """
+        from pathlib import Path
         
-        bacteria_configs[self.bacterium][config_key] = {
-            "invert_image": self.invert_image,
-            **self.params
-        }
+        config_file = Path(__file__).parent / "bacteria_configs.py"
         
-        print(f"\n✅ Configuration updated: {self.bacterium} -> {config_key}")
-        messagebox.showinfo("Success", "Parameters saved and applied!")
-    
+        # Read current file
+        with open(config_file, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        # Find the config block to replace
+        bacteria_key = self.bacterium.upper().replace(' ', '_')
+        start_marker = f"{bacteria_key} = SegmentationConfig("
+        end_marker = ")"
+        
+        # Find start and end indices
+        start_idx = None
+        end_idx = None
+        indent_level = 0
+        
+        for i, line in enumerate(lines):
+            if start_marker in line:
+                start_idx = i
+                indent_level = len(line) - len(line.lstrip())
+            elif start_idx is not None:
+                # Count parentheses to find matching closing paren
+                indent_level += line.count('(') - line.count(')')
+                if indent_level == 0:
+                    end_idx = i
+                    break
+        
+        # Generate new config block
+        new_config_lines = self._generate_config_block(config, bacteria_key)
+        
+        if start_idx is not None and end_idx is not None:
+            # Replace existing config
+            lines[start_idx:end_idx+1] = new_config_lines
+            print(f"  ✓ Updated existing {bacteria_key} configuration")
+        else:
+            # Add new config before DEFAULT
+            default_idx = None
+            for i, line in enumerate(lines):
+                if "DEFAULT = SegmentationConfig(" in line:
+                    default_idx = i
+                    break
+            
+            if default_idx:
+                lines[default_idx:default_idx] = new_config_lines + ["\n"]
+                print(f"  ✓ Added new {bacteria_key} configuration")
+            else:
+                print(f"  ⚠ Could not find insertion point, appending to end")
+                lines.extend(["\n"] + new_config_lines)
+        
+        # Write back to file
+        with open(config_file, 'w', encoding='utf-8') as f:
+            f.writelines(lines)
+        
+        print(f"  ✓ bacteria_configs.py updated successfully")
+
+
+    def _generate_config_block(self, config: 'SegmentationConfig', var_name: str) -> list[str]:
+        """Generate Python code for SegmentationConfig
+        
+        Args:
+            config: SegmentationConfig object
+            var_name: Variable name (e.g., 'KLEBSIELLA_PNEUMONIAE')
+            
+        Returns:
+            List of code lines
+        """
+        lines = [
+            f"{var_name} = SegmentationConfig(\n",
+            f'    name="{config.name}",\n',
+            f'    description="{config.description}",\n',
+            f'    \n',
+            f'    # Core segmentation\n',
+            f'    gaussian_sigma={config.gaussian_sigma:.2f},\n',
+            f'    \n',
+            f'    # Size filtering (in µm²)\n',
+            f'    min_area_um2={config.min_area_um2:.2f},\n',
+            f'    max_area_um2={config.max_area_um2:.2f},\n',
+            f'    \n',
+            f'    # Morphology\n',
+            f'    dilate_iterations={config.dilate_iterations},\n',
+            f'    erode_iterations={config.erode_iterations},\n',
+            f'    morph_kernel_size={config.morph_kernel_size},\n',
+            f'    morph_iterations={config.morph_iterations},\n',
+            f'    \n',
+            f'    # Shape filters\n',
+            f'    min_circularity={config.min_circularity:.2f},\n',
+            f'    max_circularity={config.max_circularity:.2f},\n',
+            f'    min_aspect_ratio={config.min_aspect_ratio:.2f},\n',
+            f'    max_aspect_ratio={config.max_aspect_ratio:.2f},\n',
+            f'    \n',
+            f'    # Intensity filters\n',
+            f'    min_mean_intensity={config.min_mean_intensity:.0f},\n',
+            f'    max_mean_intensity={config.max_mean_intensity:.0f},\n',
+            f'    max_edge_gradient={config.max_edge_gradient:.0f},\n',
+            f'    \n',
+            f'    # Other\n',
+            f'    min_solidity={config.min_solidity:.2f},\n',
+            f'    max_fraction_of_image={config.max_fraction_of_image:.2f},\n',
+            f'    \n',
+            f'    # Fluorescence\n',
+            f'    fluor_min_area_um2={config.fluor_min_area_um2:.2f},\n',
+            f'    fluor_match_min_intersection_px={config.fluor_match_min_intersection_px:.2f},\n',
+            f')\n',
+        ]
+        
+        return lines
+
+
     def _create_action_buttons(self, parent: ttk.Frame):
         """Create bottom action buttons"""
         action_frame = tk.Frame(parent, bg=self.COLORS['header'], height=55)
@@ -879,17 +1154,15 @@ class SegmentationTuner:
         style.configure("Action.TButton", font=("Segoe UI", 10, "bold"), padding=10)
         
         # Define buttons - conditionally include Back button
-        buttons = []
-        
-        # Only add Back button if main menu is available
-        if self._can_launch_main_menu():
-            buttons.append(("⬅ BACK", self.back, 13, None))
-        
-        buttons.extend([
+        buttons = [
+            ("⬅ BACK", self.back, 13, None),
             ("💾 SAVE JSON", self.save, 15, None),
+            ("📋 EXPORT COMPLETE", self.export_complete_config, 20, None),  # ← NEW
             ("✅ SAVE & APPLY", self.save_and_apply, 18, self.COLORS['success']),
             ("❌ QUIT", self.quit, 13, None),
-        ])
+        ]
+        
+
         
         for text, command, width, highlight in buttons:
             if highlight:

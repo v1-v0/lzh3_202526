@@ -4,12 +4,12 @@
   "mode": "DARK",
   "parameters": {
     "invert_image": false,
-    "gaussian_sigma": 4.090228526398739,
+    "gaussian_sigma": 4.1,
     "brightness_adjust": 70,
     "contrast_adjust": 2.0,
     "threshold_offset": -40,
-    "min_area": 240.31375720625465,
-    "max_area": 7332.941396043301,
+    "min_area": 240.31,
+    "max_area": 7332.94,
     "dilate_iterations": 0,
     "erode_iterations": 0
   }

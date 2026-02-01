@@ -1,7 +1,7 @@
 """
 Cross-Platform Clinical Results Viewer
 Compatible with Windows, macOS, and Linux
-Now includes Processing Steps Viewer
+Now includes Processing Steps Viewer with Synchronized Image Navigation
 """
 
 import tkinter as tk
@@ -52,6 +52,12 @@ class ClinicalResultsViewer:
         self.current_neg_path: Optional[Path] = None
         self.photo_positive: Optional[ImageTk.PhotoImage] = None
         self.photo_negative: Optional[ImageTk.PhotoImage] = None
+        
+        # Image navigation - SYNCHRONIZED
+        self.current_image_index: int = 0  # Single shared index
+        self.pos_image_folders: List[Path] = []
+        self.neg_image_folders: List[Path] = []
+        self.current_step_filename: Optional[str] = None  # Track current processing step
         
         # Color scheme
         self.colors = {
@@ -190,7 +196,7 @@ class ClinicalResultsViewer:
         # Separator
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=2)
         
-        # Close button (NEW)
+        # Close button
         ttk.Button(toolbar, text="❌ Close", 
                 command=self.close_application).pack(side=tk.LEFT, padx=2, pady=2)
         
@@ -198,6 +204,7 @@ class ClinicalResultsViewer:
         self.dataset_label = ttk.Label(toolbar, text="No dataset loaded", 
                                     style='Status.TLabel')
         self.dataset_label.pack(side=tk.RIGHT, padx=10)
+    
     def close_application(self):
         """Close the application"""
         self.root.quit()
@@ -294,7 +301,7 @@ class ClinicalResultsViewer:
         self.gminus_tab = ttk.Frame(right_panel)
         right_panel.add(self.gminus_tab, text="🔵 G- Details")
         
-        # Tab 4: Processing Steps Viewer (NEW)
+        # Tab 4: Processing Steps Viewer
         self.processing_tab = ttk.Frame(right_panel)
         right_panel.add(self.processing_tab, text="🔬 Processing Steps")
         self.create_processing_steps_tab()
@@ -398,12 +405,33 @@ class ClinicalResultsViewer:
         pos_controls = ttk.Frame(positive_frame)
         pos_controls.pack(fill=tk.X, pady=(5, 0), padx=5)
         
+        # Navigation buttons (left side) - SYNCHRONIZED
+        self.pos_prev_btn = ttk.Button(pos_controls, text="◀ Previous",
+                                       command=lambda: self.navigate_image(-1))
+        self.pos_prev_btn.pack(side=tk.LEFT, padx=2)
+        
+        self.pos_image_counter = ttk.Label(pos_controls, text="Image 0/0", font=('Arial', 9))
+        self.pos_image_counter.pack(side=tk.LEFT, padx=5)
+        
+        self.pos_next_btn = ttk.Button(pos_controls, text="Next ▶",
+                                       command=lambda: self.navigate_image(1))
+        self.pos_next_btn.pack(side=tk.LEFT, padx=2)
+        
+        # Sync indicator
+        ttk.Label(pos_controls, text="🔗", font=('Arial', 10), 
+                 foreground='#1976D2').pack(side=tk.LEFT, padx=2)
+        
+        # Separator
+        ttk.Separator(pos_controls, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=2)
+        
+        # Fit and zoom (middle)
         ttk.Button(pos_controls, text="Fit to Window", 
                   command=lambda: self.fit_to_window('positive')).pack(side=tk.LEFT, padx=2)
         
         self.pos_zoom_label = ttk.Label(pos_controls, text="100%")
         self.pos_zoom_label.pack(side=tk.LEFT, padx=5)
         
+        # Save button (right side)
         ttk.Button(pos_controls, text="Save Image",
                   command=lambda: self.save_processing_image('positive')).pack(side=tk.RIGHT, padx=2)
         
@@ -440,12 +468,33 @@ class ClinicalResultsViewer:
         neg_controls = ttk.Frame(negative_frame)
         neg_controls.pack(fill=tk.X, pady=(5, 0), padx=5)
         
+        # Navigation buttons (left side) - SYNCHRONIZED
+        self.neg_prev_btn = ttk.Button(neg_controls, text="◀ Previous",
+                                       command=lambda: self.navigate_image(-1))
+        self.neg_prev_btn.pack(side=tk.LEFT, padx=2)
+        
+        self.neg_image_counter = ttk.Label(neg_controls, text="Image 0/0", font=('Arial', 9))
+        self.neg_image_counter.pack(side=tk.LEFT, padx=5)
+        
+        self.neg_next_btn = ttk.Button(neg_controls, text="Next ▶",
+                                       command=lambda: self.navigate_image(1))
+        self.neg_next_btn.pack(side=tk.LEFT, padx=2)
+        
+        # Sync indicator
+        ttk.Label(neg_controls, text="🔗", font=('Arial', 10),
+                 foreground='#1976D2').pack(side=tk.LEFT, padx=2)
+        
+        # Separator
+        ttk.Separator(neg_controls, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10, pady=2)
+        
+        # Fit and zoom (middle)
         ttk.Button(neg_controls, text="Fit to Window",
                   command=lambda: self.fit_to_window('negative')).pack(side=tk.LEFT, padx=2)
         
         self.neg_zoom_label = ttk.Label(neg_controls, text="100%")
         self.neg_zoom_label.pack(side=tk.LEFT, padx=5)
         
+        # Save button (right side)
         ttk.Button(neg_controls, text="Save Image",
                   command=lambda: self.save_processing_image('negative')).pack(side=tk.RIGHT, padx=2)
         
@@ -546,30 +595,90 @@ class ClinicalResultsViewer:
             self.clear_processing_canvas(img_type)
             return
         
-        type_name = "Positive" if img_type == 'positive' else "Negative"
-        type_folder = self.current_folder / type_name / self.selected_group
+        # Store current step filename
+        self.current_step_filename = filename
+        
+        # Detect batch mode vs single mode
+        has_positive = (self.current_folder / "Positive").exists()
+        has_negative = (self.current_folder / "Negative").exists()
+        
+        if has_positive and has_negative:
+            # Batch mode: current_folder contains Positive/ and Negative/
+            type_name = "Positive" if img_type == 'positive' else "Negative"
+            type_folder = self.current_folder / type_name / self.selected_group
+            
+            # Handle folder name mismatches (e.g., "Control" vs "Control group")
+            if not type_folder.exists():
+                # Try fuzzy matching
+                parent_folder = self.current_folder / type_name
+                if parent_folder.exists():
+                    # Find folders that contain the group name
+                    matching_folders = [
+                        f for f in parent_folder.iterdir() 
+                        if f.is_dir() and (
+                            f.name == self.selected_group or
+                            f.name.lower().startswith(self.selected_group.lower()) or
+                            self.selected_group.lower() in f.name.lower()
+                        )
+                    ]
+                    if matching_folders:
+                        type_folder = matching_folders[0]
+        else:
+            # Single mode: current_folder directly contains group folders
+            type_folder = self.current_folder / self.selected_group
+            
+            # Handle folder name mismatches
+            if not type_folder.exists():
+                # Try fuzzy matching
+                matching_folders = [
+                    f for f in self.current_folder.iterdir()
+                    if f.is_dir() and (
+                        f.name == self.selected_group or
+                        f.name.lower().startswith(self.selected_group.lower()) or
+                        self.selected_group.lower() in f.name.lower()
+                    )
+                ]
+                if matching_folders:
+                    type_folder = matching_folders[0]
         
         if not type_folder.exists():
             self.update_processing_description(f"Folder not found:\n{type_folder}", img_type)
             self.clear_processing_canvas(img_type)
             return
         
-        # Find first image folder
-        image_folders = [d for d in type_folder.iterdir() if d.is_dir()]
+        # Get ALL image folders (sorted)
+        image_folders = sorted([d for d in type_folder.iterdir() if d.is_dir()])
         
         if not image_folders:
-            self.update_processing_description(f"No image folders found", img_type)
+            self.update_processing_description(f"No image folders found in:\n{type_folder.name}", img_type)
             self.clear_processing_canvas(img_type)
             return
         
-        first_image_folder = sorted(image_folders)[0]
-        image_path = first_image_folder / filename
+        # Store image folders list
+        if img_type == 'positive':
+            self.pos_image_folders = image_folders
+        else:
+            self.neg_image_folders = image_folders
+        
+        # Clamp shared index to valid range for this type
+        max_index = len(image_folders) - 1
+        if self.current_image_index > max_index:
+            self.current_image_index = max_index
+        if self.current_image_index < 0:
+            self.current_image_index = 0
+        
+        # Get current image folder using shared index
+        current_image_folder = image_folders[self.current_image_index]
+        image_path = current_image_folder / filename
+        
+        # Update navigation UI
+        self.update_navigation_ui()
         
         # Update title
         if img_type == 'positive':
-            self.pos_title.config(text=f"{self.selected_group} / {first_image_folder.name}")
+            self.pos_title.config(text=f"{self.selected_group} / {current_image_folder.name}")
         else:
-            self.neg_title.config(text=f"{self.selected_group} / {first_image_folder.name}")
+            self.neg_title.config(text=f"{self.selected_group} / {current_image_folder.name}")
         
         if not image_path.exists():
             self.update_processing_description(f"Image not found:\n{filename}", img_type)
@@ -590,7 +699,69 @@ class ClinicalResultsViewer:
         except Exception as e:
             self.update_processing_description(f"Error loading image:\n{str(e)}", img_type)
             self.clear_processing_canvas(img_type)
-    
+
+    def navigate_image(self, direction: int):
+        """Navigate to previous/next image - SYNCHRONIZED across both panels"""
+        # Determine the maximum available images
+        max_pos = len(self.pos_image_folders) if self.pos_image_folders else 0
+        max_neg = len(self.neg_image_folders) if self.neg_image_folders else 0
+        
+        # Use the maximum of both to allow full navigation range
+        max_images = max(max_pos, max_neg)
+        
+        if max_images == 0:
+            return
+        
+        # Update shared index with wrap-around
+        self.current_image_index += direction
+        
+        if self.current_image_index < 0:
+            self.current_image_index = max_images - 1
+        elif self.current_image_index >= max_images:
+            self.current_image_index = 0
+        
+        # Reload current step for BOTH panels with new index
+        if self.current_step_filename:
+            # Get description from current selection
+            selection = self.steps_tree.selection()
+            description = ""
+            if selection:
+                values = self.steps_tree.item(selection[0], "values")
+                description = values[0] if values else ""
+            
+            # Load both images with synchronized index
+            self.load_processing_image('positive', self.current_step_filename, description)
+            self.load_processing_image('negative', self.current_step_filename, description)
+
+    def update_navigation_ui(self):
+        """Update navigation button states and counter labels - SYNCHRONIZED"""
+        # Get counts
+        pos_total = len(self.pos_image_folders)
+        neg_total = len(self.neg_image_folders)
+        
+        # Use maximum for display
+        max_total = max(pos_total, neg_total)
+        current = self.current_image_index + 1 if max_total > 0 else 0
+        
+        # Update both counters with same information
+        pos_display = f"Image {current}/{pos_total}" if pos_total > 0 else "Image 0/0"
+        neg_display = f"Image {current}/{neg_total}" if neg_total > 0 else "Image 0/0"
+        
+        self.pos_image_counter.config(text=pos_display)
+        self.neg_image_counter.config(text=neg_display)
+        
+        # Enable/disable buttons based on maximum available
+        if max_total <= 1:
+            self.pos_prev_btn.config(state=tk.DISABLED)
+            self.pos_next_btn.config(state=tk.DISABLED)
+            self.neg_prev_btn.config(state=tk.DISABLED)
+            self.neg_next_btn.config(state=tk.DISABLED)
+        else:
+            self.pos_prev_btn.config(state=tk.NORMAL)
+            self.pos_next_btn.config(state=tk.NORMAL)
+            self.neg_prev_btn.config(state=tk.NORMAL)
+            self.neg_next_btn.config(state=tk.NORMAL)
+
     def display_processing_step_image(self, image_path, img_type):
         """Display a processing step image on the appropriate canvas"""
         canvas = self.pos_canvas if img_type == 'positive' else self.neg_canvas
@@ -917,6 +1088,12 @@ class ClinicalResultsViewer:
         # Extract group number
         self.selected_group = group_text.replace("Group ", "")
         
+        # Reset SHARED image navigation when switching groups
+        self.current_image_index = 0  # Single shared index
+        self.pos_image_folders = []
+        self.neg_image_folders = []
+        self.current_step_filename = None
+        
         # Update all tabs
         self.display_overview()
         self.display_gplus_details()
@@ -934,23 +1111,57 @@ class ClinicalResultsViewer:
         if self.selected_group is None or self.current_folder is None:
             return
         
+        # Detect batch mode
+        has_positive = (self.current_folder / "Positive").exists()
+        has_negative = (self.current_folder / "Negative").exists()
+        
         # Check both folders
-        pos_folder = self.current_folder / "Positive" / self.selected_group
-        neg_folder = self.current_folder / "Negative" / self.selected_group
+        if has_positive and has_negative:
+            # Batch mode
+            pos_folder = self.current_folder / "Positive" / self.selected_group
+            neg_folder = self.current_folder / "Negative" / self.selected_group
+            
+            # Handle folder name mismatches
+            if not pos_folder.exists():
+                parent = self.current_folder / "Positive"
+                matches = [f for f in parent.iterdir() 
+                        if f.is_dir() and self.selected_group.lower() in f.name.lower()]
+                if matches:
+                    pos_folder = matches[0]
+            
+            if not neg_folder.exists():
+                parent = self.current_folder / "Negative"
+                matches = [f for f in parent.iterdir()
+                        if f.is_dir() and self.selected_group.lower() in f.name.lower()]
+                if matches:
+                    neg_folder = matches[0]
+        else:
+            # Single mode - check if we're in G+ or G- based on available data
+            pos_folder = self.current_folder / self.selected_group if self.gplus_data is not None else None
+            neg_folder = self.current_folder / self.selected_group if self.gminus_data is not None else None
+            
+            # Handle folder name mismatches
+            if pos_folder and not pos_folder.exists():
+                matches = [f for f in self.current_folder.iterdir()
+                        if f.is_dir() and self.selected_group.lower() in f.name.lower()]
+                if matches:
+                    pos_folder = matches[0]
+            
+            if neg_folder and not neg_folder.exists():
+                matches = [f for f in self.current_folder.iterdir()
+                        if f.is_dir() and self.selected_group.lower() in f.name.lower()]
+                if matches:
+                    neg_folder = matches[0]
         
-        # Get first image folders
-        pos_images = None
-        neg_images = None
+        # Get ALL image folders (not just first)
+        pos_all_folders = []
+        neg_all_folders = []
         
-        if pos_folder.exists():
-            pos_image_folders = [d for d in pos_folder.iterdir() if d.is_dir()]
-            if pos_image_folders:
-                pos_images = sorted(pos_image_folders)[0]
+        if pos_folder and pos_folder.exists():
+            pos_all_folders = sorted([d for d in pos_folder.iterdir() if d.is_dir()])
         
-        if neg_folder.exists():
-            neg_image_folders = [d for d in neg_folder.iterdir() if d.is_dir()]
-            if neg_image_folders:
-                neg_images = sorted(neg_image_folders)[0]
+        if neg_folder and neg_folder.exists():
+            neg_all_folders = sorted([d for d in neg_folder.iterdir() if d.is_dir()])
         
         # Update tree items
         for phase_item in self.steps_tree.get_children():
@@ -958,25 +1169,25 @@ class ClinicalResultsViewer:
                 current_text = self.steps_tree.item(step_item, "text")
                 filename = current_text.replace("○ ", "").replace("✓ ", "").replace("◐ ", "").replace("✗ ", "")
                 
-                # Check if file exists in either location
-                pos_exists = pos_images is not None and (pos_images / filename).exists()
-                neg_exists = neg_images is not None and (neg_images / filename).exists()
+                # Check if file exists in ANY image folder
+                pos_exists = any((folder / filename).exists() for folder in pos_all_folders)
+                neg_exists = any((folder / filename).exists() for folder in neg_all_folders)
                 
                 if pos_exists and neg_exists:
                     self.steps_tree.item(step_item, text=f"✓ {filename}", 
-                                       tags=('step', 'both'))
+                                    tags=('step', 'both'))
                 elif pos_exists or neg_exists:
                     self.steps_tree.item(step_item, text=f"◐ {filename}",
-                                       tags=('step', 'partial'))
+                                    tags=('step', 'partial'))
                 else:
                     self.steps_tree.item(step_item, text=f"✗ {filename}",
-                                       tags=('step', 'missing'))
+                                    tags=('step', 'missing'))
         
         # Configure tags
         self.steps_tree.tag_configure('both', foreground='green')
         self.steps_tree.tag_configure('partial', foreground='orange')
         self.steps_tree.tag_configure('missing', foreground='gray')
-    
+
     def display_overview(self):
         """Display overview for selected group"""
         # Clear existing content
@@ -1524,7 +1735,7 @@ Clinical Action:
         """Show about dialog"""
         about_text = """
 Particle-Scout Clinical Results Viewer
-Version 2.0 - Now with Processing Steps Viewer
+Version 2.1 - Synchronized Image Navigation
 
 A cross-platform application for reviewing
 bacterial detection results using microgel
@@ -1534,6 +1745,8 @@ Features:
 • Batch processing (G+ and G-)
 • Clinical classification
 • Processing steps visualization
+• Synchronized navigation across G+/G- panels
+• Multiple image support per group
 • Data export (CSV/PDF)
 
 © 2026 - Clinical Diagnostics
@@ -1545,7 +1758,7 @@ Features:
         """Show help dialog"""
         help_window = tk.Toplevel(self.root)
         help_window.title("User Guide")
-        help_window.geometry("700x650")
+        help_window.geometry("700x700")
         
         # Scrolled text for help
         help_text = scrolledtext.ScrolledText(help_window, wrap=tk.WORD,
@@ -1573,46 +1786,60 @@ PARTICLE-SCOUT CLINICAL RESULTS VIEWER - USER GUIDE
    • Click any group to view details
    • Overview tab: Summary and interpretation
    • G+/G- tabs: Individual microgel statistics
-   • Processing Steps tab: View processing pipeline images (NEW!)
+   • Processing Steps tab: View processing pipeline images
    • Plots tab: Visual comparisons
    • Raw Data tab: Complete dataset
 
-4. PROCESSING STEPS VIEWER (NEW!)
+4. PROCESSING STEPS VIEWER WITH SYNCHRONIZED NAVIGATION
    • View processing pipeline images side-by-side for G+ and G-
    • Select a processing step from the tree
-   • Images show up for both Positive and Negative samples
+   • Use ◀ Previous / Next ▶ buttons to navigate through multiple images
+   • 🔗 Link icon indicates synchronized navigation
+   • Navigation is SYNCHRONIZED: clicking on either panel updates both
+   • Image counter shows current position (e.g., "Image 2/5")
+   • Navigation wraps around (going past last goes to first)
    • Save individual images if needed
    • Color indicators show availability:
      ✓ Green: Available for both G+ and G-
      ◐ Orange: Available for one type only
      ✗ Gray: Not available
 
-5. FILTERING
+5. SYNCHRONIZED IMAGE NAVIGATION
+   • All navigation buttons are linked (🔗 icon)
+   • Clicking Previous/Next on Positive updates Negative too
+   • Clicking Previous/Next on Negative updates Positive too
+   • Both panels always show the same image number
+   • Example: If G+ shows "Image 2/5", G- also shows "Image 2/5"
+   • Works even if one side has fewer images
+
+6. FILTERING
    • Use the filter dropdown to show specific classifications
    • Filter by: All, POSITIVE, NEGATIVE, NO OBVIOUS BACTERIA, MIXED
 
-6. EXPORTING
+7. EXPORTING
    • Export to CSV: Raw data table
    • Export to PDF: Complete formatted report
    • Open Output Folder: View all files
 
-7. KEYBOARD SHORTCUTS
+8. KEYBOARD SHORTCUTS
    • Ctrl+O: Open results folder
    • Ctrl+R: Open recent folder
    • F5: Refresh view
    • Ctrl+Q: Quit application
 
-8. INTERPRETATION
+9. INTERPRETATION
    • POSITIVE: Bacteria detected, consider treatment
    • NEGATIVE: No bacteria detected
    • NO OBVIOUS BACTERIA: Within control range
    • MIXED: Conflicting results, repeat testing recommended
 
-9. TROUBLESHOOTING
+10. TROUBLESHOOTING
    • If plots don't display: Check image files in output folder
    • If data is missing: Ensure complete processing pipeline
    • For batch mode: Both G+ and G- folders must exist
    • Processing images: Must be in subfolder structure
+   • Navigation buttons disabled: Only one image available
+   • Images out of sync: Check folder structure matches
 
 For additional support, refer to the processing pipeline documentation.
         """
