@@ -1,585 +1,1067 @@
+import os
+import json
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.figure import Figure  # Fix: Import Figure from correct module
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.widgets import Slider, Button
-import tkinter as tk
-from tkinter import ttk
-import json
-from pathlib import Path
-from typing import Dict, Optional, Tuple
-import sys
+from typing import Dict, List, Tuple, Optional, Any
+
+from bacteria_configs import bacteria_configs
 
 
 class SegmentationTuner:
-    def __init__(self, image_path: str, bacterium: str, structure: str, mode: str = "DARK"):
+    """Interactive segmentation parameter tuner with matplotlib/tkinter GUI"""
+    
+    # Default parameters
+    DEFAULT_PARAMS = {
+        "gaussian_sigma": 2.0,
+        "brightness_adjust": 0,
+        "contrast_adjust": 1.0,
+        "threshold_offset": 0,
+        "min_area": 20,
+        "max_area": 5000,
+        "dilate_iterations": 0,
+        "erode_iterations": 0,
+    }
+    
+    # GUI styling constants
+    COLORS = {
+        'bg': '#f0f0f0',
+        'header': '#2c3e50',
+        'primary': '#3498db',
+        'success': '#27ae60',
+        'warning': '#e67e22',
+        'info': '#16a085',
+        'secondary': '#34495e',
+        'danger': '#e74c3c',
+        'purple': '#9b59b6',
+        'gray': '#95a5a6',
+    }
+    
+    def __init__(self, image_path: str, bacterium: str, structure: str, mode: str):
         """
-        Interactive tuner for segmentation parameters
+        Initialize the segmentation tuner
         
         Args:
-            image_path: Path to the microscopy image
+            image_path: Path to the image file
             bacterium: Name of the bacterium
-            structure: Type of structure (bacteria, organelle, etc.)
-            mode: "DARK" for dark particles on light background, "LIGHT" for light particles on dark background
+            structure: Structure type ('bacteria' or 'inclusions')
+            mode: Segmentation mode ('DARK' or 'BRIGHT')
         """
         self.image_path = image_path
         self.bacterium = bacterium
         self.structure = structure
         self.mode = mode
-        self.invert_image = False
         
         # Load image
-        self.original_image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-        if self.original_image is None:
-            raise ValueError(f"Could not load image: {image_path}")
+        self.original_image = self._load_image(image_path)
         
-        # Initialize parameters with defaults
-        self.params = {
-            'gaussian_sigma': 4.0,
-            'min_area': 1980.0,
-            'max_area': 9950.0,
-            'dilate_iterations': 1,
-            'erode_iterations': 1,
-            'edge_gradient_threshold': 41
-        }
+        # Initialize parameters and state
+        self._initialize_parameters()
         
-        # Target info for clicked region
-        self.target_info: Optional[Dict] = None
-        self.target_marker: Optional[Tuple[int, int]] = None
+        # Initialize processing results
+        self.processed_image: np.ndarray = np.zeros_like(self.original_image)
+        self.binary_mask: np.ndarray = np.zeros_like(self.original_image)
+        self.contours: List[np.ndarray] = []
+        self.contour_areas: List[float] = []
+        self.current_suggestions: Dict[str, Any] = {}
         
-        # Create the GUI
+        # Initialize GUI components
+        self.sliders: Dict[str, Slider] = {}
+        self.param_labels: Dict[str, tk.Label] = {}
+        
+        # Setup GUI
         self.setup_gui()
+    
+    def _load_image(self, image_path: str) -> np.ndarray:
+        """Load and validate image"""
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"Image not found: {image_path}")
         
+        image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            raise ValueError(f"Could not load image from {image_path}")
+        
+        print(f"✅ Loaded image: {os.path.basename(image_path)}")
+        print(f"   Shape: {image.shape}, Dtype: {image.dtype}")
+        return image
+    
+    def _initialize_parameters(self):
+        """Initialize parameters from config or defaults"""
+        self.params = self.DEFAULT_PARAMS.copy()
+        self.invert_image = False
+        
+        # Try to load from existing config
+        config_key = self.bacterium
+        if config_key in bacteria_configs:
+            self._load_from_config(bacteria_configs[config_key])
+        else:
+            print(f"ℹ No existing config for '{self.bacterium}', using defaults")
+    
+    def _load_from_config(self, config: Dict[str, Any]):
+        """Load parameters from bacteria config"""
+        print(f"📂 Loading existing configuration for '{self.bacterium}'")
+        
+        # Determine parameter key
+        if self.structure == "bacteria":
+            params_key = "bacteria_segmentation"
+        else:
+            params_key = f"inclusion_{self.mode.lower()}_segmentation"
+        
+        if params_key not in config:
+            print(f"   ⚠ No {params_key} found, using defaults")
+            return
+        
+        loaded_params = config[params_key]
+        print(f"   ✓ Found {params_key} parameters")
+        
+        # Update parameters
+        for key in self.params.keys():
+            if key in loaded_params:
+                self.params[key] = loaded_params[key]
+        
+        self.invert_image = loaded_params.get("invert_image", False)
+        
+        print(f"   ✓ Loaded parameters:")
+        for key, value in self.params.items():
+            print(f"      - {key}: {value}")
+        print(f"      - invert_image: {self.invert_image}")
+    
     def setup_gui(self):
-        """Setup the matplotlib/tkinter GUI with improved layout"""
-        # Create tkinter root
+        """Setup the matplotlib/tkinter GUI"""
         self.root = tk.Tk()
         self.root.title(f"Segmentation Tuner - {self.bacterium}")
-        self.root.geometry("1400x900")
+        self.root.geometry("1920x1080")
+        self.root.minsize(1600, 900)
+        self.root.configure(bg=self.COLORS['bg'])
         
-        # Create main frame
-        main_frame = ttk.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Create main container
+        main_container = ttk.Frame(self.root)
+        main_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
-        # Title
-        title_label = ttk.Label(
-            main_frame, 
-            text=f"{self.bacterium} - {self.structure}", 
-            font=('Arial', 14, 'bold')
-        )
-        title_label.pack(pady=(0, 10))
+        # Build GUI sections
+        self._create_header(main_container)
+        content_frame = self._create_content_area(main_container)
+        self._create_control_panel(main_container)
+        self._create_action_buttons(main_container)
         
-        # Top section - Image and Parameters side by side
-        top_frame = ttk.Frame(main_frame)
-        top_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Left side - Image
-        image_frame = ttk.Frame(top_frame)
-        image_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
-        
-        # Create matplotlib figure for image - Fix: Use Figure class
-        self.fig_image = Figure(figsize=(8, 8))
-        self.ax_image = self.fig_image.add_subplot(111)
-        self.canvas_image = FigureCanvasTkAgg(self.fig_image, image_frame)
-        self.canvas_image.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        
-        # Enable click on image
-        self.canvas_image.mpl_connect('button_press_event', self.on_image_click)
-        
-        # Right side - Parameters and Histogram
-        right_frame = ttk.Frame(top_frame, relief=tk.RIDGE, borderwidth=2)
-        right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(10, 0))
-        
-        # Parameters section
-        params_label = ttk.Label(right_frame, text="PARAMETERS", font=('Arial', 12, 'bold'))
-        params_label.pack(pady=(10, 5))
-        
-        params_inner = ttk.Frame(right_frame)
-        params_inner.pack(fill=tk.X, padx=10)
-        
-        # Create parameter labels with better formatting
-        self.param_labels = {}
-        param_data = [
-            ("Bacterium:", self.bacterium),
-            ("Structure:", self.structure),
-            ("Mode:", f"{self.mode} particles"),
-            ("", ""),  # Spacer
-            ("Gaussian σ:", f"{self.params['gaussian_sigma']:.1f}"),
-            ("Min area:", f"{self.params['min_area']:.0f} µm²"),
-            ("Max area:", f"{self.params['max_area']:.0f} µm²"),
-            ("Dilate iter:", str(self.params['dilate_iterations'])),
-            ("Erode iter:", str(self.params['erode_iterations'])),
-            ("Edge grad:", str(self.params['edge_gradient_threshold'])),
-        ]
-        
-        for i, (label_text, value_text) in enumerate(param_data):
-            if label_text:  # Skip spacer
-                row_frame = ttk.Frame(params_inner)
-                row_frame.pack(fill=tk.X, pady=2)
-                
-                label = ttk.Label(row_frame, text=label_text, width=15, anchor='w')
-                label.pack(side=tk.LEFT)
-                
-                value = ttk.Label(row_frame, text=value_text, anchor='w', font=('Arial', 9))
-                value.pack(side=tk.LEFT, fill=tk.X, expand=True)
-                
-                # Store value labels for updating
-                if label_text in ["Gaussian σ:", "Min area:", "Max area:", 
-                                  "Dilate iter:", "Erode iter:", "Edge grad:"]:
-                    self.param_labels[label_text] = value
-        
-        # Histogram section
-        hist_label = ttk.Label(right_frame, text="Contour Area Distribution", 
-                               font=('Arial', 11, 'bold'))
-        hist_label.pack(pady=(15, 5))
-        
-        # Fix: Use Figure class
-        self.fig_hist = Figure(figsize=(5, 4))
-        self.ax_hist = self.fig_hist.add_subplot(111)
-        self.canvas_hist = FigureCanvasTkAgg(self.fig_hist, right_frame)
-        self.canvas_hist.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        
-        # Bottom section - Sliders
-        slider_frame = ttk.LabelFrame(main_frame, text="Adjust Parameters", padding=10)
-        slider_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        # Create sliders with better layout
-        slider_height = 0.08
-        slider_configs = [
-            ('gaussian_sigma', 'Gaussian σ', 0.5, 10.0, self.params['gaussian_sigma'], 0.85),
-            ('min_area', 'Min Area (µm²)', 100, 5000, self.params['min_area'], 0.70),
-            ('max_area', 'Max Area (µm²)', 1000, 15000, self.params['max_area'], 0.55),
-            ('dilate_iterations', 'Dilate Iter', 0, 5, self.params['dilate_iterations'], 0.40),
-            ('erode_iterations', 'Erode Iter', 0, 5, self.params['erode_iterations'], 0.25),
-            ('edge_gradient_threshold', 'Edge Gradient', 0, 100, self.params['edge_gradient_threshold'], 0.10),
-        ]
-        
-        # Fix: Use Figure class
-        self.fig_sliders = Figure(figsize=(12, 4))
-        self.canvas_sliders = FigureCanvasTkAgg(self.fig_sliders, slider_frame)
-        self.canvas_sliders.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        
-        self.sliders = {}
-        for param_key, label, vmin, vmax, vinit, y_pos in slider_configs:
-            # Fix: Use tuple instead of list for add_axes
-            ax = self.fig_sliders.add_axes((0.15, y_pos, 0.65, slider_height - 0.02))
-            slider = Slider(ax, label, vmin, vmax, valinit=vinit, valstep=1 if 'iter' in param_key or 'gradient' in param_key else None)
-            slider.on_changed(lambda val, key=param_key: self.update_parameter(key, val))
-            self.sliders[param_key] = slider
-        
-        # Invert checkbox - Fix: Use tuple instead of list
-        ax_invert = self.fig_sliders.add_axes((0.82, 0.10, 0.15, slider_height - 0.02))
-        self.btn_invert = Button(ax_invert, 'Invert: OFF', color='lightgray', hovercolor='gray')
-        self.btn_invert.on_clicked(self.toggle_invert)
-        
-        # Bottom buttons
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        # Create button container for centering
-        button_container = ttk.Frame(button_frame)
-        button_container.pack(expand=True)
-        
-        style = ttk.Style()
-        style.configure('Back.TButton', font=('Arial', 10))
-        style.configure('Save.TButton', font=('Arial', 10, 'bold'))
-        style.configure('Quit.TButton', font=('Arial', 10))
-        
-        btn_back = ttk.Button(button_container, text="BACK", command=self.back, 
-                             style='Back.TButton', width=15)
-        btn_back.pack(side=tk.LEFT, padx=5)
-        
-        btn_save = ttk.Button(button_container, text="SAVE", command=self.save, 
-                             style='Save.TButton', width=15)
-        btn_save.pack(side=tk.LEFT, padx=5)
-        
-        btn_quit = ttk.Button(button_container, text="QUIT", command=self.quit, 
-                             style='Quit.TButton', width=15)
-        btn_quit.pack(side=tk.LEFT, padx=5)
+        print("✅ GUI Setup Complete")
         
         # Initial update
         self.update_visualization()
+    
+    def _create_header(self, parent: ttk.Frame):
+        """Create header section"""
+        header_frame = tk.Frame(parent, bg=self.COLORS['header'], height=45)
+        header_frame.pack(fill=tk.X, pady=(0, 5))
+        header_frame.pack_propagate(False)
         
-    def update_parameter(self, param_key: str, value: float):
-        """Update parameter and refresh visualization"""
-        self.params[param_key] = value
+        # Title
+        title_text = f"🔬 {self.bacterium} - {self.structure}"
+        tk.Label(
+            header_frame,
+            text=title_text,
+            font=("Segoe UI", 14, "bold"),
+            bg=self.COLORS['header'],
+            fg="white"
+        ).pack(side=tk.LEFT, padx=20, pady=6)
         
-        # Update parameter display
-        label_map = {
-            'gaussian_sigma': 'Gaussian σ:',
-            'min_area': 'Min area:',
-            'max_area': 'Max area:',
-            'dilate_iterations': 'Dilate iter:',
-            'erode_iterations': 'Erode iter:',
-            'edge_gradient_threshold': 'Edge grad:'
+        # Mode badge
+        mode_text = f"Mode: {self.mode} {'(Inverted)' if self.invert_image else ''}"
+        tk.Label(
+            header_frame,
+            text=mode_text,
+            font=("Segoe UI", 9),
+            bg=self.COLORS['secondary'],
+            fg="white",
+            padx=12,
+            pady=4,
+            relief=tk.RAISED
+        ).pack(side=tk.LEFT, pady=6)
+        
+        # Load Image button
+        tk.Button(
+            header_frame,
+            text="📁 LOAD IMAGE",
+            font=("Segoe UI", 9, "bold"),
+            bg=self.COLORS['primary'],
+            fg="white",
+            padx=12,
+            pady=4,
+            relief=tk.RAISED,
+            command=self.load_new_image,
+            cursor="hand2"
+        ).pack(side=tk.LEFT, padx=10, pady=6)
+        
+        # Contour count
+        self.contour_count_label = tk.Label(
+            header_frame,
+            text="Contours: 0",
+            font=("Segoe UI", 9),
+            bg=self.COLORS['success'],
+            fg="white",
+            padx=10,
+            pady=4,
+            relief=tk.RAISED
+        )
+        self.contour_count_label.pack(side=tk.RIGHT, padx=20, pady=6)
+    
+    def _create_content_area(self, parent: ttk.Frame) -> ttk.Frame:
+        """Create main content area"""
+        content_frame = ttk.Frame(parent)
+        content_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Left panel - Image display
+        self._create_image_panel(content_frame)
+        
+        # Right panel - Controls
+        self._create_right_panel(content_frame)
+        
+        return content_frame
+    
+    def _create_image_panel(self, parent: ttk.Frame):
+        """Create left image panel"""
+        left_panel = ttk.Frame(parent, relief=tk.RIDGE, borderwidth=1)
+        left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        
+        # Header
+        header = tk.Frame(left_panel, bg=self.COLORS['secondary'], height=28)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
+        
+        tk.Label(
+            header,
+            text="📷 IMAGE ANALYSIS - Original + Contours",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.COLORS['secondary'],
+            fg="white"
+        ).pack(side=tk.LEFT, padx=10, pady=4)
+        
+        # Canvas
+        canvas_frame = ttk.Frame(left_panel)
+        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        self.fig_image = Figure(figsize=(13, 9.5), facecolor='white')
+        self.ax_image = self.fig_image.add_subplot(111)
+        self.canvas_image = FigureCanvasTkAgg(self.fig_image, canvas_frame)
+        self.canvas_image.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self.canvas_image.mpl_connect("button_press_event", self.on_image_click)
+        
+        # Instruction
+        instruction = tk.Frame(left_panel, bg=self.COLORS['primary'], height=25)
+        instruction.pack(fill=tk.X)
+        instruction.pack_propagate(False)
+        
+        tk.Label(
+            instruction,
+            text="💡 Click on a particle to analyze and get parameter suggestions",
+            font=("Segoe UI", 8),
+            bg=self.COLORS['primary'],
+            fg="white"
+        ).pack(pady=3)
+    
+    def _create_right_panel(self, parent: ttk.Frame):
+        """Create right control panel"""
+        right_panel = ttk.Frame(parent, width=380)
+        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, padx=(5, 0))
+        right_panel.pack_propagate(False)
+        
+        # Parameters section
+        self._create_parameters_section(right_panel)
+        
+        # Target analysis section
+        self._create_target_analysis_section(right_panel)
+        
+        # Histogram section
+        self._create_histogram_section(right_panel)
+    
+    def _create_parameters_section(self, parent: ttk.Frame):
+        """Create parameters display section"""
+        # Header
+        header = tk.Frame(parent, bg=self.COLORS['secondary'], height=28)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
+        
+        tk.Label(
+            header,
+            text="⚙️ PARAMETERS",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.COLORS['secondary'],
+            fg="white"
+        ).pack(side=tk.LEFT, padx=10, pady=4)
+        
+        # Display area
+        display = ttk.Frame(parent, relief=tk.SUNKEN, borderwidth=1)
+        display.pack(fill=tk.X, padx=5, pady=(5, 0))
+        
+        inner = ttk.Frame(display)
+        inner.pack(fill=tk.X, padx=8, pady=8)
+        
+        # Basic info
+        self._add_param_section(inner, "Basic Information", [
+            ("Pathogen:", self.bacterium, self.COLORS['danger']),
+            ("Structure:", self.structure, self.COLORS['purple']),
+            ("Mode:", f"{self.mode} particles", self.COLORS['primary']),
+        ])
+        
+        ttk.Separator(inner, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+        
+        # Preprocessing
+        self._add_param_section(inner, "Preprocessing", [
+            ("Invert:", "ON" if self.invert_image else "OFF",
+             self.COLORS['success'] if self.invert_image else self.COLORS['gray']),
+            ("Gaussian σ:", f"{self.params['gaussian_sigma']:.1f}", None),
+            ("Brightness:", f"{self.params['brightness_adjust']:+.0f}", None),
+            ("Contrast:", f"{self.params['contrast_adjust']:.2f}", None),
+            ("Threshold Δ:", f"{self.params['threshold_offset']:+.0f}", None),
+        ])
+        
+        ttk.Separator(inner, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+        
+        # Filtering
+        self._add_param_section(inner, "Filtering & Morphology", [
+            ("Min area:", f"{self.params['min_area']:.0f} px", None),
+            ("Max area:", f"{self.params['max_area']:.0f} px", None),
+            ("Dilate iter:", str(self.params["dilate_iterations"]), None),
+            ("Erode iter:", str(self.params["erode_iterations"]), None),
+        ])
+    
+    def _add_param_section(self, parent: ttk.Frame, title: str,
+                           params: List[Tuple[str, str, Optional[str]]]):
+        """Add a parameter display section"""
+        # Title
+        tk.Label(
+            parent,
+            text=title,
+            font=("Segoe UI", 9, "bold"),
+            foreground=self.COLORS['header']
+        ).pack(anchor="w", pady=(0, 4))
+        
+        # Parameters
+        for label_text, value_text, color in params:
+            frame = ttk.Frame(parent)
+            frame.pack(fill=tk.X, pady=1)
+            
+            tk.Label(
+                frame,
+                text=label_text,
+                font=("Segoe UI", 8),
+                foreground="gray",
+                width=15,
+                anchor="w"
+            ).pack(side=tk.LEFT)
+            
+            if color:
+                value_label = tk.Label(
+                    frame,
+                    text=value_text,
+                    font=("Segoe UI", 8, "bold"),
+                    foreground="white",
+                    bg=color,
+                    padx=6,
+                    pady=1,
+                    relief=tk.RAISED
+                )
+            else:
+                value_label = tk.Label(
+                    frame,
+                    text=value_text,
+                    font=("Segoe UI", 8, "bold"),
+                    foreground=self.COLORS['header']
+                )
+            value_label.pack(side=tk.LEFT)
+            
+            # Store reference
+            self.param_labels[label_text] = value_label
+    
+    def _create_target_analysis_section(self, parent: ttk.Frame):
+        """Create target analysis section"""
+        header = tk.Frame(parent, bg=self.COLORS['warning'], height=26)
+        header.pack(fill=tk.X, pady=(8, 0))
+        header.pack_propagate(False)
+        
+        tk.Label(
+            header,
+            text="🎯 TARGET ANALYSIS",
+            font=("Segoe UI", 9, "bold"),
+            bg=self.COLORS['warning'],
+            fg="white"
+        ).pack(side=tk.LEFT, padx=10, pady=3)
+        
+        display = ttk.Frame(parent, relief=tk.SUNKEN, borderwidth=1)
+        display.pack(fill=tk.X, padx=5, pady=(0, 5))
+        
+        self.target_analysis_label = tk.Label(
+            display,
+            text="Click on image to analyze a particle",
+            font=("Segoe UI", 8),
+            foreground="gray",
+            justify=tk.LEFT,
+            wraplength=360,
+            bg="white",
+            anchor="w",
+            padx=8,
+            pady=8
+        )
+        self.target_analysis_label.pack(fill=tk.BOTH, expand=True)
+    
+    def _create_histogram_section(self, parent: ttk.Frame):
+        """Create histogram section"""
+        header = tk.Frame(parent, bg=self.COLORS['info'], height=26)
+        header.pack(fill=tk.X, pady=(5, 0))
+        header.pack_propagate(False)
+        
+        tk.Label(
+            header,
+            text="📊 AREA DISTRIBUTION",
+            font=("Segoe UI", 9, "bold"),
+            bg=self.COLORS['info'],
+            fg="white"
+        ).pack(side=tk.LEFT, padx=10, pady=3)
+        
+        canvas_frame = ttk.Frame(parent, relief=tk.SUNKEN, borderwidth=1)
+        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
+        
+        self.fig_hist = Figure(figsize=(5, 4), facecolor='white')
+        self.ax_hist = self.fig_hist.add_subplot(111)
+        self.canvas_hist = FigureCanvasTkAgg(self.fig_hist, canvas_frame)
+        self.canvas_hist.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+    
+    def _create_control_panel(self, parent: ttk.Frame):
+        """Create slider control panel"""
+        panel = ttk.Frame(parent)
+        panel.pack(fill=tk.X, pady=(5, 0))
+        
+        # Header
+        header = tk.Frame(panel, bg=self.COLORS['secondary'], height=28)
+        header.pack(fill=tk.X)
+        header.pack_propagate(False)
+        
+        tk.Label(
+            header,
+            text="🎚️ ADJUST PARAMETERS",
+            font=("Segoe UI", 10, "bold"),
+            bg=self.COLORS['secondary'],
+            fg="white"
+        ).pack(side=tk.LEFT, padx=10, pady=4)
+        
+        # Sliders
+        slider_frame = ttk.Frame(panel, relief=tk.SUNKEN, borderwidth=1)
+        slider_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
+        
+        self.fig_sliders = Figure(figsize=(18, 2.2), facecolor='#f8f9fa')
+        self.canvas_sliders = FigureCanvasTkAgg(self.fig_sliders, slider_frame)
+        self.canvas_sliders.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        
+        self._create_sliders()
+    
+    def _create_sliders(self):
+        """Create parameter sliders"""
+        # Headers
+        self.fig_sliders.text(0.195, 0.95, 'PREPROCESSING', ha='center', va='top',
+                             fontsize=9, fontweight='bold', color=self.COLORS['header'])
+        self.fig_sliders.text(0.695, 0.95, 'FILTERING & MORPHOLOGY', ha='center', va='top',
+                             fontsize=9, fontweight='bold', color=self.COLORS['header'])
+        
+        # Slider configurations
+        slider_configs = {
+            'left': [
+                ("gaussian_sigma", "Gaussian σ", 0.5, 10.0, 0.72, 0.04),
+                ("brightness_adjust", "Brightness", -100, 100, 0.51, 0.04),
+                ("contrast_adjust", "Contrast", 0.5, 2.0, 0.30, 0.04),
+                ("threshold_offset", "Threshold Δ", -50, 50, 0.09, 0.04),
+            ],
+            'right': [
+                ("min_area", "Min Area (px)", 10, 2000, 0.72, 0.51),
+                ("max_area", "Max Area (px)", 100, 10000, 0.51, 0.51),
+                ("dilate_iterations", "Dilate", 0, 5, 0.30, 0.51),
+                ("erode_iterations", "Erode", 0, 5, 0.09, 0.51),
+            ]
         }
         
-        if param_key in label_map:
-            label_key = label_map[param_key]
-            if label_key in self.param_labels:
-                if 'area' in param_key:
-                    self.param_labels[label_key].config(text=f"{value:.0f} µm²")
-                elif 'sigma' in param_key:
-                    self.param_labels[label_key].config(text=f"{value:.1f}")
-                else:
-                    self.param_labels[label_key].config(text=str(int(value)))
+        slider_height = 0.13
+        slider_width = 0.38
         
-        self.update_visualization()
+        # Create left sliders (preprocessing)
+        for param_key, label, vmin, vmax, y_pos, x_start in slider_configs['left']:
+            ax = self.fig_sliders.add_axes((x_start, y_pos, slider_width, slider_height))
+            valstep = 1 if "Brightness" in label or "Threshold" in label else None
+            slider = Slider(ax, label, vmin, vmax, valinit=self.params[param_key],
+                          valstep=valstep, color=self.COLORS['primary'])
+            slider.on_changed(lambda val, key=param_key: self.update_parameter(key, val))
+            self.sliders[param_key] = slider
         
-    def toggle_invert(self, event):
-        """Toggle image inversion"""
-        self.invert_image = not self.invert_image
-        self.btn_invert.label.set_text(f'Invert: {"ON" if self.invert_image else "OFF"}')
-        self.btn_invert.color = 'lightgreen' if self.invert_image else 'lightgray'
-        self.update_visualization()
+        # Create right sliders (filtering)
+        for param_key, label, vmin, vmax, y_pos, x_start in slider_configs['right']:
+            ax = self.fig_sliders.add_axes((x_start, y_pos, slider_width, slider_height))
+            valstep = 1 if "iter" in param_key else None
+            slider = Slider(ax, label, vmin, vmax, valinit=self.params[param_key],
+                          valstep=valstep, color=self.COLORS['info'])
+            slider.on_changed(lambda val, key=param_key: self.update_parameter(key, val))
+            self.sliders[param_key] = slider
         
-    def segment_image(self) -> Tuple[np.ndarray, list]:
-        """Apply current parameters and segment the image"""
-        # Fix: Ensure original_image is not None
-        if self.original_image is None:
-            return np.array([]), []
+        # Action buttons
+        invert_color = self.COLORS['success'] if self.invert_image else self.COLORS['gray']
+        invert_text = f'INVERT\n{"ON" if self.invert_image else "OFF"}'
         
-        # Apply Gaussian blur - Fix: Cast to proper type
-        blurred = cv2.GaussianBlur(
-            self.original_image.astype(np.uint8), 
-            (0, 0), 
-            float(self.params['gaussian_sigma'])
-        )
+        ax_invert = self.fig_sliders.add_axes((0.915, 0.51, 0.07, 0.34))
+        self.btn_invert = Button(ax_invert, invert_text, color=invert_color,
+                                hovercolor=self.COLORS['success'])
+        self.btn_invert.on_clicked(self.toggle_invert)
         
-        # Threshold using Otsu's method
-        _, binary = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        ax_apply = self.fig_sliders.add_axes((0.915, 0.09, 0.07, 0.34))
+        self.btn_apply = Button(ax_apply, "APPLY\nSUGGESTIONS",
+                               color=self.COLORS['primary'],
+                               hovercolor='#5dade2')
+        self.btn_apply.on_clicked(self.apply_suggestions)
+    
+
+    
+    def process_image(self):
+        """Process image with current parameters"""
+        img = self.original_image.copy()
         
         # Invert if needed
         if self.invert_image:
-            binary = cv2.bitwise_not(binary)
+            img = cv2.bitwise_not(img)
+        
+        # Brightness and contrast
+        img = cv2.convertScaleAbs(
+            img,
+            alpha=self.params["contrast_adjust"],
+            beta=self.params["brightness_adjust"]
+        )
+        
+        # Gaussian blur
+        if self.params["gaussian_sigma"] > 0:
+            ksize = int(2 * np.ceil(2 * self.params["gaussian_sigma"]) + 1)
+            img = cv2.GaussianBlur(img, (ksize, ksize), self.params["gaussian_sigma"])
+        
+        self.processed_image = img
+        
+        # Thresholding
+        threshold_value = float(img.mean()) + self.params["threshold_offset"]
+        thresh_type = cv2.THRESH_BINARY_INV if self.mode == "DARK" else cv2.THRESH_BINARY
+        _, binary = cv2.threshold(img, threshold_value, 255, thresh_type)
         
         # Morphological operations
-        if self.params['dilate_iterations'] > 0:
+        if self.params["dilate_iterations"] > 0:
             kernel = np.ones((3, 3), np.uint8)
-            binary = cv2.dilate(binary, kernel, iterations=int(self.params['dilate_iterations']))
+            binary = cv2.dilate(binary, kernel,
+                              iterations=int(self.params["dilate_iterations"]))
         
-        if self.params['erode_iterations'] > 0:
+        if self.params["erode_iterations"] > 0:
             kernel = np.ones((3, 3), np.uint8)
-            binary = cv2.erode(binary, kernel, iterations=int(self.params['erode_iterations']))
+            binary = cv2.erode(binary, kernel,
+                             iterations=int(self.params["erode_iterations"]))
         
-        # Find contours
+        self.binary_mask = binary
+        
+        # Find and filter contours
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        # Filter by area
-        filtered_contours = []
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if self.params['min_area'] <= area <= self.params['max_area']:
-                filtered_contours.append(contour)
+        self.contours = []
+        self.contour_areas = []
         
-        return binary, filtered_contours
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if self.params["min_area"] <= area <= self.params["max_area"]:
+                self.contours.append(cnt)
+                self.contour_areas.append(area)
     
     def update_visualization(self):
         """Update all visualizations"""
-        # Segment image
-        binary, contours = self.segment_image()
-        
-        # Fix: Ensure original_image is not None
-        if self.original_image is None:
-            return
-        
-        # Draw on image - Fix: Cast to proper type
-        display_image = cv2.cvtColor(self.original_image.astype(np.uint8), cv2.COLOR_GRAY2RGB)
-        cv2.drawContours(display_image, contours, -1, (0, 255, 0), 2)
-        
-        # Draw target marker if exists
-        if self.target_marker:
-            x, y = self.target_marker
-            cv2.circle(display_image, (x, y), 5, (255, 0, 0), -1)
-            cv2.circle(display_image, (x, y), 50, (255, 0, 0), 2)
-            
-            # Add text label
-            cv2.putText(display_image, "TARGET", (x - 30, y - 60),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-            cv2.putText(display_image, f"({x}, {y})", (x - 30, y - 40),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
-            
-            if self.target_info and 'estimated_area' in self.target_info:
-                cv2.putText(display_image, f"{self.target_info['estimated_area']:.0f} px",
-                           (x - 30, y - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+        self.process_image()
         
         # Update image display
-        self.ax_image.clear()
-        self.ax_image.imshow(display_image)
-        self.ax_image.set_title(f'Detected Contours (n={len(contours)})', fontsize=12, fontweight='bold')
-        self.ax_image.axis('off')
-        self.canvas_image.draw()
+        self._update_image_display()
         
         # Update histogram
-        if contours:
-            areas = [cv2.contourArea(c) for c in contours]
-            
-            self.ax_hist.clear()
-            self.ax_hist.hist(areas, bins=20, alpha=0.7, color='steelblue', edgecolor='black')
-            
-            # Add statistics lines - Fix: Convert numpy types to float
-            median_area = float(np.median(areas))
-            mean_area = float(np.mean(areas))
-            
-            self.ax_hist.axvline(median_area, color='orange', linestyle='--', linewidth=2, label=f'Median: {median_area:.1f}')
-            self.ax_hist.axvline(mean_area, color='darkorange', linestyle='--', linewidth=2, label=f'Mean: {mean_area:.1f}')
-            self.ax_hist.axvline(self.params['min_area'], color='blue', linestyle=':', linewidth=1.5, label=f"Min: {self.params['min_area']:.0f}")
-            self.ax_hist.axvline(self.params['max_area'], color='blue', linestyle=':', linewidth=1.5, label=f"Max: {self.params['max_area']:.0f}")
-            
-            # Add target area if exists
-            if self.target_info and 'estimated_area' in self.target_info:
-                target_area = self.target_info['estimated_area']
-                self.ax_hist.axvline(target_area, color='red', linestyle='-', linewidth=2.5, label=f'Target: {target_area:.0f}')
-            
-            self.ax_hist.set_xlabel('Area (µm²)', fontsize=10)
-            self.ax_hist.set_ylabel('Count', fontsize=10)
-            self.ax_hist.set_title(f'Contour Area Distribution (n={len(contours)})', fontsize=10, fontweight='bold')
-            self.ax_hist.legend(fontsize=8, loc='upper right')
-            self.ax_hist.grid(True, alpha=0.3)
-        else:
-            self.ax_hist.clear()
-            self.ax_hist.text(0.5, 0.5, 'No contours detected', 
-                            ha='center', va='center', fontsize=12, transform=self.ax_hist.transAxes)
-            self.ax_hist.set_title('Contour Area Distribution (n=0)', fontsize=10, fontweight='bold')
+        self._update_histogram()
         
-        self.fig_hist.tight_layout()
+        # Update parameter displays
+        self._update_param_displays()
+        
+        # Update contour count
+        self.contour_count_label.config(text=f"Contours: {len(self.contours)}")
+    
+    def _update_image_display(self):
+        """Update main image display"""
+        self.ax_image.clear()
+        
+        # Convert to RGB and draw contours
+        if len(self.original_image.shape) == 2:
+            display = cv2.cvtColor(self.original_image, cv2.COLOR_GRAY2RGB)
+        else:
+            display = self.original_image.copy()
+        
+        cv2.drawContours(display, self.contours, -1, (0, 255, 0), 2)
+        
+        self.ax_image.imshow(display)
+        self.ax_image.set_title("Original + Contours", fontsize=12,
+                               fontweight='bold', pad=10)
+        self.ax_image.axis("off")
+        
+        self.canvas_image.draw()
+    
+    def _update_histogram(self):
+        """Update area distribution histogram"""
+        self.ax_hist.clear()
+        
+        if not self.contour_areas:
+            self.ax_hist.text(0.5, 0.5, "No contours detected",
+                            ha='center', va='center', fontsize=10, color='gray')
+            self.ax_hist.set_xlim(0, 1)
+            self.ax_hist.set_ylim(0, 1)
+        else:
+            areas = np.array(self.contour_areas)
+            
+            self.ax_hist.hist(areas, bins=30, color=self.COLORS['primary'],
+                            alpha=0.7, edgecolor='black')
+            
+            # Statistics
+            median = float(np.median(areas))
+            mean = float(np.mean(areas))
+            min_area = float(np.min(areas))
+            max_area = float(np.max(areas))
+            
+            self.ax_hist.axvline(median, color='orange', linestyle='--',
+                               linewidth=2, label=f'Median: {median:.1f}')
+            self.ax_hist.axvline(mean, color='red', linestyle='--',
+                               linewidth=2, label=f'Mean: {mean:.1f}')
+            self.ax_hist.axvline(min_area, color='green', linestyle=':',
+                               linewidth=1.5, label=f'Min: {min_area:.0f}')
+            self.ax_hist.axvline(max_area, color='purple', linestyle=':',
+                               linewidth=1.5, label=f'Max: {max_area:.0f}')
+            
+            self.ax_hist.set_xlabel("Area (pixels)", fontsize=9)
+            self.ax_hist.set_ylabel("Count", fontsize=9)
+            self.ax_hist.set_title(f"Distribution (n={len(areas)})",
+                                  fontsize=10, fontweight='bold')
+            self.ax_hist.legend(fontsize=7, loc='upper right')
+            self.ax_hist.grid(True, alpha=0.3)
+        
         self.canvas_hist.draw()
     
-    def on_image_click(self, event):
-        """Handle click on image to select target region"""
-        if event.inaxes != self.ax_image:
-            return
+    def _update_param_displays(self):
+        """Update parameter display values"""
+        # Update invert
+        invert_label = self.param_labels["Invert:"]
+        invert_text = "ON" if self.invert_image else "OFF"
+        invert_color = self.COLORS['success'] if self.invert_image else self.COLORS['gray']
+        invert_label.config(text=invert_text, bg=invert_color)
         
-        if event.xdata is None or event.ydata is None:
+        # Update numeric parameters
+        updates = {
+            "Gaussian σ:": f"{self.params['gaussian_sigma']:.1f}",
+            "Brightness:": f"{self.params['brightness_adjust']:+.0f}",
+            "Contrast:": f"{self.params['contrast_adjust']:.2f}",
+            "Threshold Δ:": f"{self.params['threshold_offset']:+.0f}",
+            "Min area:": f"{self.params['min_area']:.0f} px",
+            "Max area:": f"{self.params['max_area']:.0f} px",
+            "Dilate iter:": str(int(self.params["dilate_iterations"])),
+            "Erode iter:": str(int(self.params["erode_iterations"])),
+        }
+        
+        for key, value in updates.items():
+            if key in self.param_labels:
+                self.param_labels[key].config(text=value)
+    
+    def update_parameter(self, param_name: str, value: float):
+        """Update a parameter and refresh visualization"""
+        self.params[param_name] = value
+        self.update_visualization()
+    
+    def update_sliders_from_params(self):
+        """Update slider positions to match current parameters"""
+        for param_key, slider in self.sliders.items():
+            if param_key in self.params:
+                slider.set_val(self.params[param_key])
+        
+        # Update invert button
+        if hasattr(self, 'btn_invert'):
+            invert_color = self.COLORS['success'] if self.invert_image else self.COLORS['gray']
+            invert_text = f'INVERT\n{"ON" if self.invert_image else "OFF"}'
+            self.btn_invert.color = invert_color
+            self.btn_invert.label.set_text(invert_text)
+        
+        print("✅ Sliders updated from parameters")
+    
+    def toggle_invert(self, event):
+        """Toggle image inversion"""
+        self.invert_image = not self.invert_image
+        
+        # Update button appearance
+        invert_text = f'INVERT\n{"ON" if self.invert_image else "OFF"}'
+        invert_color = self.COLORS['success'] if self.invert_image else self.COLORS['gray']
+        self.btn_invert.label.set_text(invert_text)
+        self.btn_invert.color = invert_color
+        
+        self.update_visualization()
+    
+    def on_image_click(self, event):
+        """Handle click on image to analyze particle"""
+        if event.inaxies != self.ax_image or event.xdata is None or event.ydata is None:
             return
         
         x, y = int(event.xdata), int(event.ydata)
         
-        # Store marker position
-        self.target_marker = (x, y)
+        # Find clicked contour
+        clicked_contour = None
+        for cnt in self.contours:
+            if cv2.pointPolygonTest(cnt, (float(x), float(y)), False) >= 0:
+                clicked_contour = cnt
+                break
         
-        print(f"\n🎯 Target selected at ({x}, {y})")
-        
-        # Analyze the region
-        self.analyze_target_region(x, y)
-        
-        # Update visualization
-        self.update_visualization()
-    
-    def analyze_target_region(self, x: int, y: int, radius: int = 50):
-        """Analyze the region around the clicked point"""
-        if self.original_image is None:
+        if clicked_contour is None:
+            self.target_analysis_label.config(
+                text="No particle found at click location",
+                foreground="red"
+            )
             return
         
-        h, w = self.original_image.shape
+        # Analyze particle
+        self._analyze_particle(clicked_contour)
+    
+    def _analyze_particle(self, contour: np.ndarray):
+        """Analyze a specific particle and generate suggestions"""
+        area = cv2.contourArea(contour)
+        perimeter = cv2.arcLength(contour, True)
         
-        # Extract region
-        y1, y2 = max(0, y-radius), min(h, y+radius)
-        x1, x2 = max(0, x-radius), min(w, x+radius)
-        region = self.original_image[y1:y2, x1:x2]
+        x, y, w, h = cv2.boundingRect(contour)
+        aspect_ratio = float(w) / h if h > 0 else 0
+        circularity = 4 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0
         
-        # Calculate region statistics with explicit type conversion
-        region_float: np.ndarray = region.astype(np.float64)
-        mean_intensity = float(np.mean(region_float))
-        std_intensity = float(np.std(region_float))
-        min_intensity = int(np.min(region))
-        max_intensity = int(np.max(region))
+        # Generate suggestions
+        suggestions = self._generate_suggestions(area, circularity, aspect_ratio)
+        self.current_suggestions = suggestions
         
-        # Store target info
-        self.target_info = {
-            'mean_intensity': mean_intensity,
-            'std_intensity': std_intensity,
-            'min_intensity': min_intensity,
-            'max_intensity': max_intensity,
-        }
+        # Display analysis
+        analysis_text = (
+            f"🎯 Target Particle Analysis:\n\n"
+            f"Area: {area:.1f} px²\n"
+            f"Perimeter: {perimeter:.1f} px\n"
+            f"Aspect Ratio: {aspect_ratio:.2f}\n"
+            f"Circularity: {circularity:.3f}\n\n"
+            f"📊 Suggestions:\n"
+        )
         
-        # Estimate particle size
+        for param, value in suggestions.items():
+            analysis_text += f"• {param}: {value}\n"
+        
+        self.target_analysis_label.config(text=analysis_text, foreground="black")
+        
+        print(f"\n🎯 Particle Analysis:")
+        print(f"   Area: {area:.1f} px², Circularity: {circularity:.3f}")
+        print(f"   Suggestions: {suggestions}")
+    
+    def _generate_suggestions(self, area: float, circularity: float,
+                             aspect_ratio: float) -> Dict[str, Any]:
+        """Generate parameter suggestions based on particle analysis"""
+        suggestions: Dict[str, Any] = {}
+        
+        # Area-based suggestions
+        suggestions["min_area"] = max(10, int(area * 0.3))
+        suggestions["max_area"] = min(10000, int(area * 3.0))
+        
+        # Circularity-based suggestions
+        if circularity < 0.6:
+            suggestions["dilate_iterations"] = min(3, self.params["dilate_iterations"] + 1)
+            suggestions["erode_iterations"] = min(3, self.params["erode_iterations"] + 1)
+        
+        # Aspect ratio-based suggestions
+        if aspect_ratio > 2.5 or aspect_ratio < 0.4:
+            suggestions["gaussian_sigma"] = min(5.0, self.params["gaussian_sigma"] + 0.5)
+        
+        return suggestions
+    
+    def apply_suggestions(self, event):
+        """Apply suggested parameters"""
+        if not self.current_suggestions:
+            print("⚠ No suggestions available. Click on a particle first.")
+            return
+        
+        print("\n✅ Applying suggestions:")
+        for param, value in self.current_suggestions.items():
+            if param in self.params:
+                old_value = self.params[param]
+                self.params[param] = value
+                if param in self.sliders:
+                    self.sliders[param].set_val(value)
+                print(f"   {param}: {old_value} → {value}")
+        
+        self.update_visualization()
+    
+    def load_new_image(self):
+        """Load a new image file"""
+        file_path = filedialog.askopenfilename(
+            title="Select Image",
+            filetypes=[
+                ("Image files", "*.png *.jpg *.jpeg *.tif *.tiff *.bmp"),
+                ("All files", "*.*")
+            ]
+        )
+        
+        if not file_path:
+            return
+        
         try:
-            blurred_region = cv2.GaussianBlur(region.astype(np.uint8), (0, 0), float(self.params['gaussian_sigma']))
-            _, binary_region = cv2.threshold(blurred_region, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            self.original_image = self._load_image(file_path)
+            self.image_path = file_path
             
-            if self.invert_image:
-                binary_region = cv2.bitwise_not(binary_region)
+            # Update visualization with current parameters
+            self.update_visualization()
             
-            contours, _ = cv2.findContours(binary_region, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            if contours:
-                center = (radius, radius) if x1 + radius <= w and y1 + radius <= h else (x - x1, y - y1)
-                
-                closest_contour = None
-                min_distance = float('inf')
-                
-                for contour in contours:
-                    dist = abs(cv2.pointPolygonTest(contour, center, True))
-                    if dist < min_distance:
-                        min_distance = dist
-                        closest_contour = contour
-                
-                if closest_contour is not None:
-                    estimated_area = float(cv2.contourArea(closest_contour))
-                    perimeter = float(cv2.arcLength(closest_contour, True))
-                    circularity = 4 * np.pi * estimated_area / (perimeter * perimeter) if perimeter > 0 else 0
-                    
-                    self.target_info['estimated_area'] = estimated_area
-                    self.target_info['circularity'] = circularity
-                    
-                    print(f"  📊 Target region analysis:")
-                    print(f"     Position: ({x}, {y})")
-                    print(f"     Intensity: {mean_intensity:.1f} ± {std_intensity:.1f}")
-                    print(f"     Range: {min_intensity} - {max_intensity}")
-                    print(f"     Estimated area: {estimated_area:.0f} pixels")
-                    print(f"     Circularity: {circularity:.2f}")
-                    
-                    self.suggest_parameters(mean_intensity, estimated_area, min_intensity)
-                    
+            messagebox.showinfo("Success",
+                              f"Image loaded!\n\n{os.path.basename(file_path)}")
         except Exception as e:
-            print(f"  ⚠ Error analyzing region: {e}")
+            messagebox.showerror("Error", f"Failed to load image:\n{str(e)}")
+            print(f"❌ Error loading image: {e}")
     
-    def suggest_parameters(self, mean_intensity: float, estimated_area: float, min_intensity: int):
-        """Suggest parameter adjustments based on target"""
-        print(f"\n  💡 Parameter suggestions:")
-        
-        # Suggest area range
-        suggested_min = max(100, estimated_area * 0.5)
-        suggested_max = min(15000, estimated_area * 2.0)
-        print(f"     Min area: {suggested_min:.0f} µm²")
-        print(f"     Max area: {suggested_max:.0f} µm²")
-        
-        # Suggest Gaussian sigma based on particle size
-        if estimated_area < 1000:
-            suggested_sigma = 2.0
-        elif estimated_area < 3000:
-            suggested_sigma = 4.0
-        else:
-            suggested_sigma = 6.0
-        print(f"     Gaussian σ: {suggested_sigma:.1f}")
-        
-        # Check if inversion might help
-        if self.mode == "DARK" and mean_intensity > 128:
-            print(f"     ⚠ Consider enabling 'Invert' (bright region detected)")
-        elif self.mode == "LIGHT" and mean_intensity < 128:
-            print(f"     ⚠ Consider enabling 'Invert' (dark region detected)")
+    def save(self, event=None) -> bool:
+        """Save parameters to JSON"""
+        try:
+            config = {
+                "bacterium": self.bacterium,
+                "structure": self.structure,
+                "mode": self.mode,
+                "parameters": {
+                    "invert_image": self.invert_image,
+                    **self.params
+                }
+            }
+            
+            filename = f"segmentation_params_{self.bacterium}_{self.structure}_{self.mode}.json"
+            
+            with open(filename, 'w') as f:
+                json.dump(config, f, indent=2)
+            
+            print(f"\n💾 Parameters saved to: {filename}")
+            return True
+        except Exception as e:
+            print(f"❌ Error saving parameters: {e}")
+            return False
     
-    def save(self):
-        """Save current parameters"""
-        config_dir = Path("config")
-        config_dir.mkdir(exist_ok=True)
+    def save_and_apply(self, event=None):
+        """Save parameters and update bacteria_configs"""
+        if not self.save():
+            messagebox.showerror("Error", "Failed to save parameters")
+            return
         
-        config_file = config_dir / f"{self.bacterium}_{self.structure}_segmentation.json"
+        # Update bacteria_configs
+        if self.bacterium not in bacteria_configs:
+            bacteria_configs[self.bacterium] = {}
         
-        config = {
-            'bacterium': self.bacterium,
-            'structure': self.structure,
-            'mode': self.mode,
-            'invert': self.invert_image,
-            'parameters': self.params,
-            'target_info': self.target_info
+        config_key = ("bacteria_segmentation" if self.structure == "bacteria"
+                     else f"inclusion_{self.mode.lower()}_segmentation")
+        
+        bacteria_configs[self.bacterium][config_key] = {
+            "invert_image": self.invert_image,
+            **self.params
         }
         
-        with open(config_file, 'w') as f:
-            json.dump(config, f, indent=2)
+        print(f"\n✅ Configuration updated: {self.bacterium} -> {config_key}")
+        messagebox.showinfo("Success", "Parameters saved and applied!")
+    
+    def _create_action_buttons(self, parent: ttk.Frame):
+        """Create bottom action buttons"""
+        action_frame = tk.Frame(parent, bg=self.COLORS['header'], height=55)
+        action_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(5, 0))
+        action_frame.pack_propagate(False)
         
-        print(f"\n✅ Parameters saved to {config_file}")
-        print(f"   Parameters: {self.params}")
+        button_container = tk.Frame(action_frame, bg=self.COLORS['header'])
+        button_container.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
         
+        style = ttk.Style()
+        style.configure("Action.TButton", font=("Segoe UI", 10, "bold"), padding=10)
+        
+        # Define buttons - conditionally include Back button
+        buttons = []
+        
+        # Only add Back button if main menu is available
+        if self._can_launch_main_menu():
+            buttons.append(("⬅ BACK", self.back, 13, None))
+        
+        buttons.extend([
+            ("💾 SAVE JSON", self.save, 15, None),
+            ("✅ SAVE & APPLY", self.save_and_apply, 18, self.COLORS['success']),
+            ("❌ QUIT", self.quit, 13, None),
+        ])
+        
+        for text, command, width, highlight in buttons:
+            if highlight:
+                frame = tk.Frame(button_container, bg=highlight, bd=3, relief=tk.RAISED)
+                frame.pack(side=tk.LEFT, padx=6)
+                btn = ttk.Button(frame, text=text, command=command, width=width,
+                            style="Action.TButton")
+                btn.pack(padx=2, pady=2)
+            else:
+                btn = ttk.Button(button_container, text=text, command=command,
+                            width=width, style="Action.TButton")
+                btn.pack(side=tk.LEFT, padx=5)
+
+    def _can_launch_main_menu(self) -> bool:
+        """Check if main menu can be launched"""
+        try:
+            import importlib.util
+            return importlib.util.find_spec("pathogen_config_manager") is not None
+        except:
+            return False
+
     def back(self):
-        """Go back (close window)"""
-        self.root.quit()
-        self.root.destroy()
-        
-    def quit(self):
+        """Close the tuner"""
+        if messagebox.askyesno("Confirm", "Close tuner?\n\nUnsaved changes will be lost."):
+            print("🔙 Closing tuner...")
+            self.root.destroy()
+
+
+
+
+
+    def quit(self, event=None):
         """Quit application"""
-        self.root.quit()
-        self.root.destroy()
-        sys.exit(0)
-        
+        if messagebox.askyesno("Confirm", "Quit application?"):
+            print("\n❌ Exiting application")
+            self.root.quit()
+            self.root.destroy()
+    
     def run(self):
         """Start the GUI"""
+        print(f"\n🚀 Starting Segmentation Tuner")
+        print(f"   Bacterium: {self.bacterium}")
+        print(f"   Structure: {self.structure}")
+        print(f"   Mode: {self.mode}")
         self.root.mainloop()
 
 
-def main():
-    """Example usage"""
-    import argparse
-    import os
-    from glob import glob
+def launch_tuner_with_setup():
+    """Launch tuner with interactive setup dialog"""
+    setup_root = tk.Tk()
+    setup_root.title("Segmentation Tuner Setup")
+    setup_root.geometry("500x400")
+    setup_root.resizable(False, False)
     
-    # Try to parse command line arguments
-    parser = argparse.ArgumentParser(description='Interactive Segmentation Parameter Tuner')
-    parser.add_argument('image_path', type=str, nargs='?', help='Path to the microscopy image')
-    parser.add_argument('--bacterium', type=str, default='Unknown Bacterium', 
-                       help='Name of the bacterium')
-    parser.add_argument('--structure', type=str, default='bacteria', 
-                       help='Type of structure (bacteria, organelle, etc.)')
-    parser.add_argument('--mode', type=str, choices=['DARK', 'LIGHT'], default='DARK',
-                       help='DARK for dark particles on light background, LIGHT for light particles')
+    style = ttk.Style()
+    style.configure("Title.TLabel", font=("Segoe UI", 12, "bold"))
+    style.configure("Section.TLabel", font=("Segoe UI", 10, "bold"))
     
-    args = parser.parse_args()
+    # Variables
+    image_path_var = tk.StringVar()
+    bacterium_var = tk.StringVar()
+    structure_var = tk.StringVar(value="bacteria")
+    mode_var = tk.StringVar(value="DARK")
     
-    # If no image path provided, try to find one
-    if args.image_path is None:
-        print("No image path provided. Searching for images...")
-        
-        # Search for images in common locations
-        search_patterns = [
-            "source/**/*ch00.tif",
-        ]
-        
-        found_images = []
-        for pattern in search_patterns:
-            found_images.extend(glob(pattern, recursive=True))
-        
-        if not found_images:
-            print(f"❌ Error: No images found in data/ directory or current directory")
-            print(f"\nCurrent directory: {os.getcwd()}")
-            print(f"\nUsage:")
-            print(f"  python feedback_tuner.py path/to/image.tif")
-            print(f"  python feedback_tuner.py path/to/image.tif --bacterium 'E. coli' --structure bacteria")
-            sys.exit(1)
-        
-        # Use the first found image
-        args.image_path = found_images[0]
-        print(f"Found {len(found_images)} image(s). Using: {args.image_path}")
-        
-        # Try to extract bacterium name from path
-        if 'klebsiella' in args.image_path.lower():
-            args.bacterium = "Klebsiella Pneumoniae"
-        elif 'ecoli' in args.image_path.lower() or 'e_coli' in args.image_path.lower():
-            args.bacterium = "E. coli"
+    # Main frame
+    main_frame = ttk.Frame(setup_root, padding=20)
+    main_frame.pack(fill=tk.BOTH, expand=True)
     
-    # Check if file exists
-    if not os.path.exists(args.image_path):
-        print(f"❌ Error: Image file not found: {args.image_path}")
-        print(f"\nCurrent directory: {os.getcwd()}")
-        print(f"\nPlease provide a valid image path.")
-        sys.exit(1)
+    # Title
+    ttk.Label(main_frame, text="🔬 Segmentation Tuner Setup",
+             style="Title.TLabel").pack(pady=(0, 20))
     
-    print(f"\n{'='*60}")
-    print(f"Loading Segmentation Tuner")
-    print(f"{'='*60}")
-    print(f"Image:     {args.image_path}")
-    print(f"Bacterium: {args.bacterium}")
-    print(f"Structure: {args.structure}")
-    print(f"Mode:      {args.mode}")
-    print(f"{'='*60}\n")
+    # Image selection
+    ttk.Label(main_frame, text="1. Select Image",
+             style="Section.TLabel").pack(anchor="w", pady=(0, 5))
     
-    try:
-        tuner = SegmentationTuner(
-            image_path=args.image_path,
-            bacterium=args.bacterium,
-            structure=args.structure,
-            mode=args.mode
+    image_frame = ttk.Frame(main_frame)
+    image_frame.pack(fill=tk.X, pady=(0, 15))
+    
+    ttk.Entry(image_frame, textvariable=image_path_var, width=40).pack(
+        side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+    
+    def browse_image():
+        filename = filedialog.askopenfilename(
+            title="Select Image",
+            filetypes=[
+                ("Image files", "*.jpg *.jpeg *.png *.bmp *.tif *.tiff"),
+                ("All files", "*.*")
+            ]
         )
+        if filename:
+            image_path_var.set(filename)
+    
+    ttk.Button(image_frame, text="Browse...", command=browse_image).pack(side=tk.LEFT)
+    
+    # Bacterium selection
+    ttk.Label(main_frame, text="2. Select Bacterium",
+             style="Section.TLabel").pack(anchor="w", pady=(0, 5))
+    
+    bacterium_combo = ttk.Combobox(
+        main_frame,
+        textvariable=bacterium_var,
+        values=list(bacteria_configs.keys()),
+        width=37,
+        state="readonly"
+    )
+    bacterium_combo.pack(fill=tk.X, pady=(0, 15))
+    if bacteria_configs:
+        bacterium_combo.current(0)
+    
+    # Structure selection
+    ttk.Label(main_frame, text="3. Select Structure",
+             style="Section.TLabel").pack(anchor="w", pady=(0, 5))
+    
+    structure_frame = ttk.Frame(main_frame)
+    structure_frame.pack(fill=tk.X, pady=(0, 15))
+    
+    ttk.Radiobutton(structure_frame, text="Bacteria",
+                   variable=structure_var, value="bacteria").pack(side=tk.LEFT, padx=(0, 20))
+    ttk.Radiobutton(structure_frame, text="Inclusions",
+                   variable=structure_var, value="inclusions").pack(side=tk.LEFT)
+    
+    # Mode selection
+    ttk.Label(main_frame, text="4. Select Mode",
+             style="Section.TLabel").pack(anchor="w", pady=(0, 5))
+    
+    mode_frame = ttk.Frame(main_frame)
+    mode_frame.pack(fill=tk.X, pady=(0, 20))
+    
+    ttk.Radiobutton(mode_frame, text="DARK particles",
+                   variable=mode_var, value="DARK").pack(side=tk.LEFT, padx=(0, 20))
+    ttk.Radiobutton(mode_frame, text="BRIGHT particles",
+                   variable=mode_var, value="BRIGHT").pack(side=tk.LEFT)
+    
+    # Buttons
+    button_frame = ttk.Frame(main_frame)
+    button_frame.pack(fill=tk.X)
+    
+    def start_tuner():
+        if not image_path_var.get():
+            messagebox.showerror("Error", "Please select an image file")
+            return
+        if not bacterium_var.get():
+            messagebox.showerror("Error", "Please select a bacterium")
+            return
         
-        tuner.run()
+        setup_root.destroy()
         
-    except Exception as e:
-        print(f"\n❌ Error creating tuner: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+        try:
+            tuner = SegmentationTuner(
+                image_path=image_path_var.get(),
+                bacterium=bacterium_var.get(),
+                structure=structure_var.get(),
+                mode=mode_var.get()
+            )
+            tuner.run()
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to start tuner:\n{str(e)}")
+    
+    ttk.Button(button_frame, text="❌ Cancel",
+              command=setup_root.destroy).pack(side=tk.LEFT, padx=(0, 10))
+    ttk.Button(button_frame, text="✅ Start Tuner",
+              command=start_tuner).pack(side=tk.LEFT)
+    
+    setup_root.mainloop()
+
+
+def launch_tuner(image_path: str, bacterium: str, structure: str, mode: str):
+    """Launch the segmentation tuner directly"""
+    tuner = SegmentationTuner(image_path, bacterium, structure, mode)
+    tuner.run()
 
 
 if __name__ == "__main__":
-    main()
+    launch_tuner_with_setup()
