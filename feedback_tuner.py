@@ -959,20 +959,20 @@ class SegmentationTuner:
             return False
     
     def save_and_apply(self, event=None):
-        
         """Save parameters and update bacteria_configs.py file"""
         if not self.save():
             messagebox.showerror("Error", "Failed to save parameters")
             return
         
-        # Update bacteria_configs.py file
+        # Update bacteria_configs.py file using AST parsing
         try:
             from bacteria_configs import SegmentationConfig
+            from config_file_manager import update_bacteria_config
             
-            # Calculate area conversion (pixels² to µm²)
+            # Calculate area conversion
             um2_per_px2 = 0.012  # Adjust if your pixel size is different
             
-            # Create SegmentationConfig from tuned parameters
+            # Create SegmentationConfig
             config = SegmentationConfig(
                 name=f"{self.bacterium}",
                 description=f"{self.structure} segmentation - Tuned {datetime.now().strftime('%Y-%m-%d')}",
@@ -980,7 +980,7 @@ class SegmentationTuner:
                 # Core segmentation
                 gaussian_sigma=float(self.params['gaussian_sigma']),
                 
-                # Size filtering (convert pixels² to µm²)
+                # Size filtering
                 min_area_um2=float(self.params['min_area']) * um2_per_px2,
                 max_area_um2=float(self.params['max_area']) * um2_per_px2,
                 
@@ -990,13 +990,13 @@ class SegmentationTuner:
                 morph_kernel_size=3,
                 morph_iterations=1,
                 
-                # Shape filters (keep defaults)
+                # Shape filters
                 min_circularity=0.0,
                 max_circularity=1.0,
                 min_aspect_ratio=0.2,
                 max_aspect_ratio=10.0,
                 
-                # Intensity filters (keep defaults)
+                # Intensity filters
                 min_mean_intensity=0,
                 max_mean_intensity=255,
                 max_edge_gradient=200,
@@ -1010,83 +1010,59 @@ class SegmentationTuner:
                 fluor_match_min_intersection_px=5.0,
             )
             
-            # Write to bacteria_configs.py
-            self._write_config_to_file(config)
+            # Use AST-based update
+            success = update_bacteria_config(
+                bacterium=self.bacterium,
+                config=config,
+                backup=True
+            )
             
-            print(f"\n✅ Configuration saved and applied: {self.bacterium}")
-            messagebox.showinfo("Success", 
-                f"Parameters saved and applied!\n\n"
-                f"Configuration updated in bacteria_configs.py\n"
-                f"Next run of dev2.py will use these parameters automatically.")
+            if success:
+                print(f"\n✅ Configuration saved: {self.bacterium}")
+                messagebox.showinfo(
+                    "Success", 
+                    f"Parameters saved and applied!\n\n"
+                    f"Configuration updated in bacteria_configs.py\n"
+                    f"Backup created: bacteria_configs.py.bak"
+                )
+            else:
+                messagebox.showerror(
+                    "Error",
+                    "Failed to update bacteria_configs.py\n"
+                    "Check console for details"
+                )
             
         except Exception as e:
             print(f"❌ Error updating bacteria_configs.py: {e}")
+            import traceback
+            traceback.print_exc()
             messagebox.showerror("Error", 
                 f"Parameters saved to JSON but failed to update bacteria_configs.py:\n{e}")
 
 
     def _write_config_to_file(self, config: 'SegmentationConfig') -> None:
-        """Write configuration to bacteria_configs.py file
+        """Write configuration using AST parsing (safe method)
         
         Args:
             config: SegmentationConfig object to write
         """
-        from pathlib import Path
+        from config_file_manager import update_bacteria_config
         
-        config_file = Path(__file__).parent / "bacteria_configs.py"
-        
-        # Read current file
-        with open(config_file, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-        
-        # Find the config block to replace
-        bacteria_key = self.bacterium.upper().replace(' ', '_')
-        start_marker = f"{bacteria_key} = SegmentationConfig("
-        end_marker = ")"
-        
-        # Find start and end indices
-        start_idx = None
-        end_idx = None
-        indent_level = 0
-        
-        for i, line in enumerate(lines):
-            if start_marker in line:
-                start_idx = i
-                indent_level = len(line) - len(line.lstrip())
-            elif start_idx is not None:
-                # Count parentheses to find matching closing paren
-                indent_level += line.count('(') - line.count(')')
-                if indent_level == 0:
-                    end_idx = i
-                    break
-        
-        # Generate new config block
-        new_config_lines = self._generate_config_block(config, bacteria_key)
-        
-        if start_idx is not None and end_idx is not None:
-            # Replace existing config
-            lines[start_idx:end_idx+1] = new_config_lines
-            print(f"  ✓ Updated existing {bacteria_key} configuration")
-        else:
-            # Add new config before DEFAULT
-            default_idx = None
-            for i, line in enumerate(lines):
-                if "DEFAULT = SegmentationConfig(" in line:
-                    default_idx = i
-                    break
+        try:
+            success = update_bacteria_config(
+                bacterium=self.bacterium,
+                config=config,
+                backup=True
+            )
             
-            if default_idx:
-                lines[default_idx:default_idx] = new_config_lines + ["\n"]
-                print(f"  ✓ Added new {bacteria_key} configuration")
+            if success:
+                print(f"  ✓ Configuration saved successfully")
             else:
-                print(f"  ⚠ Could not find insertion point, appending to end")
-                lines.extend(["\n"] + new_config_lines)
-        
-        # Write back to file
-        with open(config_file, 'w', encoding='utf-8') as f:
-            f.writelines(lines)
-        
-        print(f"  ✓ bacteria_configs.py updated successfully")
+                print(f"  ❌ Failed to save configuration")
+                
+        except Exception as e:
+            print(f"  ❌ Error updating config: {e}")
+            raise
 
 
     def _generate_config_block(self, config: 'SegmentationConfig', var_name: str) -> list[str]:
@@ -1334,6 +1310,115 @@ def launch_tuner(image_path: str, bacterium: str, structure: str, mode: str):
     """Launch the segmentation tuner directly"""
     tuner = SegmentationTuner(image_path, bacterium, structure, mode)
     tuner.run()
+
+
+bacteria_configs = {
+    "Proteus mirabilis": {
+        "bacteria_segmentation": {
+            "invert_image": False,
+            "gaussian_sigma": 15.0,
+            "brightness_adjust": 0,
+            "contrast_adjust": 1.0,
+            "threshold_offset": 0,
+            "min_area": 33.33,        # 0.4 µm² ÷ 0.012
+            "max_area": 166666.67,    # 2000 µm² ÷ 0.012
+            "dilate_iterations": 1,
+            "erode_iterations": 1,
+        },
+        "inclusion_dark_segmentation": {
+            "invert_image": False,
+            "gaussian_sigma": 2.0,
+            "brightness_adjust": 0,
+            "contrast_adjust": 1.0,
+            "threshold_offset": -10,
+            "min_area": 10,
+            "max_area": 2000,
+            "dilate_iterations": 1,
+            "erode_iterations": 1,
+        },
+        "inclusion_bright_segmentation": {
+            "invert_image": True,
+            "gaussian_sigma": 2.0,
+            "brightness_adjust": 0,
+            "contrast_adjust": 1.0,
+            "threshold_offset": -10,
+            "min_area": 10,
+            "max_area": 2000,
+            "dilate_iterations": 1,
+            "erode_iterations": 1,
+        },
+    },
+    "Klebsiella pneumoniae": {
+        "bacteria_segmentation": {
+            "invert_image": False,
+            "gaussian_sigma": 4.1,
+            "brightness_adjust": 70,
+            "contrast_adjust": 2.0,
+            "threshold_offset": -40,
+            "min_area": 41.67,        # 0.5 µm² ÷ 0.012
+            "max_area": 8333.33,      # 100 µm² ÷ 0.012
+            "dilate_iterations": 0,
+            "erode_iterations": 0,
+        },
+        "inclusion_dark_segmentation": {
+            "invert_image": False,
+            "gaussian_sigma": 2.0,
+            "brightness_adjust": 0,
+            "contrast_adjust": 1.0,
+            "threshold_offset": -10,
+            "min_area": 10,
+            "max_area": 2000,
+            "dilate_iterations": 1,
+            "erode_iterations": 1,
+        },
+        "inclusion_bright_segmentation": {
+            "invert_image": True,
+            "gaussian_sigma": 2.0,
+            "brightness_adjust": 0,
+            "contrast_adjust": 1.0,
+            "threshold_offset": -10,
+            "min_area": 10,
+            "max_area": 2000,
+            "dilate_iterations": 1,
+            "erode_iterations": 1,
+        },
+    },
+    "Streptococcus mitis": {
+        "bacteria_segmentation": {
+            "invert_image": False,
+            "gaussian_sigma": 12.0,
+            "brightness_adjust": 0,
+            "contrast_adjust": 1.0,
+            "threshold_offset": 0,
+            "min_area": 16.67,        # 0.2 µm² ÷ 0.012
+            "max_area": 4166.67,      # 50 µm² ÷ 0.012
+            "dilate_iterations": 1,
+            "erode_iterations": 1,
+        },
+        "inclusion_dark_segmentation": {
+            "invert_image": False,
+            "gaussian_sigma": 2.0,
+            "brightness_adjust": 0,
+            "contrast_adjust": 1.0,
+            "threshold_offset": -10,
+            "min_area": 10,
+            "max_area": 2000,
+            "dilate_iterations": 1,
+            "erode_iterations": 1,
+        },
+        "inclusion_bright_segmentation": {
+            "invert_image": True,
+            "gaussian_sigma": 2.0,
+            "brightness_adjust": 0,
+            "contrast_adjust": 1.0,
+            "threshold_offset": -10,
+            "min_area": 10,
+            "max_area": 2000,
+            "dilate_iterations": 1,
+            "erode_iterations": 1,
+        },
+    },
+}
 
 
 if __name__ == "__main__":

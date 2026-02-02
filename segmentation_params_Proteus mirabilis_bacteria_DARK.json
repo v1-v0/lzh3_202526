@@ -1,0 +1,16 @@
+{
+  "bacterium": "Proteus mirabilis",
+  "structure": "bacteria",
+  "mode": "DARK",
+  "parameters": {
+    "invert_image": false,
+    "gaussian_sigma": 2.1694247438928285,
+    "brightness_adjust": 0,
+    "contrast_adjust": 0.6796068184646012,
+    "threshold_offset": -25,
+    "min_area": 300.1515905603251,
+    "max_area": 6008.7532661440855,
+    "dilate_iterations": 1,
+    "erode_iterations": 1
+  }
+}
