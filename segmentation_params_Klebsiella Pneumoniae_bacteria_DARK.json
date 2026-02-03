@@ -2,14 +2,17 @@
   "bacterium": "Klebsiella Pneumoniae",
   "structure": "bacteria",
   "mode": "DARK",
+  "image_path": "C:\\Users\\hochi\\dev\\particle-scout\\source\\K-Pneumoniae\\G+\\3\\G+ microgel K.pneumoniae 3-4_ch00.tif",
+  "pixel_size_um": 0.10949166666666665,
+  "metadata_source": "metadata",
   "parameters": {
     "invert_image": false,
-    "gaussian_sigma": 4.1,
+    "gaussian_sigma": 4.04802787109618,
     "brightness_adjust": 70,
-    "contrast_adjust": 2.0,
+    "contrast_adjust": 2.0021152171208163,
     "threshold_offset": -40,
-    "min_area": 240.31,
-    "max_area": 7332.94,
+    "min_area": 349.5170254240802,
+    "max_area": 12846,
     "dilate_iterations": 0,
     "erode_iterations": 0
   }

@@ -39,7 +39,13 @@ from openpyxl.chart.marker import Marker
 from openpyxl.chart.series_factory import SeriesFactory
 from openpyxl.drawing.image import Image as XLImage
 
-from bacteria_configs import SegmentationConfig, get_config, bacteria_map, bacteria_display_names, list_available_configs
+from bacteria_configs import (
+    SegmentationConfig, 
+    get_config, 
+    bacteria_map, 
+    bacteria_display_names, 
+    list_available_configs
+)
 
 
 # ==================================================
@@ -2341,6 +2347,7 @@ def select_source_directory(max_depth=2) -> Optional[Path]:
         else:
             print("Invalid selection. Please enter a valid number or folder name.")
 
+
 def collect_configuration() -> dict:
     """Collect all user configuration upfront
     
@@ -2360,7 +2367,7 @@ def collect_configuration() -> dict:
     
     # Step 1: Source Directory
     print("━" * 80)
-    print("STEP 1/5: Select Source Directory")
+    print("STEP 1/6: Select Source Directory")  # Changed from 1/5
     print("━" * 80)
     config['source_dir'] = select_source_directory()
     if config['source_dir'] is None:
@@ -2438,20 +2445,19 @@ def collect_configuration() -> dict:
         
         print(f"  Microgel type: {detected_type}")
     
-    # Step 2: Pathogen Selection
+    # Step 2: Pathogen Selection (NEW STEP)
     print("\n" + "━" * 80)
-    print("STEP 2/5: Select Target Pathogen")
+    print("STEP 2/6: Select Target Pathogen")
     print("━" * 80)
-    
-    # Import bacteria configs
-    from bacteria_configs import bacteria_map, bacteria_display_names, list_available_configs
     
     available_configs = list_available_configs()
     
     print("\nAvailable pathogen configurations:")
     for key, bacteria_type in bacteria_map.items():
         display_name = bacteria_display_names[bacteria_type]
+        bacteria_config = get_config(bacteria_type)
         print(f"  [{key}] {display_name}")
+        #print(f"      σ={bacteria_config.gaussian_sigma:.1f}")
     
     while True:
         choice = logged_input("\nSelect pathogen (1-4, or Enter for default): ").strip()
@@ -2468,9 +2474,9 @@ def collect_configuration() -> dict:
         else:
             print("  Invalid choice. Enter 1-4 or press Enter.")
     
-    # Step 3: Dataset ID
+    # Step 3: Dataset ID (renumbered from 2)
     print("\n" + "━" * 80)
-    print("STEP 3/5: Dataset Identifier")
+    print("STEP 3/6: Dataset Identifier")
     print("━" * 80)
     
     if config.get('batch_mode', False):
@@ -2524,9 +2530,9 @@ def collect_configuration() -> dict:
                 print(f"  Confirmed: {dataset_id}")
             break
     
-    # Step 4: Percentile
+    # Step 4: Percentile (renumbered from 3)
     print("\n" + "━" * 80)
-    print("STEP 4/5: Percentile for Top/Bottom Filtering")
+    print("STEP 4/6: Percentile for Top/Bottom Filtering")
     print("━" * 80)
     print("\nEnter threshold percentage:")
     print("  → Default: 30% (recommended)")
@@ -2551,9 +2557,9 @@ def collect_configuration() -> dict:
             except ValueError:
                 print("Invalid input. Enter a number between 1 and 40, or press Enter.")
     
-    # Step 5: Clinical Classification Threshold
+    # Step 5: Clinical Classification Threshold (renumbered from 4)
     print("\n" + "━" * 80)
-    print("STEP 5/5: Clinical Classification Threshold")
+    print("STEP 5/6: Clinical Classification Threshold")
     print("━" * 80)
     print("\nEnter threshold percentage:")
     print("  → Default: 5% (recommended)")
@@ -2584,7 +2590,6 @@ def collect_configuration() -> dict:
     return config
 
 
-
 def display_configuration_summary(config: dict) -> None:
     """Display configuration summary before processing"""
     print("\n" + "="*80)
@@ -2594,7 +2599,7 @@ def display_configuration_summary(config: dict) -> None:
     if config.get('batch_mode', False):
         print(f"Mode: BATCH PROCESSING")
         print(f"1. Base Directory: {config['source_dir']}")
-        print(f"2. Pathogen: {config.get('bacteria_type', 'default')}")  # NEW
+        print(f"2. Pathogen: {config.get('bacteria_type', 'default')}")
         print(f"3. Dataset Base ID: {config.get('dataset_id_base', 'N/A')}")
         print(f"   → Processing:")
         for subdir in config['subdirs']:
@@ -2605,20 +2610,22 @@ def display_configuration_summary(config: dict) -> None:
     else:
         print(f"Mode: SINGLE PROCESSING")
         print(f"1. Source Directory: {config['source_dir']}")
-        print(f"2. Pathogen: {config.get('bacteria_type', 'default')}")  # NEW
+        print(f"2. Pathogen: {config.get('bacteria_type', 'default')}")
         print(f"3. Dataset ID: {config['dataset_id']}")
         print(f"4. Percentile: {config['percentile']*100:.0f}%")
         print(f"5. Microgel Type: {config['microgel_type'].capitalize()}")
         print(f"6. Clinical Threshold: {config['threshold_pct']*100:.1f}%")
     
     # Show bacteria config details
-    from bacteria_configs import get_config
     bacteria_config = get_config(config.get('bacteria_type', 'default'))
     print(f"\nPathogen Configuration:")
     print(f"  Name: {bacteria_config.name}")
+    print(f"  Description: {bacteria_config.description}")
     print(f"  Gaussian σ: {bacteria_config.gaussian_sigma:.1f}")
     print(f"  Area range: {bacteria_config.min_area_um2:.1f} - {bacteria_config.max_area_um2:.1f} µm²")
     print(f"  Aspect ratio: {bacteria_config.min_aspect_ratio:.1f} - {bacteria_config.max_aspect_ratio:.1f}")
+    print(f"  Circularity: {bacteria_config.min_circularity:.1f} - {bacteria_config.max_circularity:.1f}")
+    print(f"  Solidity: ≥ {bacteria_config.min_solidity:.2f}")
     
     print("\n" + "="*80 + "\n")
     
@@ -2628,6 +2635,7 @@ def display_configuration_summary(config: dict) -> None:
         raise SystemExit("Configuration cancelled by user.")
     
     print("\nConfiguration confirmed - starting processing...\n")
+
 
 # ==================================================
 # Image Processing
@@ -3104,7 +3112,6 @@ def display_log_analysis(log_analysis: Dict, log_path: Path):
     
     print("="*80)
 
-
 def process_single_dataset(config: dict) -> dict:
     """Process a single dataset with bacteria-specific configuration
     
@@ -3125,8 +3132,6 @@ def process_single_dataset(config: dict) -> dict:
         bacteria_type = config.get('bacteria_type', 'default')
         
         # Load bacteria-specific configuration
-        from bacteria_configs import get_config, print_config_comparison
-        
         bacteria_config = get_config(bacteria_type)
         
         print(f"\n📋 Using configuration: {bacteria_config.name}")
@@ -3178,7 +3183,9 @@ def process_single_dataset(config: dict) -> dict:
         
         print(f"   Configuration saved: {config_info_path.name}")
         
-        # Step 1: Collect images
+        # ==================================================
+        # STEP 1: Collect images
+        # ==================================================
         print("━" * 80)
         print("STEP 1/7: Collecting Images")
         print("━" * 80)
@@ -3197,7 +3204,9 @@ def process_single_dataset(config: dict) -> dict:
         total_images = sum(len(list(g.glob(IMAGE_GLOB))) for g in all_groups if g)
         print(f"  Found {total_images} images across {len(all_groups)} groups")
         
-        # Step 2: Process images
+        # ==================================================
+        # STEP 2: Process images
+        # ==================================================
         print("\n" + "━" * 80)
         print("STEP 2/7: Processing Images")
         print("━" * 80)
@@ -3226,112 +3235,172 @@ def process_single_dataset(config: dict) -> dict:
         
         print(f"\n  Processed: {success_count} succeeded, {fail_count} failed")
         
-        # Step 3: Consolidate to Excel
+        # ==================================================
+        # STEP 3: Consolidate to Excel
+        # ==================================================
         print("\n" + "━" * 80)
         print("STEP 3/7: Consolidating to Excel")
         print("━" * 80)
         
-        # Consolidate each group folder
-        for group_dir in sorted(output_dir.iterdir()):
-            if group_dir.is_dir() and len(list(group_dir.glob("*/object_stats.csv"))) > 0:
+        excel_files_created = []
+        for group_dir in output_dir.iterdir():
+            if group_dir.is_dir():
                 group_name = group_dir.name
-                display_name = _display_group_name(group_name)
-                print(f"  → Consolidating {display_name}...")
-                consolidate_to_excel(group_dir, group_name, percentile)
+                print(f"  Consolidating group: {group_name}")
+                
+                try:
+                    consolidate_to_excel(group_dir, group_name, percentile)
+                    excel_path = group_dir / f"{group_name}_master.xlsx"
+                    if excel_path.exists():
+                        excel_files_created.append(excel_path)
+                        print(f"    ✓ Created: {excel_path.name}")
+                except Exception as e:
+                    print(f"    ✗ Failed: {e}")
         
-        print("  Excel consolidation complete")
+        print(f"\n  Created {len(excel_files_created)} Excel files")
         
-        # Step 4: Generate comparison plots
+        # ==================================================
+        # STEP 4: Generate Statistics
+        # ==================================================
         print("\n" + "━" * 80)
-        print("STEP 4/7: Generating Comparison Plots")
+        print("STEP 4/7: Generating Statistics")
         print("━" * 80)
         
-        print("  → Generating pairwise plots...")
-        generate_pairwise_group_vs_control_plots(
-            output_dir, 
-            percentile, 
-            dataset_id,
-            threshold_pct,
-            microgel_type
-        )
-        
-        print("  → Generating all-groups plot...")
-        all_groups_plot = generate_error_bar_comparison_with_threshold(
-            output_dir=output_dir,
-            percentile=percentile,
-            restrict_to_groups=None,
-            output_path=None,
-            title_suffix="",
-            dataset_id=dataset_id,
-            threshold_pct=threshold_pct,
-            microgel_type=microgel_type,
-        )
-        print("  Plots generated")
-        
-        # Step 5: Embed plots into Excel
-        print("\n" + "━" * 80)
-        print("STEP 5/7: Embedding Plots into Excel")
-        print("━" * 80)
-        
-        # Embed plots into each group's Excel file
-        for group_dir in sorted(output_dir.iterdir()):
-            if not group_dir.is_dir():
-                continue
-
-            if group_dir.name.lower().startswith("control"):
-                plot = all_groups_plot
-            elif re.fullmatch(r"\d+", group_dir.name):
-                plot = group_dir / f"Group_{group_dir.name}_vs_Control_threshold.png"
+        try:
+            export_group_statistics_to_csv(output_dir)
+            stats_file = output_dir / "group_statistics_summary.csv"
+            if stats_file.exists():
+                print(f"  ✓ Statistics summary: {stats_file.name}")
+                
+                # Display statistics
+                stats_df = pd.read_csv(stats_file)
+                print("\n  Group Statistics:")
+                print(stats_df.to_string(index=False))
             else:
-                continue
-
-            if plot and plot.exists():
-                embed_comparison_plots_into_all_excels(group_dir, percentile, plot_path=plot)
+                print("  ⚠ Statistics file not created")
+        except Exception as e:
+            print(f"  ✗ Failed to generate statistics: {e}")
         
-        print("  Plots embedded")
-        
-        # Step 6: Export statistics
+        # ==================================================
+        # STEP 5: Clinical Classification
+        # ==================================================
         print("\n" + "━" * 80)
-        print("STEP 6/7: Exporting Statistics")
+        print("STEP 5/7: Clinical Classification")
         print("━" * 80)
         
-        export_group_statistics_to_csv(output_dir)
-        print("  Statistics exported")
+        classification_df = None
+        classification_path = None
         
-        # Step 7: Clinical classification
+        try:
+            classification_df = classify_groups_clinical(
+                output_root=output_dir,
+                microgel_type=microgel_type,
+                threshold_pct=threshold_pct
+            )
+            
+            if not classification_df.empty:
+                classification_path = export_clinical_classification(
+                    output_root=output_dir,
+                    classification_df=classification_df,
+                    microgel_type=microgel_type
+                )
+                
+                if classification_path:
+                    print(f"  ✓ Classification saved: {classification_path.name}")
+                    
+                    # Display classification results
+                    print("\n  Clinical Classification Results:")
+                    print(classification_df.to_string(index=False))
+                else:
+                    print("  ⚠ Classification export failed")
+            else:
+                print("  ⚠ No classification data generated")
+                print("     (May need control group data)")
+        except Exception as e:
+            print(f"  ✗ Classification failed: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # ==================================================
+        # STEP 6: Generate Plots
+        # ==================================================
         print("\n" + "━" * 80)
-        print("STEP 7/7: Clinical Classification")
+        print("STEP 6/7: Generating Plots")
         print("━" * 80)
         
-        classification_df = classify_groups_clinical(
-            output_dir,
-            microgel_type=microgel_type,
-            threshold_pct=threshold_pct
-        )
+        comparison_plot = None
         
-        if not classification_df.empty:
-            export_clinical_classification(
-                output_dir,
-                classification_df,
+        try:
+            # Generate main comparison plot
+            comparison_plot = generate_error_bar_comparison_with_threshold(
+                output_dir=output_dir,
+                percentile=percentile,
+                dataset_id=dataset_id,
+                threshold_pct=threshold_pct,
                 microgel_type=microgel_type
             )
-            print("  Classification complete")
-        else:
-            print("  ⚠ No classification data available")
+            
+            if comparison_plot:
+                print(f"  ✓ Comparison plot: {comparison_plot.name}")
+            else:
+                print("  ⚠ Comparison plot not generated")
+            
+            # Generate pairwise plots
+            print("\n  Generating pairwise plots...")
+            generate_pairwise_group_vs_control_plots(
+                output_root=output_dir,
+                percentile=percentile,
+                dataset_id=dataset_id,
+                threshold_pct=threshold_pct,
+                microgel_type=microgel_type
+            )
+            
+            # Count generated plots
+            plot_files = list(output_dir.rglob("*.png"))
+            print(f"  ✓ Generated {len(plot_files)} total plot files")
+            
+        except Exception as e:
+            print(f"  ✗ Plot generation failed: {e}")
+            import traceback
+            traceback.print_exc()
         
-        print()
+        # ==================================================
+        # STEP 7: Embed Results in Excel
+        # ==================================================
+        print("\n" + "━" * 80)
+        print("STEP 7/7: Embedding Results in Excel")
+        print("━" * 80)
         
+        try:
+            if comparison_plot and comparison_plot.exists():
+                embed_comparison_plots_into_all_excels(
+                    output_root=output_dir,
+                    percentile=percentile,
+                    plot_path=comparison_plot
+                )
+                print("  ✓ Plots embedded in Excel files")
+            else:
+                print("  ⚠ No comparison plot to embed")
+        except Exception as e:
+            print(f"  ✗ Embedding failed: {e}")
+        
+        # ==================================================
+        # Return results
+        # ==================================================
         return {
             'success': True,
             'output_dir': output_dir,
             'dataset_id': dataset_id,
             'bacteria_config': bacteria_config.name,
             'images_processed': success_count,
-            'images_failed': fail_count
+            'images_failed': fail_count,
+            'excel_files': len(excel_files_created),
+            'classification_file': str(classification_path) if classification_path else None,
+            'comparison_plot': str(comparison_plot) if comparison_plot else None,
         }
         
     except Exception as e:
-        print(f"\nProcessing failed: {e}")
+        print(f"\n✗ Processing failed: {e}")
         import traceback
         traceback.print_exc()
         return {
@@ -3339,8 +3408,6 @@ def process_single_dataset(config: dict) -> dict:
             'error': str(e),
             'dataset_id': config.get('dataset_id', 'Unknown')
         }
-
-
 
 def launch_results_viewer(output_dir: Optional[Path] = None):
     """Launch GUI viewer for results

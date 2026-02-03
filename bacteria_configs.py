@@ -46,21 +46,25 @@ class SegmentationConfig:
 
 
 PROTEUS_MIRABILIS = SegmentationConfig(name='Proteus mirabilis',
-    description='bacteria segmentation - Tuned 2026-02-02', gaussian_sigma=
-    2.1694247438928285, min_area_um2=3.601819086723901, max_area_um2=
-    72.10503919372903, dilate_iterations=1, erode_iterations=1,
+    description=
+    'bacteria segmentation - Tuned 2026-02-03 (Pixel: 0.109492 µm)',
+    gaussian_sigma=2.0, min_area_um2=3.011627521317946, max_area_um2=
+    136.90877392394526, dilate_iterations=0, erode_iterations=0,
     morph_kernel_size=3, morph_iterations=1, min_circularity=0.0,
     max_circularity=1.0, min_aspect_ratio=0.2, max_aspect_ratio=10.0,
     min_mean_intensity=0, max_mean_intensity=255, max_edge_gradient=200,
     min_solidity=0.3, max_fraction_of_image=0.25, fluor_min_area_um2=3.0,
     fluor_match_min_intersection_px=5.0)
-KLEBSIELLA_PNEUMONIAE = SegmentationConfig(name='Klebsiella pneumoniae',
+KLEBSIELLA_PNEUMONIAE = SegmentationConfig(name='Klebsiella Pneumoniae',
     description=
-    'Encapsulated, non-motile, lactose-fermenting. Rod-shaped, 0.3-1.0 × 0.6-6.0 µm'
-    , gaussian_sigma=4.1, min_area_um2=0.5, max_area_um2=100.0,
-    min_aspect_ratio=1.2, max_aspect_ratio=10.0, min_circularity=0.3,
-    max_circularity=0.85, dilate_iterations=0, erode_iterations=0,
-    max_edge_gradient=150)
+    'bacteria segmentation - Tuned 2026-02-03 (Pixel: 0.109492 µm)',
+    gaussian_sigma=4.04802787109618, min_area_um2=4.1901586697916935,
+    max_area_um2=154.0033084420833, dilate_iterations=0, erode_iterations=0,
+    morph_kernel_size=3, morph_iterations=1, min_circularity=0.0,
+    max_circularity=1.0, min_aspect_ratio=0.2, max_aspect_ratio=10.0,
+    min_mean_intensity=0, max_mean_intensity=255, max_edge_gradient=200,
+    min_solidity=0.3, max_fraction_of_image=0.25, fluor_min_area_um2=3.0,
+    fluor_match_min_intersection_px=5.0)
 STREPTOCOCCUS_MITIS = SegmentationConfig(name='Streptococcus mitis',
     description=
     'Alpha-hemolytic, gram-positive cocci in chains. Diameter 0.5-0.75 µm',

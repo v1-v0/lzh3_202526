@@ -30,7 +30,12 @@ except ImportError:
     REPORTLAB_AVAILABLE = False
 
 
+
+
 class ClinicalResultsViewer:
+
+    
+
 
     def __init__(self, root):
         self.root = root
@@ -90,33 +95,94 @@ class ClinicalResultsViewer:
         
         # Load preferences
         self.load_preferences()
-    
+
+    def find_group_folders(self, parent_dir: Path, img_type: Optional[str] = None) -> List[Path]:
+        """Find group folders in both single and batch mode structures
+        
+        Args:
+            parent_dir: Root output directory
+            img_type: 'positive', 'negative', or None for single mode
+            
+        Returns:
+            List of group folder paths
+        """
+        group_folders = []
+        
+        # Check if batch mode (has Positive/Negative subfolders)
+        positive_dir = parent_dir / "Positive"
+        negative_dir = parent_dir / "Negative"
+        
+        is_batch_mode = positive_dir.exists() or negative_dir.exists()
+        
+        if is_batch_mode:
+            # Batch mode: look inside Positive or Negative folder
+            if img_type == "positive" and positive_dir.exists():
+                search_dir = positive_dir
+            elif img_type == "negative" and negative_dir.exists():
+                search_dir = negative_dir
+            else:
+                print(f"[WARN] {img_type} folder not found in batch mode")
+                return []
+            
+            # Find all group folders inside the type folder
+            for item in search_dir.iterdir():
+                if item.is_dir():
+                    # Check if it contains sample subfolders with images
+                    sample_folders = [d for d in item.iterdir() 
+                                    if d.is_dir() and any(d.glob("*.png"))]
+                    if sample_folders:
+                        group_folders.append(item)
+        else:
+            # Single mode: groups are directly in output_dir
+            for item in parent_dir.iterdir():
+                if item.is_dir():
+                    # Check if it contains sample subfolders with images
+                    sample_folders = [d for d in item.iterdir() 
+                                    if d.is_dir() and any(d.glob("*.png"))]
+                    if sample_folders:
+                        group_folders.append(item)
+        
+        return sorted(group_folders)
+
+
     def find_group_folder(self, parent_dir: Path, group_name: str) -> Optional[Path]:
         """Find group folder with flexible naming (handles 'Control group' vs 'Control')
         
         Args:
-            parent_dir: Parent directory to search in (e.g., outputs/test5/Positive)
-            group_name: Group name to search for (e.g., 'Control', '1', '2')
+            parent_dir: Directory to search in (either root, Positive, or Negative folder)
+            group_name: Group name to find (e.g., '1', '2', 'Control')
             
         Returns:
-            Path to found folder, or None if not found
+            Path to group folder, or None if not found
         """
         if not parent_dir.exists():
             return None
         
+        # Normalize group name
+        group_normalized = group_name.lower().strip()
+        
         # For control group, check multiple variations
-        if group_name.lower() == 'control':
+        if 'control' in group_normalized:
             for folder in parent_dir.iterdir():
-                if folder.is_dir() and 'control' in folder.name.lower():
-                    return folder
+                if folder.is_dir():
+                    folder_normalized = folder.name.lower().strip()
+                    # Match any variation: "Control", "Control group", "control_group", etc.
+                    if 'control' in folder_normalized:
+                        return folder
             return None
         
-        # For numbered groups, exact match
+        # For numbered groups, try exact match first
         exact_match = parent_dir / group_name
         if exact_match.exists():
             return exact_match
         
+        # Try case-insensitive match
+        for folder in parent_dir.iterdir():
+            if folder.is_dir() and folder.name.lower() == group_name.lower():
+                return folder
+        
         return None
+
 
     def setup_styles(self):
         """Configure ttk styles"""
@@ -630,8 +696,8 @@ class ClinicalResultsViewer:
     
 
     def navigate_sample(self, img_type: str, direction: int):
-        """Navigate to next/previous sample for both types (synchronized)"""
-        # Get the appropriate folder list to determine max length
+        """Navigate to next/previous sample (independent navigation)"""
+        # Get the appropriate folder list
         if img_type == 'positive':
             folders = self.pos_sample_folders
             current_idx = self.current_pos_sample_index
@@ -640,6 +706,7 @@ class ClinicalResultsViewer:
             current_idx = self.current_neg_sample_index
         
         if not folders:
+            messagebox.showwarning("No Samples", f"No {img_type} samples found for this group")
             return
         
         # Calculate new index with wrap-around
@@ -650,21 +717,18 @@ class ClinicalResultsViewer:
         elif new_idx >= len(folders):
             new_idx = 0
         
-        # **CRITICAL FIX: Update BOTH indices to keep them synchronized**
-        self.current_pos_sample_index = new_idx
-        self.current_neg_sample_index = new_idx
+        # **FIX: Update only the relevant index (independent navigation)**
+        if img_type == 'positive':
+            self.current_pos_sample_index = new_idx
+        else:
+            self.current_neg_sample_index = new_idx
         
-        # Reload the current step for BOTH types with the new sample
+        # Reload only the selected type with bounds checking
         if self.current_step_filename:
-            self.load_processing_image_by_index('positive', 
+            self.load_processing_image_by_index(img_type, 
                                                 self.current_step_filename,
                                                 self.current_step_description,
                                                 new_idx)
-            self.load_processing_image_by_index('negative',
-                                                self.current_step_filename,
-                                                self.current_step_description,
-                                                new_idx)
-
 
 
 
@@ -676,52 +740,115 @@ class ClinicalResultsViewer:
             idx = self.current_neg_sample_index
         
         self.load_processing_image_by_index(img_type, filename, description, idx)
-    
+
+
     def load_processing_image_by_index(self, img_type: str, filename: str, 
                                     description: str, sample_idx: int):
-        """Load processing image for specific type and sample index"""
+        """Load processing image for specific type and sample index - BATCH MODE COMPATIBLE
+        
+        Args:
+            img_type: 'positive' or 'negative'
+            filename: Image filename to load
+            description: Step description
+            sample_idx: Sample index within group
+        """
         if self.current_folder is None or self.selected_group is None:
             self.update_processing_description("Please select a group first", img_type)
             self.clear_processing_canvas(img_type)
+            self.update_sample_label(img_type, 0, 0)
             return
         
-        # Get the appropriate folder list
+        # **DEBUG: Print current state**
+        print(f"\n=== DEBUG load_processing_image_by_index ===")
+        print(f"img_type: {img_type}")
+        print(f"filename: {filename}")
+        print(f"selected_group: {self.selected_group}")
+        print(f"sample_idx: {sample_idx}")
+        
+        # **FIX: Use pre-populated sample folder lists**
         sample_folders = self.pos_sample_folders if img_type == 'positive' else self.neg_sample_folders
         
+        print(f"sample_folders count: {len(sample_folders)}")
+        
+        # Check if sample folders exist
         if not sample_folders:
-            self.update_processing_description(f"No {img_type} samples found", img_type)
+            msg = f"No {img_type} samples found for Group {self.selected_group}"
+            print(f"ERROR: {msg}")
+            self.update_processing_description(msg, img_type)
             self.clear_processing_canvas(img_type)
+            self.update_sample_label(img_type, 0, 0)
+            
+            # Update title to show no samples
+            if img_type == 'positive':
+                self.pos_title.config(text="(No samples)")
+            else:
+                self.neg_title.config(text="(No samples)")
             return
         
+        # **FIX: Strict bounds checking**
         if sample_idx >= len(sample_folders):
             sample_idx = len(sample_folders) - 1
         if sample_idx < 0:
             sample_idx = 0
         
-        # Update BOTH indices together (dependent navigation)
-        self.current_pos_sample_index = sample_idx
-        self.current_neg_sample_index = sample_idx
+        # **FIX: Update ONLY the appropriate index**
+        if img_type == 'positive':
+            self.current_pos_sample_index = sample_idx
+        else:
+            self.current_neg_sample_index = sample_idx
         
+        # Get the sample folder
         sample_folder = sample_folders[sample_idx]
         image_path = sample_folder / filename
         
+        print(f"sample_folder: {sample_folder}")
+        print(f"image_path: {image_path}")
+        print(f"image_path.exists(): {image_path.exists()}")
+        
+        # Update title with sample name
+        sample_name = sample_folder.name
+        if img_type == 'positive':
+            self.pos_title.config(text=f"[{sample_name}]")
+        else:
+            self.neg_title.config(text=f"[{sample_name}]")
+        
+        # Check if image exists
         if not image_path.exists():
-            self.update_processing_description(
-                f"Image not found: {filename}\n{description}\nSample: {sample_idx + 1}/{len(sample_folders)}", 
-                img_type
-            )
+            # **DEBUG: List what files ARE in the folder**
+            print(f"Available files in {sample_folder}:")
+            try:
+                for file in sorted(sample_folder.glob("*.png"))[:10]:  # First 10 PNG files
+                    print(f"  - {file.name}")
+            except Exception as e:
+                print(f"Error listing files: {e}")
+            
+            msg = f"Image not found: {filename}\n"
+            msg += f"{description}\n"
+            msg += f"Sample: {sample_name} ({sample_idx + 1}/{len(sample_folders)})\n"
+            msg += f"Path: {image_path}"
+            self.update_processing_description(msg, img_type)
             self.clear_processing_canvas(img_type)
             self.update_sample_label(img_type, sample_idx + 1, len(sample_folders))
             return
         
         try:
-            # Load and display image
+            # Load image
+            print(f"Loading image: {image_path}")
             img = Image.open(image_path)
+            print(f"Image loaded successfully: {img.size}")
             
-            # Get canvas
-            canvas = self.pos_canvas if img_type == 'positive' else self.neg_canvas
+            # Store original image reference
+            if img_type == 'positive':
+                self.current_pos_image = img.copy()
+                self.current_pos_path = image_path
+                canvas = self.pos_canvas
+            else:
+                self.current_neg_image = img.copy()
+                self.current_neg_path = image_path
+                canvas = self.neg_canvas
             
-            # Calculate scaling to fit canvas while maintaining aspect ratio
+            # Get canvas dimensions
+            canvas.update_idletasks()  # Force update to get actual size
             canvas_width = canvas.winfo_width()
             canvas_height = canvas.winfo_height()
             
@@ -729,33 +856,79 @@ class ClinicalResultsViewer:
             if canvas_width <= 1:
                 canvas_width = 600
             if canvas_height <= 1:
-                canvas_height = 300
+                canvas_height = 400
             
+            # Calculate scaling to fit canvas while maintaining aspect ratio
             img_width, img_height = img.size
-            scale = min(canvas_width / img_width, canvas_height / img_height, 1.0)
+            scale_w = canvas_width / img_width
+            scale_h = canvas_height / img_height
+            scale = min(scale_w, scale_h, 1.0) * 0.95  # 95% to leave margin
             
             new_width = int(img_width * scale)
             new_height = int(img_height * scale)
             
+            # Resize image with high-quality resampling
             img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            
+            # Convert to PhotoImage
             photo = ImageTk.PhotoImage(img_resized)
             
-            # Store reference
+            # Store reference to prevent garbage collection
             self.photo_refs[id(photo)] = photo
             
-            # Clear and display
-            canvas.delete("all")
-            canvas.create_image(canvas_width // 2, canvas_height // 2, image=photo, anchor=tk.CENTER)
+            if img_type == 'positive':
+                self.photo_positive = photo
+            else:
+                self.photo_negative = photo
             
-            # Update description and sample counter
-            sample_name = sample_folder.name
-            desc_text = f"{description}\nSample: {sample_name} ({sample_idx + 1}/{len(sample_folders)})"
+            # Clear canvas and display image
+            canvas.delete("all")
+            x = canvas_width // 2
+            y = canvas_height // 2
+            canvas.create_image(x, y, image=photo, anchor=tk.CENTER)
+            
+            # Update zoom label
+            zoom_pct = int(scale * 100)
+            if img_type == 'positive':
+                self.pos_zoom_label.config(text=f"{zoom_pct}%")
+            else:
+                self.neg_zoom_label.config(text=f"{zoom_pct}%")
+            
+            # Update description with full information
+            desc_text = f"{description}\n"
+            desc_text += f"Sample: {sample_name} ({sample_idx + 1}/{len(sample_folders)})\n"
+            desc_text += f"Image: {filename}\n"
+            desc_text += f"Size: {img_width} × {img_height} px"
+            
             self.update_processing_description(desc_text, img_type)
+            
+            # Update sample counter
+            self.update_sample_label(img_type, sample_idx + 1, len(sample_folders))
+            
+        except FileNotFoundError:
+            msg = f"File not found: {filename}\n"
+            msg += f"Path: {image_path}\n"
+            msg += f"Sample: {sample_name} ({sample_idx + 1}/{len(sample_folders)})"
+            self.update_processing_description(msg, img_type)
+            self.clear_processing_canvas(img_type)
+            self.update_sample_label(img_type, sample_idx + 1, len(sample_folders))
+            
+        except (OSError, UnicodeDecodeError) as e:
+            msg = f"Error accessing file (encoding issue):\n{filename}\n"
+            msg += f"Error: {str(e)}\n"
+            msg += f"Sample: {sample_name} ({sample_idx + 1}/{len(sample_folders)})"
+            self.update_processing_description(msg, img_type)
+            self.clear_processing_canvas(img_type)
             self.update_sample_label(img_type, sample_idx + 1, len(sample_folders))
             
         except Exception as e:
-            self.update_processing_description(f"Error loading image: {str(e)}", img_type)
+            msg = f"Error loading image: {str(e)}\n"
+            msg += f"File: {filename}\n"
+            msg += f"Sample: {sample_name} ({sample_idx + 1}/{len(sample_folders)})\n"
+            msg += f"Path: {image_path}"
+            self.update_processing_description(msg, img_type)
             self.clear_processing_canvas(img_type)
+            self.update_sample_label(img_type, sample_idx + 1, len(sample_folders))
 
     def prev_pos_sample(self):
         """Navigate to previous positive sample (updates both)"""
@@ -1047,11 +1220,36 @@ class ClinicalResultsViewer:
         most_recent = max(folders, key=lambda f: f.stat().st_mtime)
         self.load_results_from_folder(most_recent)
     
+    def debug_print_structure(self):
+        """Debug: Print folder structure"""
+        if self.current_folder is None:
+            print("No folder loaded")
+            return
+        
+        print("\n=== FOLDER STRUCTURE ===")
+        print(f"Root: {self.current_folder}")
+        
+        for item in sorted(self.current_folder.iterdir())[:20]:  # First 20 items
+            if item.is_dir():
+                print(f"\n📁 {item.name}/")
+                for subitem in sorted(item.iterdir())[:5]:  # First 5 subitems
+                    if subitem.is_dir():
+                        png_count = len(list(subitem.glob("*.png")))
+                        print(f"  📁 {subitem.name}/ ({png_count} PNGs)")
+                    else:
+                        print(f"  📄 {subitem.name}")
+    
+    
+    
+    
     def load_results_from_folder(self, folder_path: Path):
         """Load and parse results from folder"""
         try:
             self.status_var.set(f"Loading from {folder_path.name}...")
             self.current_folder = folder_path
+
+            # **DEBUG: Print structure**
+            self.debug_print_structure()
             
             # Clear existing data
             for item in self.tree.get_children():
@@ -1284,35 +1482,55 @@ class ClinicalResultsViewer:
         self.info_var.set(f"Selected: {group_text}")
     
 
+
     def update_step_availability(self):
         """Update step tree to show which images are available"""
         if self.selected_group is None or self.current_folder is None:
             return
         
-        # Use correct folder naming
-        folder_name = "Control" if self.selected_group.lower() == 'control' else self.selected_group
-        pos_folder = self.current_folder / "Positive" / folder_name
-        neg_folder = self.current_folder / "Negative" / folder_name
+        # **FIX: Detect batch mode and navigate correctly**
+        positive_dir = self.current_folder / "Positive"
+        negative_dir = self.current_folder / "Negative"
+        is_batch_mode = positive_dir.exists() or negative_dir.exists()
+        
+        if is_batch_mode:
+            # Batch mode: groups are inside Positive/Negative folders
+            pos_group_folder = self.find_group_folder(positive_dir, self.selected_group)
+            neg_group_folder = self.find_group_folder(negative_dir, self.selected_group)
+        else:
+            # Single mode: groups are at root level
+            pos_group_folder = self.find_group_folder(self.current_folder, self.selected_group)
+            neg_group_folder = None  # No separate negative in single mode
         
         # **CRITICAL FIX: Populate sample folder lists**
         self.pos_sample_folders = []
         self.neg_sample_folders = []
         
-        if pos_folder.exists():
-            self.pos_sample_folders = sorted([d for d in pos_folder.iterdir() if d.is_dir()])
+        if pos_group_folder and pos_group_folder.exists():
+            # Get all subdirectories that contain images
+            self.pos_sample_folders = sorted([d for d in pos_group_folder.iterdir() 
+                                            if d.is_dir() and any(d.glob("*.png"))])
+            
+            print(f"DEBUG: Found {len(self.pos_sample_folders)} positive samples in {pos_group_folder}")
+            for folder in self.pos_sample_folders[:3]:  # Print first 3
+                print(f"  - {folder.name}")
+        else:
+            print(f"DEBUG: Positive group folder not found for {self.selected_group}")
         
-        if neg_folder.exists():
-            self.neg_sample_folders = sorted([d for d in neg_folder.iterdir() if d.is_dir()])
+        if neg_group_folder and neg_group_folder.exists():
+            # Get negative samples
+            self.neg_sample_folders = sorted([d for d in neg_group_folder.iterdir() 
+                                            if d.is_dir() and any(d.glob("*.png"))])
+            
+            print(f"DEBUG: Found {len(self.neg_sample_folders)} negative samples in {neg_group_folder}")
+            for folder in self.neg_sample_folders[:3]:
+                print(f"  - {folder.name}")
+        else:
+            print(f"DEBUG: Negative group folder not found for {self.selected_group}")
         
         # Get first image folders for checking availability
-        pos_images = None
-        neg_images = None
-        
-        if self.pos_sample_folders:
-            pos_images = self.pos_sample_folders[0]
-        
-        if self.neg_sample_folders:
-            neg_images = self.neg_sample_folders[0]
+        pos_images = self.pos_sample_folders[0] if self.pos_sample_folders else None
+        neg_images = self.neg_sample_folders[0] if self.neg_sample_folders else None
         
         # Update tree items
         for phase_item in self.steps_tree.get_children():
@@ -1320,13 +1538,13 @@ class ClinicalResultsViewer:
                 current_text = self.steps_tree.item(step_item, "text")
                 filename = current_text.replace("○ ", "").replace("✓ ", "").replace("◐ ", "").replace("✗ ", "")
                 
-                # Check if file exists in either location
+                # Check if file exists
                 pos_exists = pos_images is not None and (pos_images / filename).exists()
                 neg_exists = neg_images is not None and (neg_images / filename).exists()
                 
                 if pos_exists and neg_exists:
                     self.steps_tree.item(step_item, text=f"✓ {filename}", 
-                                    tags=('step', 'both'))
+                                    tags=('step', 'available'))
                 elif pos_exists or neg_exists:
                     self.steps_tree.item(step_item, text=f"◐ {filename}",
                                     tags=('step', 'partial'))
@@ -1335,10 +1553,9 @@ class ClinicalResultsViewer:
                                     tags=('step', 'missing'))
         
         # Configure tags
-        self.steps_tree.tag_configure('both', foreground='green')
+        self.steps_tree.tag_configure('available', foreground='green')
         self.steps_tree.tag_configure('partial', foreground='orange')
         self.steps_tree.tag_configure('missing', foreground='gray')
-
 
 
     def display_overview(self):
