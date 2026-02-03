@@ -48,8 +48,8 @@ class SegmentationConfig:
 PROTEUS_MIRABILIS = SegmentationConfig(name='Proteus mirabilis',
     description=
     'bacteria segmentation - Tuned 2026-02-03 (Pixel: 0.109492 µm)',
-    gaussian_sigma=2.0, min_area_um2=3.011627521317946, max_area_um2=
-    136.90877392394526, dilate_iterations=0, erode_iterations=0,
+    gaussian_sigma=2.0, min_area_um2=4.748410266437161, max_area_um2=
+    178.46626085124677, dilate_iterations=0, erode_iterations=0,
     morph_kernel_size=3, morph_iterations=1, min_circularity=0.0,
     max_circularity=1.0, min_aspect_ratio=0.2, max_aspect_ratio=10.0,
     min_mean_intensity=0, max_mean_intensity=255, max_edge_gradient=200,

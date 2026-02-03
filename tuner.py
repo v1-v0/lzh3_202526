@@ -605,12 +605,69 @@ class SegmentationTuner:
         except Exception as e:
             print(f"⚠ Error loading metadata, using fallback: {e}")
             return self.FALLBACK_UM_PER_PX, False
-    
+
+
+
+
     def _initialize_parameters(self):
-        """Initialize parameters"""
+        """Initialize parameters - loads saved config if available"""
+        # Priority 1: Load from JSON (most recent tuner session)
+        json_filename = f"segmentation_params_{self.bacterium}_{self.structure}_{self.mode}.json"
+        
+        if Path(json_filename).exists():
+            try:
+                with open(json_filename, 'r') as f:
+                    saved_data = json.load(f)
+                
+                params_dict = saved_data['parameters'].copy()
+                self.invert_image = params_dict.pop('invert_image', False)
+                self.params = params_dict
+                
+                print(f"✅ Restored previous session from: {json_filename}")
+                return
+                
+            except Exception as e:
+                print(f"⚠ Could not load JSON session: {e}")
+        
+        # Priority 2: Load from bacteria_configs.py
+        config_key = self.bacterium.lower().replace(' ', '_').replace('.', '')
+        
+        if config_key in _CONFIGS:
+            try:
+                saved_config = _CONFIGS[config_key]
+                um2_per_px2 = self.pixel_size_um ** 2
+                
+                self.params = {
+                    "gaussian_sigma": float(saved_config.gaussian_sigma),
+                    "brightness_adjust": 0,
+                    "contrast_adjust": 1.0,
+                    "threshold_offset": 0,
+                    "min_area": float(saved_config.min_area_um2 / um2_per_px2),
+                    "max_area": float(saved_config.max_area_um2 / um2_per_px2),
+                    "dilate_iterations": int(saved_config.dilate_iterations),
+                    "erode_iterations": int(saved_config.erode_iterations),
+                }
+                
+                print(f"✅ Loaded config for {self.bacterium} from bacteria_configs.py")
+                print(f"   • Gaussian σ: {self.params['gaussian_sigma']:.2f}")
+                print(f"   • Min area: {self.params['min_area']:.1f} px "
+                    f"({saved_config.min_area_um2:.2f} µm²)")
+                print(f"   • Max area: {self.params['max_area']:.1f} px "
+                    f"({saved_config.max_area_um2:.2f} µm²)")
+                
+                self.invert_image = False
+                return
+                
+            except Exception as e:
+                print(f"⚠ Error loading bacteria config: {e}")
+        
+        # Priority 3: Use defaults
+        print(f"ℹ️ No saved config found for '{self.bacterium}' - using defaults")
         self.params = self.DEFAULT_PARAMS.copy()
         self.invert_image = False
-    
+
+
+
     def setup_gui(self):
         """Setup the GUI"""
         self.root.title(f"Segmentation Tuner - {self.bacterium}")

@@ -2,7 +2,7 @@
   "bacterium": "Proteus mirabilis",
   "structure": "bacteria",
   "mode": "DARK",
-  "image_path": "C:\\Users\\hochi\\dev\\particle-scout\\source\\P. mirabilis G- microgel No centrifuge\\2\\G- microgel P.mirabilis 2-1_ch00.tif",
+  "image_path": "C:\\Users\\hochi\\dev\\particle-scout\\source\\P. mirabilis\\G-\\2\\G- microgel P.mirabilis 2-4_ch00.tif",
   "pixel_size_um": 0.10949166666666665,
   "metadata_source": "metadata",
   "parameters": {
@@ -10,9 +10,9 @@
     "gaussian_sigma": 2.0,
     "brightness_adjust": 0,
     "contrast_adjust": 1.0,
-    "threshold_offset": -37,
-    "min_area": 251.21127286300907,
-    "max_area": 11420.080046451822,
+    "threshold_offset": -30,
+    "min_area": 396.0829082161672,
+    "max_area": 14886.54763386006,
     "dilate_iterations": 0,
     "erode_iterations": 0
   }
