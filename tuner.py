@@ -20,6 +20,8 @@ from dataclasses import dataclass, fields
 import xml.etree.ElementTree as ET
 import ast
 
+from bacteria_configs import SegmentationConfig, _manager
+
 try:
     import astor
 except ImportError:
@@ -29,30 +31,6 @@ except ImportError:
 # ==================================================
 # SECTION 1: Configuration Data Classes
 # ==================================================
-
-@dataclass
-class SegmentationConfig:
-    """Configuration for bacteria segmentation parameters"""
-    name: str
-    description: str
-    gaussian_sigma: float = 15.0
-    min_area_um2: float = 3.0
-    max_area_um2: float = 2000.0
-    dilate_iterations: int = 1
-    erode_iterations: int = 1
-    morph_kernel_size: int = 3
-    morph_iterations: int = 1
-    min_circularity: float = 0.0
-    max_circularity: float = 1.0
-    min_aspect_ratio: float = 0.2
-    max_aspect_ratio: float = 10.0
-    min_mean_intensity: float = 0
-    max_mean_intensity: float = 255
-    max_edge_gradient: float = 200
-    min_solidity: float = 0.3
-    max_fraction_of_image: float = 0.25
-    fluor_min_area_um2: float = 3.0
-    fluor_match_min_intersection_px: float = 5.0
 
     @property
     def min_area_px(self) -> float:
@@ -517,13 +495,18 @@ class SegmentationTuner:
     
     DEFAULT_PARAMS = {
         "gaussian_sigma": 2.0,
-        "brightness_adjust": 0,
-        "contrast_adjust": 1.0,
-        "threshold_offset": 0,
         "min_area": 20,
         "max_area": 5000,
         "dilate_iterations": 0,
         "erode_iterations": 0,
+    }
+    
+    DEFAULT_SHAPE_FILTERS = {
+        "min_circularity": 0.0,
+        "max_circularity": 1.0,
+        "min_aspect_ratio": 0.2,
+        "max_aspect_ratio": 10.0,
+        "min_solidity": 0.3,
     }
     
     FALLBACK_UM_PER_PX = 0.109492
@@ -543,12 +526,19 @@ class SegmentationTuner:
     
     def __init__(self, root: tk.Tk, image_path: str, bacterium: str, structure: str, mode: str, return_callback=None):
         """Initialize the segmentation tuner"""
+        # ✅ CRITICAL: Store root reference FIRST
+        self.master = root  # <-- This was missing!
         self.root = root
+        
         self.image_path = Path(image_path)
         self.bacterium = bacterium
         self.structure = structure
         self.mode = mode
         self.return_callback = return_callback
+        
+        # Initialize image navigation attributes
+        self.image_list = []
+        self.image_index = 0
         
         if not validate_path_encoding(self.image_path):
             raise ValueError(f"Path contains problematic characters: {image_path}")
@@ -569,6 +559,166 @@ class SegmentationTuner:
         
         self.setup_gui()
     
+    def quit(self, event=None):
+        """Quit the application"""
+        if messagebox.askyesno("Quit", "Are you sure you want to quit?\n\nUnsaved changes will be lost."):
+            self.master.quit()
+            self.master.destroy()
+    
+    def back(self, event=None):
+        """Go back to previous image or state"""
+        if hasattr(self, 'image_index') and self.image_index > 0:
+            self.image_index -= 1
+            self.load_image_at_index(self.image_index)
+        else:
+            messagebox.showinfo("Info", "Already at the first image")
+    
+    def load_image_at_index(self, index: int):
+        """Load image at specified index from image list"""
+        if not hasattr(self, 'image_list') or not self.image_list:
+            messagebox.showwarning("Warning", "No image list available")
+            return
+        
+        if 0 <= index < len(self.image_list):
+            image_path = self.image_list[index]
+            try:
+                self.original_image = self._load_image(image_path)
+                self.image_path = image_path
+                self.image_index = index
+                
+                # Update window title
+                self.master.title(f"Tuner - [{index + 1}/{len(self.image_list)}] {image_path.name}")
+                
+                # Refresh visualization
+                self.update_visualization()
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to load image:\n{e}")
+        else:
+            messagebox.showwarning("Warning", f"Invalid image index: {index}")
+    
+    def save_and_apply(self, event=None):
+        """Save parameters to JSON and update bacteria configuration"""
+        # First save to temporary JSON (session file)
+        if not self.save():
+            messagebox.showerror("Error", "Failed to save parameters")
+            return
+        
+        try:
+            um2_per_px2 = self.pixel_size_um ** 2
+            
+            # Create config object (using the imported SegmentationConfig)
+            config = SegmentationConfig(
+                name=f"{self.bacterium}",
+                description=f"{self.structure} segmentation - Tuned {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                gaussian_sigma=float(self.params['gaussian_sigma']),
+                min_area_um2=float(self.params['min_area']) * um2_per_px2,
+                max_area_um2=float(self.params['max_area']) * um2_per_px2,
+                dilate_iterations=int(self.params['dilate_iterations']),
+                erode_iterations=int(self.params['erode_iterations']),
+                morph_kernel_size=3,
+                morph_iterations=1,
+                min_circularity=float(self.min_circularity),
+                max_circularity=float(self.max_circularity),
+                min_aspect_ratio=float(self.min_aspect_ratio),
+                max_aspect_ratio=float(self.max_aspect_ratio),
+                min_mean_intensity=0,
+                max_mean_intensity=255,
+                max_edge_gradient=200,
+                min_solidity=float(self.min_solidity),
+                max_fraction_of_image=0.25,
+                fluor_min_area_um2=3.0,
+                fluor_match_min_intersection_px=5.0,
+                pixel_size_um=float(self.pixel_size_um),
+                last_modified=datetime.now().isoformat(),
+                tuned_by="Interactive Tuner"
+            )
+            
+            # Convert bacterium name to key
+            bacteria_key = self.bacterium.lower().replace(' ', '_').replace('.', '').replace('-', '_')
+            
+            # Update configuration using imported manager
+            success = _manager.update_config(bacteria_key, config)
+            
+            if success:
+                config_file = _manager._get_config_path(bacteria_key)
+                
+                messagebox.showinfo(
+                    "Success",
+                    f"✓ Configuration saved!\n\n"
+                    f"Bacterium: {self.bacterium}\n"
+                    f"Saved to: {config_file.name}\n\n"
+                    f"The configuration is now available for dev2a.py"
+                )
+                
+                print(f"\n{'='*80}")
+                print(f"CONFIGURATION SAVED")
+                print(f"{'='*80}")
+                print(f"Bacterium: {self.bacterium}")
+                print(f"Key: {bacteria_key}")
+                print(f"File: {config_file}")
+                print(f"\nParameters:")
+                print(f"  Gaussian σ: {config.gaussian_sigma:.2f}")
+                print(f"  Min Area: {config.min_area_um2:.2f} µm²")
+                print(f"  Max Area: {config.max_area_um2:.2f} µm²")
+                print(f"  Circularity: {config.min_circularity:.2f} - {config.max_circularity:.2f}")
+                print(f"  Aspect Ratio: {config.min_aspect_ratio:.2f} - {config.max_aspect_ratio:.2f}")
+                print(f"  Solidity: ≥ {config.min_solidity:.2f}")
+                print(f"  Pixel size: {config.pixel_size_um:.6f} µm")
+                print(f"{'='*80}\n")
+            else:
+                messagebox.showerror(
+                    "Error",
+                    "Failed to update configuration\n"
+                    "Check console for details"
+                )
+                
+        except Exception as e:
+            print(f"✗ Error saving configuration: {e}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Error", f"Failed to save configuration:\n{e}")
+    
+    def save(self) -> bool:
+        """Save current parameters to temporary JSON file
+        
+        Returns:
+            bool: True if successful
+        """
+        try:
+            session_file = Path("tuner_session.json")
+            
+            session_data = {
+                'bacterium': self.bacterium,
+                'structure': self.structure,
+                'pixel_size_um': self.pixel_size_um,
+                'parameters': {
+                    'gaussian_sigma': self.params['gaussian_sigma'],
+                    'min_area': self.params['min_area'],
+                    'max_area': self.params['max_area'],
+                    'dilate_iterations': self.params['dilate_iterations'],
+                    'erode_iterations': self.params['erode_iterations'],
+                    'min_circularity': self.min_circularity,
+                    'max_circularity': self.max_circularity,
+                    'min_aspect_ratio': self.min_aspect_ratio,
+                    'max_aspect_ratio': self.max_aspect_ratio,
+                    'min_solidity': self.min_solidity,
+                },
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            with open(session_file, 'w', encoding='utf-8') as f:
+                json.dump(session_data, f, indent=2)
+            
+            print(f"✓ Session saved to: {session_file}")
+            return True
+            
+        except Exception as e:
+            print(f"✗ Failed to save session: {e}")
+            return False
+    
+    
+         
     def _load_image(self, image_path: Path) -> np.ndarray:
         """Load and validate image"""
         if not image_path.exists():
@@ -607,10 +757,12 @@ class SegmentationTuner:
             return self.FALLBACK_UM_PER_PX, False
 
 
-
-
     def _initialize_parameters(self):
         """Initialize parameters - loads saved config if available"""
+        # ✅ ALWAYS initialize shape filters first (default values)
+        for key, value in self.DEFAULT_SHAPE_FILTERS.items():
+            setattr(self, key, value)
+        
         # Priority 1: Load from JSON (most recent tuner session)
         json_filename = f"segmentation_params_{self.bacterium}_{self.structure}_{self.mode}.json"
         
@@ -639,14 +791,18 @@ class SegmentationTuner:
                 
                 self.params = {
                     "gaussian_sigma": float(saved_config.gaussian_sigma),
-                    "brightness_adjust": 0,
-                    "contrast_adjust": 1.0,
-                    "threshold_offset": 0,
                     "min_area": float(saved_config.min_area_um2 / um2_per_px2),
                     "max_area": float(saved_config.max_area_um2 / um2_per_px2),
                     "dilate_iterations": int(saved_config.dilate_iterations),
                     "erode_iterations": int(saved_config.erode_iterations),
                 }
+                
+                # ✅ Override shape filters from config (if available)
+                self.min_circularity = float(saved_config.min_circularity)
+                self.max_circularity = float(saved_config.max_circularity)
+                self.min_aspect_ratio = float(saved_config.min_aspect_ratio)
+                self.max_aspect_ratio = float(saved_config.max_aspect_ratio)
+                self.min_solidity = float(saved_config.min_solidity)
                 
                 print(f"✅ Loaded config for {self.bacterium} from bacteria_configs.py")
                 print(f"   • Gaussian σ: {self.params['gaussian_sigma']:.2f}")
@@ -654,6 +810,9 @@ class SegmentationTuner:
                     f"({saved_config.min_area_um2:.2f} µm²)")
                 print(f"   • Max area: {self.params['max_area']:.1f} px "
                     f"({saved_config.max_area_um2:.2f} µm²)")
+                print(f"   • Circularity: {self.min_circularity:.2f} - {self.max_circularity:.2f}")
+                print(f"   • Aspect ratio: {self.min_aspect_ratio:.2f} - {self.max_aspect_ratio:.2f}")
+                print(f"   • Solidity: ≥ {self.min_solidity:.2f}")
                 
                 self.invert_image = False
                 return
@@ -665,8 +824,8 @@ class SegmentationTuner:
         print(f"ℹ️ No saved config found for '{self.bacterium}' - using defaults")
         self.params = self.DEFAULT_PARAMS.copy()
         self.invert_image = False
-
-
+        
+        # Shape filters already initialized at the start of this method
 
     def setup_gui(self):
         """Setup the GUI"""
@@ -681,17 +840,18 @@ class SegmentationTuner:
         self._create_header(main_container)
         content_frame = self._create_content_area(main_container)
         self._create_control_panel(main_container)
-        self._create_action_buttons(main_container)
         
         print("✅ GUI Setup Complete")
         self.update_visualization()
+        print("✅ Initial visualization complete")
     
     def _create_header(self, parent: ttk.Frame):
-        """Create header section"""
+        """Create header section with buttons"""
         header_frame = tk.Frame(parent, bg=self.COLORS['header'], height=45)
         header_frame.pack(fill=tk.X, pady=(0, 5))
         header_frame.pack_propagate(False)
         
+        # Left side - Title
         title_text = f"🔬 {self.bacterium} - {self.structure}"
         tk.Label(
             header_frame,
@@ -701,6 +861,7 @@ class SegmentationTuner:
             fg="white"
         ).pack(side=tk.LEFT, padx=20, pady=6)
         
+        # Mode badge
         mode_text = f"Mode: {self.mode} {'(Inverted)' if self.invert_image else ''}"
         tk.Label(
             header_frame,
@@ -713,6 +874,7 @@ class SegmentationTuner:
             relief=tk.RAISED
         ).pack(side=tk.LEFT, pady=6)
         
+        # Pixel size badge
         pixel_color = self.COLORS['success'] if self.has_metadata else self.COLORS['warning']
         pixel_text = f"Pixel: {self.pixel_size_um:.6f} µm"
         if not self.has_metadata:
@@ -729,6 +891,7 @@ class SegmentationTuner:
             relief=tk.RAISED
         ).pack(side=tk.LEFT, padx=10, pady=6)
         
+        # Load image button
         tk.Button(
             header_frame,
             text="📁 LOAD IMAGE",
@@ -742,6 +905,7 @@ class SegmentationTuner:
             cursor="hand2"
         ).pack(side=tk.LEFT, padx=10, pady=6)
         
+        # Contour count (right side, before buttons)
         self.contour_count_label = tk.Label(
             header_frame,
             text="Contours: 0",
@@ -752,7 +916,60 @@ class SegmentationTuner:
             pady=4,
             relief=tk.RAISED
         )
-        self.contour_count_label.pack(side=tk.RIGHT, padx=20, pady=6)
+        self.contour_count_label.pack(side=tk.RIGHT, padx=(10, 20), pady=6)
+        
+        # Right side - Action buttons
+        tk.Button(
+            header_frame,
+            text="❌ QUIT",
+            font=("Segoe UI", 9, "bold"),
+            bg=self.COLORS['danger'],
+            fg="white",
+            padx=12,
+            pady=4,
+            relief=tk.RAISED,
+            command=self.quit,
+            cursor="hand2"
+        ).pack(side=tk.RIGHT, padx=5, pady=6)
+        
+        tk.Button(
+            header_frame,
+            text="✅ SAVE & APPLY",
+            font=("Segoe UI", 9, "bold"),
+            bg=self.COLORS['success'],
+            fg="white",
+            padx=12,
+            pady=4,
+            relief=tk.RAISED,
+            command=self.save_and_apply,
+            cursor="hand2"
+        ).pack(side=tk.RIGHT, padx=5, pady=6)
+        
+        tk.Button(
+            header_frame,
+            text="💾 SAVE JSON",
+            font=("Segoe UI", 9, "bold"),
+            bg=self.COLORS['secondary'],
+            fg="white",
+            padx=12,
+            pady=4,
+            relief=tk.RAISED,
+            command=self.save,
+            cursor="hand2"
+        ).pack(side=tk.RIGHT, padx=5, pady=6)
+        
+        tk.Button(
+            header_frame,
+            text="⬅ BACK",
+            font=("Segoe UI", 9, "bold"),
+            bg=self.COLORS['secondary'],
+            fg="white",
+            padx=12,
+            pady=4,
+            relief=tk.RAISED,
+            command=self.back,
+            cursor="hand2"
+        ).pack(side=tk.RIGHT, padx=5, pady=6)
     
     def _create_content_area(self, parent: ttk.Frame) -> ttk.Frame:
         """Create main content area"""
@@ -838,20 +1055,17 @@ class SegmentationTuner:
             ("Structure:", self.structure, self.COLORS['purple']),
             ("Mode:", f"{self.mode} particles", self.COLORS['primary']),
             ("Pixel size:", f"{self.pixel_size_um:.6f} µm/px", 
-             self.COLORS['success'] if self.has_metadata else self.COLORS['warning']),
+            self.COLORS['success'] if self.has_metadata else self.COLORS['warning']),
             ("Metadata:", metadata_status, 
-             self.COLORS['success'] if self.has_metadata else self.COLORS['warning']),
+            self.COLORS['success'] if self.has_metadata else self.COLORS['warning']),
         ])
         
         ttk.Separator(inner, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
         
-        self._add_param_section(inner, "Preprocessing", [
+        self._add_param_section(inner, "Segmentation", [
             ("Invert:", "ON" if self.invert_image else "OFF",
-             self.COLORS['success'] if self.invert_image else self.COLORS['gray']),
+            self.COLORS['success'] if self.invert_image else self.COLORS['gray']),
             ("Gaussian σ:", f"{self.params['gaussian_sigma']:.1f}", None),
-            ("Brightness:", f"{self.params['brightness_adjust']:+.0f}", None),
-            ("Contrast:", f"{self.params['contrast_adjust']:.2f}", None),
-            ("Threshold Δ:", f"{self.params['threshold_offset']:+.0f}", None),
         ])
         
         ttk.Separator(inner, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
@@ -866,9 +1080,18 @@ class SegmentationTuner:
             ("Dilate iter:", str(self.params["dilate_iterations"]), None),
             ("Erode iter:", str(self.params["erode_iterations"]), None),
         ])
-    
+        
+        ttk.Separator(inner, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+        
+        self._add_param_section(inner, "Shape Filters (Auto-applied)", [
+            ("Circularity:", f"{self.min_circularity:.2f} - {self.max_circularity:.2f}", None),
+            ("Aspect ratio:", f"{self.min_aspect_ratio:.2f} - {self.max_aspect_ratio:.2f}", None),
+            ("Solidity:", f"≥ {self.min_solidity:.2f}", None),
+        ])
+
+
     def _add_param_section(self, parent: ttk.Frame, title: str,
-                           params: List[Tuple[str, str, Optional[str]]]):
+                        params: List[Tuple[str, str, Optional[str]]]):
         """Add a parameter display section"""
         tk.Label(
             parent,
@@ -911,7 +1134,8 @@ class SegmentationTuner:
             value_label.pack(side=tk.LEFT)
             
             self.param_labels[label_text] = value_label
-    
+
+
     def _create_target_analysis_section(self, parent: ttk.Frame):
         """Create target analysis section"""
         header = tk.Frame(parent, bg=self.COLORS['warning'], height=26)
@@ -985,115 +1209,284 @@ class SegmentationTuner:
         slider_frame = ttk.Frame(panel, relief=tk.SUNKEN, borderwidth=1)
         slider_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
         
-        self.fig_sliders = Figure(figsize=(18, 2.2), facecolor='#f8f9fa')
+        self.fig_sliders = Figure(figsize=(18, 3.5), facecolor='#f8f9fa')
         self.canvas_sliders = FigureCanvasTkAgg(self.fig_sliders, slider_frame)
         self.canvas_sliders.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         
         self._create_sliders()
-    
+
+
     def _create_sliders(self):
-        """Create parameter sliders"""
-        self.fig_sliders.text(0.195, 0.95, 'PREPROCESSING', ha='center', va='top',
-                             fontsize=9, fontweight='bold', color=self.COLORS['header'])
-        self.fig_sliders.text(0.695, 0.95, 'FILTERING & MORPHOLOGY', ha='center', va='top',
-                             fontsize=9, fontweight='bold', color=self.COLORS['header'])
+        """Create parameter sliders with organized layout"""
+        # Clear any existing content
+        self.fig_sliders.clear()
         
-        slider_configs = {
-            'left': [
-                ("gaussian_sigma", "Gaussian σ", 0.5, 20.0, 0.72, 0.04),
-                ("brightness_adjust", "Brightness", -100, 100, 0.51, 0.04),
-                ("contrast_adjust", "Contrast", 0.5, 3.0, 0.30, 0.04),
-                ("threshold_offset", "Threshold Δ", -50, 50, 0.09, 0.04),
-            ],
-            'right': [
-                ("min_area", "Min Area (px)", 10, 5000, 0.72, 0.51),
-                ("max_area", "Max Area (px)", 100, 20000, 0.51, 0.51),
-                ("dilate_iterations", "Dilate", 0, 5, 0.30, 0.51),
-                ("erode_iterations", "Erode", 0, 5, 0.09, 0.51),
-            ]
-        }
+        # Section headers with better positioning
+        self.fig_sliders.text(0.18, 0.97, 'SEGMENTATION', ha='center', va='top',
+                            fontsize=9, fontweight='bold', color=self.COLORS['header'])
+        self.fig_sliders.text(0.50, 0.97, 'FILTERING & MORPHOLOGY', ha='center', va='top',
+                            fontsize=9, fontweight='bold', color=self.COLORS['header'])
+        self.fig_sliders.text(0.82, 0.97, 'SHAPE FILTERS', ha='center', va='top',
+                            fontsize=9, fontweight='bold', color=self.COLORS['header'])
         
-        slider_height = 0.13
-        slider_width = 0.38
+        slider_height = 0.10
+        slider_width = 0.25
         
-        for param_key, label, vmin, vmax, y_pos, x_start in slider_configs['left']:
-            ax = self.fig_sliders.add_axes((x_start, y_pos, slider_width, slider_height))
-            valstep = 1 if "Brightness" in label or "Threshold" in label else None
-            slider = Slider(ax, label, vmin, vmax, valinit=self.params[param_key],
-                          valstep=valstep, color=self.COLORS['primary'])
-            slider.on_changed(lambda val, key=param_key: self.update_parameter(key, val))
-            self.sliders[param_key] = slider
+        # Column positions (left edge of each slider)
+        col1_x = 0.04   # Left column
+        col2_x = 0.36   # Middle column
+        col3_x = 0.68   # Right column
         
-        for param_key, label, vmin, vmax, y_pos, x_start in slider_configs['right']:
-            ax = self.fig_sliders.add_axes((x_start, y_pos, slider_width, slider_height))
-            valstep = 1 if "iter" in param_key else None
-            slider = Slider(ax, label, vmin, vmax, valinit=self.params[param_key],
-                          valstep=valstep, color=self.COLORS['info'])
-            slider.on_changed(lambda val, key=param_key: self.update_parameter(key, val))
-            self.sliders[param_key] = slider
+        # Row positions (bottom edge of each slider)
+        row1_y = 0.78
+        row2_y = 0.62
+        row3_y = 0.46
+        row4_y = 0.30
+        row5_y = 0.14
         
+        # ==================================================
+        # COLUMN 1: SEGMENTATION & ASPECT RATIO
+        # ==================================================
+        
+        # Row 1: Gaussian σ
+        ax = self.fig_sliders.add_axes((col1_x, row1_y, slider_width, slider_height))
+        slider = Slider(ax, 'Gaussian σ', 0.5, 20.0, 
+                    valinit=self.params['gaussian_sigma'],
+                    color=self.COLORS['primary'])
+        slider.on_changed(lambda val: self.update_parameter('gaussian_sigma', val))
+        self.sliders['gaussian_sigma'] = slider
+        
+        # Row 3: Min Aspect Ratio
+        ax = self.fig_sliders.add_axes((col1_x, row3_y, slider_width, slider_height))
+        slider = Slider(ax, 'Min Aspect', 0.1, 5.0,
+                    valinit=self.min_aspect_ratio,
+                    valstep=0.1, color=self.COLORS['purple'])
+        slider.on_changed(lambda val: self.update_shape_filter('min_aspect_ratio', val))
+        self.sliders['min_aspect_ratio'] = slider
+        
+        # Row 4: Max Aspect Ratio
+        ax = self.fig_sliders.add_axes((col1_x, row4_y, slider_width, slider_height))
+        slider = Slider(ax, 'Max Aspect', 1.0, 20.0,
+                    valinit=self.max_aspect_ratio,
+                    valstep=0.1, color=self.COLORS['purple'])
+        slider.on_changed(lambda val: self.update_shape_filter('max_aspect_ratio', val))
+        self.sliders['max_aspect_ratio'] = slider
+        
+        # ==================================================
+        # COLUMN 2: FILTERING & MORPHOLOGY
+        # ==================================================
+        
+        # Row 1: Min Area
+        ax = self.fig_sliders.add_axes((col2_x, row1_y, slider_width, slider_height))
+        slider = Slider(ax, 'Min Area (px)', 10, 5000,
+                    valinit=self.params['min_area'],
+                    valstep=10, color=self.COLORS['info'])
+        slider.on_changed(lambda val: self.update_parameter('min_area', val))
+        self.sliders['min_area'] = slider
+        
+        # Row 2: Max Area
+        ax = self.fig_sliders.add_axes((col2_x, row2_y, slider_width, slider_height))
+        slider = Slider(ax, 'Max Area (px)', 100, 20000,
+                    valinit=self.params['max_area'],
+                    valstep=100, color=self.COLORS['info'])
+        slider.on_changed(lambda val: self.update_parameter('max_area', val))
+        self.sliders['max_area'] = slider
+        
+        # Row 3: Dilate
+        ax = self.fig_sliders.add_axes((col2_x, row3_y, slider_width, slider_height))
+        slider = Slider(ax, 'Dilate Iter', 0, 5,
+                    valinit=self.params['dilate_iterations'],
+                    valstep=1, color=self.COLORS['warning'])
+        slider.on_changed(lambda val: self.update_parameter('dilate_iterations', val))
+        self.sliders['dilate_iterations'] = slider
+        
+        # Row 4: Erode
+        ax = self.fig_sliders.add_axes((col2_x, row4_y, slider_width, slider_height))
+        slider = Slider(ax, 'Erode Iter', 0, 5,
+                    valinit=self.params['erode_iterations'],
+                    valstep=1, color=self.COLORS['warning'])
+        slider.on_changed(lambda val: self.update_parameter('erode_iterations', val))
+        self.sliders['erode_iterations'] = slider
+        
+        # ==================================================
+        # COLUMN 3: SHAPE FILTERS
+        # ==================================================
+        
+        # Row 1: Min Circularity
+        ax = self.fig_sliders.add_axes((col3_x, row1_y, slider_width, slider_height))
+        slider = Slider(ax, 'Min Circular', 0.0, 1.0,
+                    valinit=self.min_circularity,
+                    valstep=0.01, color=self.COLORS['purple'])
+        slider.on_changed(lambda val: self.update_shape_filter('min_circularity', val))
+        self.sliders['min_circularity'] = slider
+        
+        # Row 2: Max Circularity
+        ax = self.fig_sliders.add_axes((col3_x, row2_y, slider_width, slider_height))
+        slider = Slider(ax, 'Max Circular', 0.0, 1.0,
+                    valinit=self.max_circularity,
+                    valstep=0.01, color=self.COLORS['purple'])
+        slider.on_changed(lambda val: self.update_shape_filter('max_circularity', val))
+        self.sliders['max_circularity'] = slider
+        
+        # Row 3: Min Solidity
+        ax = self.fig_sliders.add_axes((col3_x, row3_y, slider_width, slider_height))
+        slider = Slider(ax, 'Min Solidity', 0.0, 1.0,
+                    valinit=self.min_solidity,
+                    valstep=0.01, color=self.COLORS['purple'])
+        slider.on_changed(lambda val: self.update_shape_filter('min_solidity', val))
+        self.sliders['min_solidity'] = slider
+        
+        # ==================================================
+        # CONTROL BUTTONS (Bottom rows)
+        # ==================================================
+        
+        # INVERT button
         invert_color = self.COLORS['success'] if self.invert_image else self.COLORS['gray']
         invert_text = f'INVERT\n{"ON" if self.invert_image else "OFF"}'
         
-        ax_invert = self.fig_sliders.add_axes((0.915, 0.51, 0.07, 0.34))
+        ax_invert = self.fig_sliders.add_axes((col2_x, row5_y, 0.13, slider_height * 1.5))
         self.btn_invert = Button(ax_invert, invert_text, color=invert_color,
                                 hovercolor=self.COLORS['success'])
         self.btn_invert.on_clicked(self.toggle_invert)
         
-        ax_apply = self.fig_sliders.add_axes((0.915, 0.09, 0.07, 0.34))
+        # APPLY SUGGESTIONS button
+        ax_apply = self.fig_sliders.add_axes((col2_x + 0.15, row5_y, 0.13, slider_height * 1.5))
         self.btn_apply = Button(ax_apply, "APPLY\nSUGGESTIONS",
-                               color=self.COLORS['primary'],
-                               hovercolor='#5dade2')
+                            color=self.COLORS['primary'],
+                            hovercolor='#5dade2')
         self.btn_apply.on_clicked(self.apply_suggestions)
-    
+
+
+
     def process_image(self):
-        """Process image with current parameters"""
+        """Process image - MATCHES dev2a.py segmentation approach"""
         img = self.original_image.copy()
         
+        # Apply inversion if needed
         if self.invert_image:
             img = cv2.bitwise_not(img)
         
-        img = cv2.convertScaleAbs(
-            img,
-            alpha=self.params["contrast_adjust"],
-            beta=self.params["brightness_adjust"]
+        # ============================================================
+        # BACKGROUND SUBTRACTION APPROACH (matches dev2a.py)
+        # ============================================================
+        
+        # Step 1: Create background model with Gaussian blur
+        bg = cv2.GaussianBlur(
+            img, (0, 0),
+            sigmaX=self.params["gaussian_sigma"],
+            sigmaY=self.params["gaussian_sigma"]
         )
         
-        if self.params["gaussian_sigma"] > 0:
-            ksize = int(2 * np.ceil(2 * self.params["gaussian_sigma"]) + 1)
-            if ksize % 2 == 0:
-                ksize += 1
-            img = cv2.GaussianBlur(img, (ksize, ksize), self.params["gaussian_sigma"])
+        # Step 2: Subtract original from background to enhance particles
+        enhanced = cv2.subtract(bg, img)
         
-        self.processed_image = img
+        # Step 3: Additional smoothing
+        enhanced_blur = cv2.GaussianBlur(enhanced, (3, 3), 0)
         
-        threshold_value = float(img.mean()) + self.params["threshold_offset"]
-        thresh_type = cv2.THRESH_BINARY_INV if self.mode == "DARK" else cv2.THRESH_BINARY
-        _, binary = cv2.threshold(img, threshold_value, 255, thresh_type)
+        self.processed_image = enhanced_blur
         
+        # ============================================================
+        # OTSU THRESHOLDING (matches dev2a.py)
+        # ============================================================
+        _, binary = cv2.threshold(
+            enhanced_blur, 0, 255,
+            cv2.THRESH_BINARY + cv2.THRESH_OTSU
+        )
+        
+        # ============================================================
+        # MORPHOLOGICAL OPERATIONS (matches dev2a.py)
+        # ============================================================
+        kernel = np.ones((3, 3), np.uint8)
+        
+        # Close operation (combines dilation + erosion)
+        binary = cv2.morphologyEx(
+            binary, cv2.MORPH_CLOSE, kernel,
+            iterations=1  # Hardcoded in dev2a
+        )
+        
+        # Dilate
         if self.params["dilate_iterations"] > 0:
-            kernel = np.ones((3, 3), np.uint8)
-            binary = cv2.dilate(binary, kernel,
-                              iterations=int(self.params["dilate_iterations"]))
+            binary = cv2.dilate(
+                binary, kernel,
+                iterations=int(self.params["dilate_iterations"])
+            )
         
+        # Erode
         if self.params["erode_iterations"] > 0:
-            kernel = np.ones((3, 3), np.uint8)
-            binary = cv2.erode(binary, kernel,
-                             iterations=int(self.params["erode_iterations"]))
+            binary = cv2.erode(
+                binary, kernel,
+                iterations=int(self.params["erode_iterations"])
+            )
         
         self.binary_mask = binary
         
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # ============================================================
+        # CONTOUR DETECTION AND FILTERING (matches dev2a.py)
+        # ============================================================
+        contours, _ = cv2.findContours(
+            binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
         
         self.contours = []
         self.contour_areas = []
         
+        # Calculate image-based thresholds
+        um2_per_px2 = self.pixel_size_um ** 2
+        H, W = img.shape[:2]
+        img_area_px = float(H * W)
+        max_big_area_px = 0.25 * img_area_px  # MAX_FRACTION_OF_IMAGE_AREA
+        
+        # Filter contours
         for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if self.params["min_area"] <= area <= self.params["max_area"]:
-                self.contours.append(cnt)
-                self.contour_areas.append(area)
-    
+            area_px = float(cv2.contourArea(cnt))
+            
+            # Skip zero-area contours
+            if area_px <= 0:
+                continue
+            
+            # Area range filter
+            if not (self.params["min_area"] <= area_px <= self.params["max_area"]):
+                continue
+            
+            # Oversized particle filter
+            if area_px >= max_big_area_px:
+                continue
+            
+            # ============================================================
+            # SHAPE FILTERS (matches dev2a.py)
+            # ============================================================
+            
+            # Circularity
+            perimeter = float(cv2.arcLength(cnt, True))
+            if perimeter > 0:
+                circularity = (4 * np.pi * area_px) / (perimeter ** 2)
+            else:
+                circularity = 0.0
+            
+            if not (self.min_circularity <= circularity <= self.max_circularity):
+                continue
+            
+            # Aspect ratio
+            x, y, w, h = cv2.boundingRect(cnt)
+            aspect_ratio = float(w) / h if h > 0 else 0.0
+            
+            if not (self.min_aspect_ratio <= aspect_ratio <= self.max_aspect_ratio):
+                continue
+            
+            # Solidity
+            hull = cv2.convexHull(cnt)
+            hull_area = float(cv2.contourArea(hull))
+            solidity = area_px / hull_area if hull_area > 0 else 0.0
+            
+            if solidity < self.min_solidity:
+                continue
+            
+            # All filters passed - accept this contour
+            self.contours.append(cnt)
+            self.contour_areas.append(area_px)
+
+
+
     def update_visualization(self):
         """Update all visualizations"""
         self.process_image()
@@ -1173,9 +1566,6 @@ class SegmentationTuner:
         
         updates = {
             "Gaussian σ:": f"{self.params['gaussian_sigma']:.1f}",
-            "Brightness:": f"{self.params['brightness_adjust']:+.0f}",
-            "Contrast:": f"{self.params['contrast_adjust']:.2f}",
-            "Threshold Δ:": f"{self.params['threshold_offset']:+.0f}",
             "Min area:": f"{self.params['min_area']:.0f} px ({min_area_um2:.2f} µm²)",
             "Max area:": f"{self.params['max_area']:.0f} px ({max_area_um2:.2f} µm²)",
             "Dilate iter:": str(int(self.params["dilate_iterations"])),
@@ -1185,12 +1575,37 @@ class SegmentationTuner:
         for key, value in updates.items():
             if key in self.param_labels:
                 self.param_labels[key].config(text=value)
-    
+
+
+
+
     def update_parameter(self, param_name: str, value: float):
         """Update a parameter and refresh visualization"""
         self.params[param_name] = value
         self.update_visualization()
     
+    def update_shape_filter(self, filter_name: str, value: float):
+        """Update shape filter attribute and refresh"""
+        setattr(self, filter_name, value)
+        self.update_visualization()
+        
+        # Update display
+        if filter_name in ["min_circularity", "max_circularity"]:
+            key = "Circularity:"
+            text = f"{self.min_circularity:.2f} - {self.max_circularity:.2f}"
+        elif filter_name in ["min_aspect_ratio", "max_aspect_ratio"]:
+            key = "Aspect ratio:"
+            text = f"{self.min_aspect_ratio:.2f} - {self.max_aspect_ratio:.2f}"
+        elif filter_name == "min_solidity":
+            key = "Solidity:"
+            text = f"≥ {self.min_solidity:.2f}"
+        
+        if key in self.param_labels:
+            self.param_labels[key].config(text=text)
+
+
+
+
     def toggle_invert(self, event):
         """Toggle image inversion"""
         self.invert_image = not self.invert_image
@@ -1330,145 +1745,6 @@ class SegmentationTuner:
             messagebox.showerror("Error", f"Failed to load image:\n{str(e)}")
             print(f"❌ Error loading image: {e}")
     
-    def save(self, event=None) -> bool:
-        """Save parameters to JSON"""
-        try:
-            config = {
-                "bacterium": self.bacterium,
-                "structure": self.structure,
-                "mode": self.mode,
-                "image_path": str(self.image_path),
-                "pixel_size_um": self.pixel_size_um,
-                "metadata_source": "metadata" if self.has_metadata else "fallback",
-                "parameters": {
-                    "invert_image": self.invert_image,
-                    **self.params
-                }
-            }
-            
-            filename = f"segmentation_params_{self.bacterium}_{self.structure}_{self.mode}.json"
-            
-            with open(filename, 'w') as f:
-                json.dump(config, f, indent=2)
-            
-            print(f"\n💾 Parameters saved to: {filename}")
-            return True
-        except Exception as e:
-            print(f"❌ Error saving parameters: {e}")
-            return False
-    
-    def save_and_apply(self, event=None):
-        """Save parameters and update bacteria_configs.py"""
-        if not self.save():
-            messagebox.showerror("Error", "Failed to save parameters")
-            return
-        
-        try:
-            um2_per_px2 = self.pixel_size_um ** 2
-            
-            config = SegmentationConfig(
-                name=f"{self.bacterium}",
-                description=f"{self.structure} segmentation - Tuned {datetime.now().strftime('%Y-%m-%d')} (Pixel: {self.pixel_size_um:.6f} µm)",
-                gaussian_sigma=float(self.params['gaussian_sigma']),
-                min_area_um2=float(self.params['min_area']) * um2_per_px2,
-                max_area_um2=float(self.params['max_area']) * um2_per_px2,
-                dilate_iterations=int(self.params['dilate_iterations']),
-                erode_iterations=int(self.params['erode_iterations']),
-                morph_kernel_size=3,
-                morph_iterations=1,
-                min_circularity=0.0,
-                max_circularity=1.0,
-                min_aspect_ratio=0.2,
-                max_aspect_ratio=10.0,
-                min_mean_intensity=0,
-                max_mean_intensity=255,
-                max_edge_gradient=200,
-                min_solidity=0.3,
-                max_fraction_of_image=0.25,
-                fluor_min_area_um2=3.0,
-                fluor_match_min_intersection_px=5.0,
-            )
-            
-            success = update_bacteria_config(
-                bacterium=self.bacterium,
-                config=config,
-                backup=True
-            )
-            
-            if success:
-                print(f"\n✅ Configuration saved: {self.bacterium}")
-                messagebox.showinfo(
-                    "Success", 
-                    f"Parameters saved and applied!\n\n"
-                    f"Configuration updated in bacteria_configs.py\n"
-                    f"Backup created: bacteria_configs.py.bak"
-                )
-            else:
-                messagebox.showerror(
-                    "Error",
-                    "Failed to update bacteria_configs.py\n"
-                    "Check console for details"
-                )
-            
-        except Exception as e:
-            print(f"❌ Error updating bacteria_configs.py: {e}")
-            import traceback
-            traceback.print_exc()
-            messagebox.showerror("Error", f"Failed to update bacteria_configs.py:\n{e}")
-    
-    def _create_action_buttons(self, parent: ttk.Frame):
-        """Create bottom action buttons"""
-        action_frame = tk.Frame(parent, bg=self.COLORS['header'], height=55)
-        action_frame.pack(fill=tk.X, side=tk.BOTTOM, pady=(5, 0))
-        action_frame.pack_propagate(False)
-        
-        button_container = tk.Frame(action_frame, bg=self.COLORS['header'])
-        button_container.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
-        
-        style = ttk.Style()
-        style.configure("Action.TButton", font=("Segoe UI", 10, "bold"), padding=10)
-        
-        buttons = [
-            ("⬅ BACK", self.back, 13, None),
-            ("💾 SAVE JSON", self.save, 15, None),
-            ("✅ SAVE & APPLY", self.save_and_apply, 18, self.COLORS['success']),
-            ("❌ QUIT", self.quit, 13, None),
-        ]
-        
-        for text, command, width, highlight in buttons:
-            if highlight:
-                frame = tk.Frame(button_container, bg=highlight, bd=3, relief=tk.RAISED)
-                frame.pack(side=tk.LEFT, padx=6)
-                btn = ttk.Button(frame, text=text, command=command, width=width,
-                            style="Action.TButton")
-                btn.pack(padx=2, pady=2)
-            else:
-                btn = ttk.Button(button_container, text=text, command=command,
-                            width=width, style="Action.TButton")
-                btn.pack(side=tk.LEFT, padx=5)
-    
-    def back(self):
-        """Close the tuner and return to main menu"""
-        if messagebox.askyesno("Confirm", "Close tuner?\n\nUnsaved changes will be lost."):
-            print("🔙 Closing tuner...")
-            self.root.destroy()
-            
-            if self.return_callback:
-                try:
-                    print("🔄 Returning to main menu...")
-                    self.return_callback()
-                except Exception as e:
-                    print(f"⚠️ Error executing return callback: {e}")
-            else:
-                print("ℹ️ No return destination specified.")
-    
-    def quit(self, event=None):
-        """Quit application"""
-        if messagebox.askyesno("Confirm", "Quit application?"):
-            print("\n❌ Exiting application")
-            self.root.quit()
-            self.root.destroy()
-
 
 # ==================================================
 # SECTION 6: Main Menu (Pathogen Config Manager)
@@ -1508,15 +1784,15 @@ class PathogenConfigManager:
     }
     
     def __init__(self, root: tk.Tk):
-        """Initialize the main menu"""
+        """Initialize the pathogen configuration manager"""
         self.root = root
-        self.root.title("Peritoneal Dialysis Pathogen Configuration Manager")
+        self.root.title("🦠 Pathogen Configuration Manager")
         self.root.geometry("900x700")
+        self.root.resizable(False, False)
         self.root.configure(bg=self.COLORS['bg'])
-        self.root.resizable(True, True)
         
-        self._center_window()
         self._create_ui()
+        self._center_window()
         
     def _center_window(self):
         """Center the window on screen"""
@@ -1537,30 +1813,25 @@ class PathogenConfigManager:
         self._create_footer(main_frame)
         
     def _create_header(self, parent):
-        """Create header section"""
-        header_frame = tk.Frame(parent, bg=self.COLORS['bg'])
-        header_frame.pack(fill=tk.X, pady=(0, 30))
+        """Create header with title"""
+        title_frame = tk.Frame(parent, bg=self.COLORS['bg'])
+        title_frame.pack(fill=tk.X, pady=(0, 30))
         
-        title = tk.Label(
-            header_frame,
-            text="🦠 Pathogen Configuration Manager",
+        tk.Label(
+            title_frame,
+            text="🔬 Pathogen Configuration Manager",
             font=('Segoe UI', 24, 'bold'),
             bg=self.COLORS['bg'],
             fg=self.COLORS['header']
-        )
-        title.pack(anchor=tk.W)
+        ).pack()
         
-        subtitle = tk.Label(
-            header_frame,
-            text="Peritoneal Dialysis - Image Analysis Configuration",
-            font=('Segoe UI', 12),
+        tk.Label(
+            title_frame,
+            text="Configure segmentation parameters for peritoneal dialysis pathogens",
+            font=('Segoe UI', 11),
             bg=self.COLORS['bg'],
             fg=self.COLORS['fg']
-        )
-        subtitle.pack(anchor=tk.W, pady=(5, 0))
-        
-        separator = tk.Frame(header_frame, height=2, bg=self.COLORS['accent'])
-        separator.pack(fill=tk.X, pady=(15, 0))
+        ).pack(pady=(5, 0))
         
     def _create_pathogen_cards(self, parent):
         """Create cards for each pathogen"""
