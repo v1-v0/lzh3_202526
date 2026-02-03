@@ -50,6 +50,75 @@ from bacteria_configs import (
 
 
 
+
+def load_bacteria_config_from_json(bacteria_key: str) -> Optional['SegmentationConfig']:
+    """Load bacteria configuration directly from JSON file
+    
+    Args:
+        bacteria_key: Bacteria configuration key (e.g., 'klebsiella_pneumoniae')
+        
+    Returns:
+        SegmentationConfig object, or None if not found
+    """
+    from bacteria_configs import SegmentationConfig
+    
+    # Look for JSON file
+    config_file = Path("bacteria_configs") / f"{bacteria_key}.json"
+    
+    if not config_file.exists():
+        print(f"[WARN] Config file not found: {config_file}")
+        return None
+    
+    try:
+        with open(config_file, 'r', encoding='utf-8') as f:
+            json_data = json.load(f)
+        
+        # Handle nested structure (tuner format)
+        if "config" in json_data:
+            config_data = json_data["config"]
+        else:
+            config_data = json_data
+        
+        # Create SegmentationConfig object
+        config = SegmentationConfig(
+            name=config_data.get('name', 'Unknown'),
+            description=config_data.get('description', ''),
+            gaussian_sigma=float(config_data.get('gaussian_sigma', 15.0)),
+            min_area_um2=float(config_data.get('min_area_um2', 3.0)),
+            max_area_um2=float(config_data.get('max_area_um2', 2000.0)),
+            dilate_iterations=int(config_data.get('dilate_iterations', 0)),
+            erode_iterations=int(config_data.get('erode_iterations', 0)),
+            morph_kernel_size=int(config_data.get('morph_kernel_size', 3)),
+            morph_iterations=int(config_data.get('morph_iterations', 1)),
+            min_circularity=float(config_data.get('min_circularity', 0.0)),
+            max_circularity=float(config_data.get('max_circularity', 1.0)),
+            min_aspect_ratio=float(config_data.get('min_aspect_ratio', 0.2)),
+            max_aspect_ratio=float(config_data.get('max_aspect_ratio', 10.0)),
+            min_mean_intensity=int(config_data.get('min_mean_intensity', 0)),
+            max_mean_intensity=int(config_data.get('max_mean_intensity', 255)),
+            max_edge_gradient=int(config_data.get('max_edge_gradient', 200)),
+            min_solidity=float(config_data.get('min_solidity', 0.3)),
+            max_fraction_of_image=float(config_data.get('max_fraction_of_image', 0.25)),
+            fluor_min_area_um2=float(config_data.get('fluor_min_area_um2', 3.0)),
+            fluor_match_min_intersection_px=float(config_data.get('fluor_match_min_intersection_px', 5.0)),
+            pixel_size_um=float(config_data.get('pixel_size_um', 0.109492)),
+            last_modified=config_data.get('last_modified'),
+            tuned_by=config_data.get('tuned_by')
+        )
+        
+        print(f"✅ Loaded config from JSON: {config_file.name}")
+        print(f"   Name: {config.name}")
+        print(f"   Gaussian σ: {config.gaussian_sigma:.2f}")
+        print(f"   Area range: {config.min_area_um2:.1f} - {config.max_area_um2:.1f} µm²")
+        
+        return config
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to load config from {config_file}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 # ==================================================
 # Unicode-Safe File I/O Functions
 # ==================================================
@@ -2511,7 +2580,6 @@ def collect_configuration() -> Dict:
     return config
 
 
-
 def display_configuration_summary(config: Dict) -> None:
     """Display configuration summary and get user confirmation
     
@@ -2521,6 +2589,17 @@ def display_configuration_summary(config: Dict) -> None:
     print("\n" + "="*80)
     print("CONFIGURATION SUMMARY")
     print("="*80 + "\n")
+    
+    # ✅ Load bacteria config directly from JSON (consistent method)
+    bacteria_config = load_bacteria_config_from_json(config['bacteria_type'])
+    
+    if bacteria_config is None:
+        print(f"⚠ Warning: Could not load bacteria configuration '{config['bacteria_type']}'")
+        bacteria_name = config['bacteria_type']
+        bacteria_desc = "Configuration file not found"
+    else:
+        bacteria_name = bacteria_config.name
+        bacteria_desc = bacteria_config.description
     
     if config.get('batch_mode', False):
         # ==================== BATCH MODE ====================
@@ -2535,8 +2614,13 @@ def display_configuration_summary(config: Dict) -> None:
         print()
         
         print(f"3. Bacteria Configuration: {config['bacteria_type']}")
-        bacteria_config = get_config(config['bacteria_type'])
-        print(f"   {bacteria_config.name}")
+        print(f"   Name: {bacteria_name}")
+        if bacteria_config:
+            print(f"   Description: {bacteria_desc}")
+            print(f"   Gaussian σ: {bacteria_config.gaussian_sigma:.2f}")
+            print(f"   Size range: {bacteria_config.min_area_um2:.1f} - {bacteria_config.max_area_um2:.1f} µm²")
+            print(f"   Circularity: {bacteria_config.min_circularity:.2f} - {bacteria_config.max_circularity:.2f}")
+            print(f"   Min Solidity: {bacteria_config.min_solidity:.2f}")
         print()
         
         print(f"4. Analysis Parameters:")
@@ -2554,8 +2638,13 @@ def display_configuration_summary(config: Dict) -> None:
         print(f"2. Microgel Type: {config['type_label']}\n")
         
         print(f"3. Bacteria Configuration: {config['bacteria_type']}")
-        bacteria_config = get_config(config['bacteria_type'])
-        print(f"   {bacteria_config.name}")
+        print(f"   Name: {bacteria_name}")
+        if bacteria_config:
+            print(f"   Description: {bacteria_desc}")
+            print(f"   Gaussian σ: {bacteria_config.gaussian_sigma:.2f}")
+            print(f"   Size range: {bacteria_config.min_area_um2:.1f} - {bacteria_config.max_area_um2:.1f} µm²")
+            print(f"   Circularity: {bacteria_config.min_circularity:.2f} - {bacteria_config.max_circularity:.2f}")
+            print(f"   Min Solidity: {bacteria_config.min_solidity:.2f}")
         print()
         
         print(f"4. Analysis Parameters:")
@@ -2565,7 +2654,7 @@ def display_configuration_summary(config: Dict) -> None:
     
     # ==================== CONFIRMATION ====================
     print("─" * 80)
-    response = input("\nProceed with this configuration? (y/n, Enter=yes): ").strip().lower()
+    response = logged_input("\nProceed with this configuration? (y/n, Enter=yes): ").strip().lower()
     
     if response not in ['', 'y', 'yes']:
         print("\n⚠ Configuration cancelled by user.")
@@ -2573,6 +2662,7 @@ def display_configuration_summary(config: Dict) -> None:
         sys.exit(0)
     
     print("\n✓ Configuration confirmed")
+
 # ==================================================
 # Image Processing
 # ==================================================
@@ -3975,31 +4065,64 @@ def extract_fluorescence(image_path):
     except Exception:
         return 0.0
 
+
 def select_bacteria_configuration() -> str:
-    """Interactive bacteria configuration selector
+    """Interactive bacteria configuration selector - JSON-based
     
     Returns:
         str: Selected bacteria type key
     """
-    from bacteria_configs import _manager, bacteria_display_names
-    
     print("\n" + "="*80)
     print("BACTERIA CONFIGURATION SELECTION")
     print("="*80)
     
-    available_configs = _manager.list_available_configs()
+    # Find all JSON config files
+    config_dir = Path("bacteria_configs")
     
-    if not available_configs:
-        print("\n⚠ No configurations found!")
+    if not config_dir.exists():
+        print("\n⚠ bacteria_configs/ directory not found!")
         print("  Run tuner.py first to create configurations")
         return 'default'
     
+    json_files = list(config_dir.glob("*.json"))
+    
+    if not json_files:
+        print("\n⚠ No JSON configuration files found!")
+        print("  Run tuner.py first to create configurations")
+        return 'default'
+    
+    # Extract bacteria keys from filenames
+    available_configs = []
+    config_names = {}
+    
+    for json_file in sorted(json_files):
+        bacteria_key = json_file.stem  # Filename without .json
+        
+        # Try to read name from JSON
+        try:
+            with open(json_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # Handle nested structure
+            if "config" in data:
+                name = data["config"].get("name", bacteria_key)
+            else:
+                name = data.get("name", bacteria_key)
+            
+            available_configs.append(bacteria_key)
+            config_names[bacteria_key] = name
+            
+        except Exception:
+            # Fallback to filename
+            available_configs.append(bacteria_key)
+            config_names[bacteria_key] = bacteria_key
+    
     print("\nAvailable bacteria configurations:")
     
-    # Display configurations with simple numbering
+    # Display configurations
     for i, bacteria_key in enumerate(available_configs, 1):
-        config = _manager.get_config(bacteria_key)
-        print(f"[{i}] {config.name}")
+        name = config_names[bacteria_key]
+        print(f"[{i}] {name}")
     
     print()
     
@@ -4010,9 +4133,9 @@ def select_bacteria_configuration() -> str:
         try:
             last_selection = last_selection_file.read_text().strip()
             if last_selection in available_configs:
-                last_config = _manager.get_config(last_selection)
+                last_name = config_names[last_selection]
                 last_idx = available_configs.index(last_selection) + 1
-                print(f"💡 Last used: [{last_idx}] {last_config.name}")
+                print(f"💡 Last used: [{last_idx}] {last_name}")
                 print()
         except:
             pass
@@ -4030,7 +4153,7 @@ def select_bacteria_configuration() -> str:
         # Use last selection
         if choice == "" and last_selection:
             selected_key = last_selection
-            print(f"  ✓ Using: {_manager.get_config(selected_key).name}")
+            print(f"  ✓ Using: {config_names[selected_key]}")
             break
         
         # Numeric selection
@@ -4038,7 +4161,7 @@ def select_bacteria_configuration() -> str:
             idx = int(choice)
             if 1 <= idx <= len(available_configs):
                 selected_key = available_configs[idx - 1]
-                print(f"  ✓ Selected: {_manager.get_config(selected_key).name}")
+                print(f"  ✓ Selected: {config_names[selected_key]}")
                 break
             else:
                 print(f"  ✗ Invalid number. Enter 1-{len(available_configs)}")
@@ -4047,10 +4170,10 @@ def select_bacteria_configuration() -> str:
         # Direct key input
         if choice in available_configs:
             selected_key = choice
-            print(f"  ✓ Selected: {_manager.get_config(selected_key).name}")
+            print(f"  ✓ Selected: {config_names[selected_key]}")
             break
         
-        print("  ✗ Invalid selection. Enter a number 1-{}, or 'q' to quit".format(len(available_configs)))
+        print(f"  ✗ Invalid selection. Enter a number 1-{len(available_configs)}, or 'q' to quit")
     
     # Save selection for next time
     try:
@@ -4152,11 +4275,18 @@ def main():
         print("─" * 80)
         
         bacteria_type = select_bacteria_configuration()
-        
+
         print(f"\n✓ Configuration loaded: {bacteria_type}")
-        
+
+        # Load config directly from JSON
+        bacteria_config = load_bacteria_config_from_json(bacteria_type)  # ✅ NEW WAY
+
+        if bacteria_config is None:
+            print("\n✗ Failed to load bacteria configuration")
+            print("  Please check that the JSON file exists and is valid")
+            sys.exit(1)
+
         # Show detailed config info
-        bacteria_config = get_config(bacteria_type)
         print(f"\n📋 Active Configuration:")
         print(f"   Name: {bacteria_config.name}")
         print(f"   Description: {bacteria_config.description}")
@@ -4165,7 +4295,7 @@ def main():
         if bacteria_config.last_modified:
             print(f"   Last modified: {bacteria_config.last_modified}")
         print()
-        
+            
         # Step 2: Continue with rest of configuration
         print("\nSTEP 2: Dataset Configuration")
         print("─" * 80)

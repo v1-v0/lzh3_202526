@@ -758,32 +758,105 @@ class SegmentationTuner:
 
 
     def _initialize_parameters(self):
-        """Initialize parameters - loads saved config if available"""
+        """Initialize parameters - loads from bacteria_configs first, then session JSON"""
         # ✅ ALWAYS initialize shape filters first (default values)
         for key, value in self.DEFAULT_SHAPE_FILTERS.items():
             setattr(self, key, value)
         
-        # Priority 1: Load from JSON (most recent tuner session)
+        # Convert bacterium name to config key
+        config_key = self.bacterium.lower().replace(' ', '_').replace('.', '').replace('-', '_')
+        
+        # ===================================================================
+        # Priority 1: Load from bacteria_configs/{pathogen}.json (PERMANENT)
+        # ===================================================================
+        config_file = Path("bacteria_configs") / f"{config_key}.json"
+        
+        if config_file.exists():
+            try:
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    json_data = json.load(f)
+                
+                # ✅ FIX: Handle nested structure with "config" key
+                if "config" in json_data:
+                    config_data = json_data["config"]
+                else:
+                    config_data = json_data
+                
+                # Extract parameters
+                um2_per_px2 = self.pixel_size_um ** 2
+                
+                self.params = {
+                    "gaussian_sigma": float(config_data.get('gaussian_sigma', 2.0)),
+                    "min_area": float(config_data.get('min_area_um2', 3.0) / um2_per_px2),
+                    "max_area": float(config_data.get('max_area_um2', 100.0) / um2_per_px2),
+                    "dilate_iterations": int(config_data.get('dilate_iterations', 0)),
+                    "erode_iterations": int(config_data.get('erode_iterations', 0)),
+                }
+                
+                # Override shape filters from config
+                self.min_circularity = float(config_data.get('min_circularity', 0.0))
+                self.max_circularity = float(config_data.get('max_circularity', 1.0))
+                self.min_aspect_ratio = float(config_data.get('min_aspect_ratio', 0.2))
+                self.max_aspect_ratio = float(config_data.get('max_aspect_ratio', 10.0))
+                self.min_solidity = float(config_data.get('min_solidity', 0.3))
+                
+                self.invert_image = False
+                
+                print(f"✅ Loaded PERMANENT config from: {config_file}")
+                print(f"   • Gaussian σ: {self.params['gaussian_sigma']:.2f}")
+                print(f"   • Min area: {self.params['min_area']:.1f} px "
+                    f"({config_data.get('min_area_um2', 0):.2f} µm²)")
+                print(f"   • Max area: {self.params['max_area']:.1f} px "
+                    f"({config_data.get('max_area_um2', 0):.2f} µm²)")
+                print(f"   • Circularity: {self.min_circularity:.2f} - {self.max_circularity:.2f}")
+                print(f"   • Aspect ratio: {self.min_aspect_ratio:.2f} - {self.max_aspect_ratio:.2f}")
+                print(f"   • Solidity: ≥ {self.min_solidity:.2f}")
+                return
+                
+            except Exception as e:
+                print(f"⚠️ Could not load bacteria_configs JSON: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # ===================================================================
+        # Priority 2: Load from session JSON (temporary tuning)
+        # ===================================================================
         json_filename = f"segmentation_params_{self.bacterium}_{self.structure}_{self.mode}.json"
         
         if Path(json_filename).exists():
             try:
-                with open(json_filename, 'r') as f:
+                with open(json_filename, 'r', encoding='utf-8') as f:
                     saved_data = json.load(f)
                 
                 params_dict = saved_data['parameters'].copy()
                 self.invert_image = params_dict.pop('invert_image', False)
-                self.params = params_dict
                 
-                print(f"✅ Restored previous session from: {json_filename}")
+                # Load main parameters
+                self.params = {
+                    "gaussian_sigma": params_dict.get('gaussian_sigma', 2.0),
+                    "min_area": params_dict.get('min_area', 20),
+                    "max_area": params_dict.get('max_area', 5000),
+                    "dilate_iterations": params_dict.get('dilate_iterations', 0),
+                    "erode_iterations": params_dict.get('erode_iterations', 0),
+                }
+                
+                # Load shape filters if present
+                self.min_circularity = params_dict.get('min_circularity', 0.0)
+                self.max_circularity = params_dict.get('max_circularity', 1.0)
+                self.min_aspect_ratio = params_dict.get('min_aspect_ratio', 0.2)
+                self.max_aspect_ratio = params_dict.get('max_aspect_ratio', 10.0)
+                self.min_solidity = params_dict.get('min_solidity', 0.3)
+                
+                print(f"✅ Restored TEMP session from: {json_filename}")
                 return
                 
             except Exception as e:
-                print(f"⚠ Could not load JSON session: {e}")
+                print(f"⚠️ Could not load session JSON: {e}")
+                # Continue to next priority
         
-        # Priority 2: Load from bacteria_configs.py
-        config_key = self.bacterium.lower().replace(' ', '_').replace('.', '')
-        
+        # ===================================================================
+        # Priority 3: Load from bacteria_configs.py (legacy Python config)
+        # ===================================================================
         if config_key in _CONFIGS:
             try:
                 saved_config = _CONFIGS[config_key]
@@ -797,12 +870,14 @@ class SegmentationTuner:
                     "erode_iterations": int(saved_config.erode_iterations),
                 }
                 
-                # ✅ Override shape filters from config (if available)
+                # Override shape filters from config
                 self.min_circularity = float(saved_config.min_circularity)
                 self.max_circularity = float(saved_config.max_circularity)
                 self.min_aspect_ratio = float(saved_config.min_aspect_ratio)
                 self.max_aspect_ratio = float(saved_config.max_aspect_ratio)
                 self.min_solidity = float(saved_config.min_solidity)
+                
+                self.invert_image = False
                 
                 print(f"✅ Loaded config for {self.bacterium} from bacteria_configs.py")
                 print(f"   • Gaussian σ: {self.params['gaussian_sigma']:.2f}")
@@ -810,22 +885,20 @@ class SegmentationTuner:
                     f"({saved_config.min_area_um2:.2f} µm²)")
                 print(f"   • Max area: {self.params['max_area']:.1f} px "
                     f"({saved_config.max_area_um2:.2f} µm²)")
-                print(f"   • Circularity: {self.min_circularity:.2f} - {self.max_circularity:.2f}")
-                print(f"   • Aspect ratio: {self.min_aspect_ratio:.2f} - {self.max_aspect_ratio:.2f}")
-                print(f"   • Solidity: ≥ {self.min_solidity:.2f}")
-                
-                self.invert_image = False
                 return
                 
             except Exception as e:
-                print(f"⚠ Error loading bacteria config: {e}")
+                print(f"⚠️ Error loading bacteria_configs.py: {e}")
         
-        # Priority 3: Use defaults
+        # ===================================================================
+        # Priority 4: Use defaults (nothing found)
+        # ===================================================================
         print(f"ℹ️ No saved config found for '{self.bacterium}' - using defaults")
         self.params = self.DEFAULT_PARAMS.copy()
         self.invert_image = False
-        
-        # Shape filters already initialized at the start of this method
+
+
+
 
     def setup_gui(self):
         """Setup the GUI"""

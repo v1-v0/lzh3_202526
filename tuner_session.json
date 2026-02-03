@@ -3,16 +3,16 @@
   "structure": "bacteria",
   "pixel_size_um": 0.10949166666666665,
   "parameters": {
-    "gaussian_sigma": 18.216879432624115,
-    "min_area": 349.5170254240802,
-    "max_area": 12846,
+    "gaussian_sigma": 19.077399527186763,
+    "min_area": 260,
+    "max_area": 8341.379240453818,
     "dilate_iterations": 0,
     "erode_iterations": 1,
-    "min_circularity": 0.1,
+    "min_circularity": 0.06,
     "max_circularity": 1.0,
     "min_aspect_ratio": 0.2,
-    "max_aspect_ratio": 10.0,
-    "min_solidity": 0.6
+    "max_aspect_ratio": 10.1,
+    "min_solidity": 0.51
   },
-  "timestamp": "2026-02-04T01:24:44.546282"
+  "timestamp": "2026-02-04T03:35:55.902978"
 }
