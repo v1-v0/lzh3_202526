@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Optional, Dict, List
 from datetime import datetime
 
+from cv2 import invert
+
 
 @dataclass
 class SegmentationConfig:
@@ -32,7 +34,9 @@ class SegmentationConfig:
     min_solidity: float = 0.3
     max_fraction_of_image: float = 0.25
     fluor_min_area_um2: float = 3.0
+    fluor_max_area_um2: float = 2000.0
     fluor_match_min_intersection_px: float = 5.0
+    invert_image: bool = False
     
     # Metadata fields
     last_modified: Optional[str] = None
@@ -241,10 +245,48 @@ class BacteriaConfigManager:
             # Update timestamp
             config.last_modified = datetime.now().isoformat()
             
-            # Save
-            self._configs[bacteria_type] = config
-            self._save_single_config(bacteria_type, config)
+            config_file = self._get_config_path(bacteria_type)
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+
+            config_dict = {
+            'name': config.name,
+            'description': config.description,
+            'gaussian_sigma': config.gaussian_sigma,
+            'min_area_um2': config.min_area_um2,
+            'max_area_um2': config.max_area_um2,
+            'dilate_iterations': config.dilate_iterations,
+            'erode_iterations': config.erode_iterations,
+            'morph_kernel_size': config.morph_kernel_size,
+            'morph_iterations': config.morph_iterations,
+            'min_circularity': config.min_circularity,
+            'max_circularity': config.max_circularity,
+            'min_aspect_ratio': config.min_aspect_ratio,
+            'max_aspect_ratio': config.max_aspect_ratio,
+            'min_mean_intensity': config.min_mean_intensity,
+            'max_mean_intensity': config.max_mean_intensity,
+            'max_edge_gradient': config.max_edge_gradient,
+            'min_solidity': config.min_solidity,
+            'max_fraction_of_image': config.max_fraction_of_image,
+            'fluor_min_area_um2': config.fluor_min_area_um2,
+            'fluor_max_area_um2': config.fluor_max_area_um2,
+            'fluor_match_min_intersection_px': config.fluor_match_min_intersection_px,
             
+            'invert_image': config.invert_image,
+            
+            'pixel_size_um': config.pixel_size_um,
+            'last_modified': config.last_modified,
+            'tuned_by': config.tuned_by
+            }
+
+            json_data = {
+                'bacteria_type': bacteria_type,
+                'config': config_dict,
+                'updated': datetime.now().isoformat()
+            }
+
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(json_data, f, indent=2)
+
             print(f"✓ Updated configuration: {bacteria_type}")
             print(f"  Saved to: {self._get_config_path(bacteria_type).name}")
             return True

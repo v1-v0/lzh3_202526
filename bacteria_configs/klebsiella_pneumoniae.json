@@ -20,6 +20,7 @@
     "min_solidity": 0.51,
     "max_fraction_of_image": 0.25,
     "fluor_min_area_um2": 3.0,
+    "fluor_max_area_um2": 99.99999999999999,
     "fluor_match_min_intersection_px": 5.0,
     "last_modified": "2026-02-04T03:35:55.902978",
     "pixel_size_um": 0.10949166666666665,
@@ -28,9 +29,6 @@
   "metadata": {
     "version": "2.0",
     "file_created": "2026-02-04T03:35:55.902978",
-    "compatible_with": [
-      "dev2a.py",
-      "tuner.py"
-    ]
+    "compatible_with": ["dev2a.py", "tuner.py"]
   }
 }

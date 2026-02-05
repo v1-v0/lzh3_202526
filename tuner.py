@@ -3,6 +3,7 @@ Integrated Pathogen Configuration Manager
 Combines main menu, config management, and segmentation tuner
 """
 
+from logging import config
 import os
 import sys
 import json
@@ -19,30 +20,30 @@ from datetime import datetime
 from dataclasses import dataclass, fields
 import xml.etree.ElementTree as ET
 import ast
+import astor
 
 from bacteria_configs import SegmentationConfig, _manager
 
-try:
-    import astor
-except ImportError:
-    print("⚠️ Warning: 'astor' module not found. Install with: pip install astor")
-    astor = None
+
+
+
+
 
 # ==================================================
 # SECTION 1: Configuration Data Classes
 # ==================================================
 
-    @property
-    def min_area_px(self) -> float:
-        """Convert min_area_um2 to pixels²"""
-        um2_per_px2 = 0.012
-        return self.min_area_um2 / um2_per_px2
+@property
+def min_area_px(self) -> float:
+    """Convert min_area_um2 to pixels²"""
+    um2_per_px2 = 0.012
+    return self.min_area_um2 / um2_per_px2
 
-    @property
-    def max_area_px(self) -> float:
-        """Convert max_area_um2 to pixels²"""
-        um2_per_px2 = 0.012
-        return self.max_area_um2 / um2_per_px2
+@property
+def max_area_px(self) -> float:
+    """Convert max_area_um2 to pixels²"""
+    um2_per_px2 = 0.012
+    return self.max_area_um2 / um2_per_px2
 
 
 # Built-in configurations
@@ -616,8 +617,6 @@ class SegmentationTuner:
                 max_area_um2=float(self.params['max_area']) * um2_per_px2,
                 dilate_iterations=int(self.params['dilate_iterations']),
                 erode_iterations=int(self.params['erode_iterations']),
-                morph_kernel_size=3,
-                morph_iterations=1,
                 min_circularity=float(self.min_circularity),
                 max_circularity=float(self.max_circularity),
                 min_aspect_ratio=float(self.min_aspect_ratio),
@@ -628,7 +627,13 @@ class SegmentationTuner:
                 min_solidity=float(self.min_solidity),
                 max_fraction_of_image=0.25,
                 fluor_min_area_um2=3.0,
+                fluor_max_area_um2=2000.0,
                 fluor_match_min_intersection_px=5.0,
+                invert_image=bool(self.invert_image),
+                morph_kernel_size=int(self.morph_kernel_size),
+                morph_iterations=int(self.morph_iterations),
+    
+
                 pixel_size_um=float(self.pixel_size_um),
                 last_modified=datetime.now().isoformat(),
                 tuned_by="Interactive Tuner"
@@ -648,7 +653,6 @@ class SegmentationTuner:
                     f"✓ Configuration saved!\n\n"
                     f"Bacterium: {self.bacterium}\n"
                     f"Saved to: {config_file.name}\n\n"
-                    f"The configuration is now available for dev2a.py"
                 )
                 
                 print(f"\n{'='*80}")
@@ -785,6 +789,12 @@ class SegmentationTuner:
                 # Extract parameters
                 um2_per_px2 = self.pixel_size_um ** 2
                 
+                self.threshold_mode = config_data.get('threshold_mode', 'otsu')
+                self.manual_threshold = config_data.get('manual_threshold', 127)
+                self.morph_kernel_size = config_data.get('morph_kernel_size', 3)
+                self.morph_iterations = config_data.get('morph_iterations', 1)
+
+
                 self.params = {
                     "gaussian_sigma": float(config_data.get('gaussian_sigma', 2.0)),
                     "min_area": float(config_data.get('min_area_um2', 3.0) / um2_per_px2),
@@ -846,6 +856,13 @@ class SegmentationTuner:
                 self.min_aspect_ratio = params_dict.get('min_aspect_ratio', 0.2)
                 self.max_aspect_ratio = params_dict.get('max_aspect_ratio', 10.0)
                 self.min_solidity = params_dict.get('min_solidity', 0.3)
+
+                self.threshold_mode = "otsu"  # "otsu", "manual", "adaptive"
+                self.manual_threshold = 127   # For manual mode
+                self.morph_kernel_size = 3    # From SegmentationConfig
+                self.morph_iterations = 1     # CLOSE iterations
+
+
                 
                 print(f"✅ Restored TEMP session from: {json_filename}")
                 return
@@ -889,6 +906,7 @@ class SegmentationTuner:
                 
             except Exception as e:
                 print(f"⚠️ Error loading bacteria_configs.py: {e}")
+
         
         # ===================================================================
         # Priority 4: Use defaults (nothing found)
@@ -897,8 +915,31 @@ class SegmentationTuner:
         self.params = self.DEFAULT_PARAMS.copy()
         self.invert_image = False
 
+    def update_threshold(self, param_name: str, value: float):
+        """Update threshold parameter"""
+        setattr(self, param_name, value)
+        self.update_visualization()
 
+    def update_morph(self, param_name: str, value: float):
+        """Update morphology parameter"""
+        setattr(self, param_name, value)
+        self.update_visualization()
 
+    def cycle_threshold_mode(self, event):
+        """Cycle through threshold modes: Otsu → Manual → Adaptive"""
+        modes = ["otsu", "manual", "adaptive"]
+        current_idx = modes.index(self.threshold_mode)
+        next_idx = (current_idx + 1) % len(modes)
+        self.threshold_mode = modes[next_idx]
+        
+        mode_text = f"THRESHOLD\n{self.threshold_mode.upper()}"
+        self.btn_thresh_mode.label.set_text(mode_text)
+        
+        # Enable/disable manual threshold slider
+        if 'manual_threshold' in self.sliders:
+            self.sliders['manual_threshold'].set_active(self.threshold_mode == "manual")
+        
+        self.update_visualization()
 
     def setup_gui(self):
         """Setup the GUI"""
@@ -917,6 +958,7 @@ class SegmentationTuner:
         print("✅ GUI Setup Complete")
         self.update_visualization()
         print("✅ Initial visualization complete")
+
     
     def _create_header(self, parent: ttk.Frame):
         """Create header section with buttons"""
@@ -1139,6 +1181,9 @@ class SegmentationTuner:
             ("Invert:", "ON" if self.invert_image else "OFF",
             self.COLORS['success'] if self.invert_image else self.COLORS['gray']),
             ("Gaussian σ:", f"{self.params['gaussian_sigma']:.1f}", None),
+            ("Threshold:", self.threshold_mode.upper(), self.COLORS['primary']),  
+            ("Morph kernel:", f"{self.morph_kernel_size}x{self.morph_kernel_size}", None),  
+            ("Morph iter:", str(int(self.morph_iterations)), None),  
         ])
         
         ttk.Separator(inner, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
@@ -1291,7 +1336,7 @@ class SegmentationTuner:
 
     def _create_sliders(self):
         """Create parameter sliders with organized layout"""
-        # Clear any existing content
+        
         self.fig_sliders.clear()
         
         # Section headers with better positioning
@@ -1328,7 +1373,40 @@ class SegmentationTuner:
                     color=self.COLORS['primary'])
         slider.on_changed(lambda val: self.update_parameter('gaussian_sigma', val))
         self.sliders['gaussian_sigma'] = slider
+
+        # Row 2: Manual Threshold
+        ax = self.fig_sliders.add_axes((col1_x, row2_y, slider_width, slider_height))
+        slider = Slider(ax, 'Threshold', 0, 255,
+                    valinit=self.manual_threshold,
+                    valstep=1, color=self.COLORS['primary'])
+        slider.on_changed(lambda val: self.update_threshold('manual_threshold', val))
+        self.sliders['manual_threshold'] = slider
         
+        # Row 3: Morph Kernel Size
+        ax = self.fig_sliders.add_axes((col1_x, row3_y, slider_width, slider_height))
+        slider = Slider(ax, 'Morph Kernel', 3, 15,
+                    valinit=self.morph_kernel_size,
+                    valstep=2, color=self.COLORS['primary'])  # Odd numbers only
+        slider.on_changed(lambda val: self.update_morph('morph_kernel_size', val))
+        self.sliders['morph_kernel_size'] = slider
+        
+        # Row 4: Morph Iterations
+        ax = self.fig_sliders.add_axes((col1_x, row4_y, slider_width, slider_height))
+        slider = Slider(ax, 'Morph Iter', 0, 5,
+                    valinit=self.morph_iterations,
+                    valstep=1, color=self.COLORS['primary'])
+        slider.on_changed(lambda val: self.update_morph('morph_iterations', val))
+        self.sliders['morph_iterations'] = slider
+
+        # Row 5: Threshold mode button (Row 5)
+        ax_thresh_mode = self.fig_sliders.add_axes((col1_x, row5_y, 0.13, slider_height * 1.5))
+        mode_text = f"THRESHOLD\n{self.threshold_mode.upper()}"
+        self.btn_thresh_mode = Button(ax_thresh_mode, mode_text,
+                                    color=self.COLORS['primary'],
+                                    hovercolor=self.COLORS['header'])
+        self.btn_thresh_mode.on_clicked(self.cycle_threshold_mode)
+
+        '''
         # Row 3: Min Aspect Ratio
         ax = self.fig_sliders.add_axes((col1_x, row3_y, slider_width, slider_height))
         slider = Slider(ax, 'Min Aspect', 0.1, 5.0,
@@ -1344,7 +1422,7 @@ class SegmentationTuner:
                     valstep=0.1, color=self.COLORS['purple'])
         slider.on_changed(lambda val: self.update_shape_filter('max_aspect_ratio', val))
         self.sliders['max_aspect_ratio'] = slider
-        
+        '''
         # ==================================================
         # COLUMN 2: FILTERING & MORPHOLOGY
         # ==================================================
@@ -1461,31 +1539,58 @@ class SegmentationTuner:
         # ============================================================
         # OTSU THRESHOLDING (matches dev2a.py)
         # ============================================================
-        _, binary = cv2.threshold(
-            enhanced_blur, 0, 255,
-            cv2.THRESH_BINARY + cv2.THRESH_OTSU
-        )
         
+        if self.threshold_mode == "otsu":
+            _, binary = cv2.threshold(
+                enhanced_blur, 0, 255,
+                cv2.THRESH_BINARY + cv2.THRESH_OTSU
+            )
+        elif self.threshold_mode == "manual":
+            _, binary = cv2.threshold(
+                enhanced_blur,
+                self.manual_threshold,
+                255,
+                cv2.THRESH_BINARY
+            )
+        elif self.threshold_mode == "adaptive":
+            binary = cv2.adaptiveThreshold(
+                enhanced_blur,
+                255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY,
+                11, 2
+            )
+        else:
+            _, binary = cv2.threshold(
+                enhanced_blur, 0, 255,
+                cv2.THRESH_BINARY + cv2.THRESH_OTSU
+            )
+
         # ============================================================
         # MORPHOLOGICAL OPERATIONS (matches dev2a.py)
         # ============================================================
-        kernel = np.ones((3, 3), np.uint8)
+        kernel_size = int(self.morph_kernel_size)
+        if kernel_size % 2 == 0:
+            kernel_size += 1  # Ensure odd size
+        
+        kernel = np.ones((kernel_size, kernel_size), np.uint8)
         
         # Close operation (combines dilation + erosion)
-        binary = cv2.morphologyEx(
-            binary, cv2.MORPH_CLOSE, kernel,
-            iterations=1  # Hardcoded in dev2a
-        )
-        
+        if int(self.morph_iterations) > 0:
+            binary = cv2.morphologyEx(
+                binary, cv2.MORPH_CLOSE, kernel,
+                iterations=int(self.morph_iterations)  # Hardcoded in dev2a
+            )
+
         # Dilate
-        if self.params["dilate_iterations"] > 0:
+        if int(self.params["dilate_iterations"]) > 0:
             binary = cv2.dilate(
                 binary, kernel,
                 iterations=int(self.params["dilate_iterations"])
             )
         
         # Erode
-        if self.params["erode_iterations"] > 0:
+        if int(self.params["erode_iterations"]) > 0:
             binary = cv2.erode(
                 binary, kernel,
                 iterations=int(self.params["erode_iterations"])
