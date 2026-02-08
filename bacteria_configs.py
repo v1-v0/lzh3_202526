@@ -37,6 +37,8 @@ class SegmentationConfig:
     fluor_max_area_um2: float = 2000.0
     fluor_match_min_intersection_px: float = 5.0
     invert_image: bool = False
+    threshold_mode: str = "otsu"
+    manual_threshold: int = 127
     
     # Metadata fields
     last_modified: Optional[str] = None
@@ -120,6 +122,13 @@ class BacteriaConfigManager:
         
         # Handle both flat and nested formats
         config_data = data.get('config', data)
+        
+        # ✅ Validate and correct morph_kernel_size
+        if 'morph_kernel_size' in config_data:
+            kernel_size = config_data['morph_kernel_size']
+            if kernel_size % 2 == 0:
+                print(f"⚠️ WARNING: {json_path.name} has even morph_kernel_size={kernel_size}, correcting to {kernel_size + 1}")
+                config_data['morph_kernel_size'] = kernel_size + 1
         
         return SegmentationConfig(**config_data)
     
@@ -451,6 +460,10 @@ def update_bacteria_config(bacterium: str, config: SegmentationConfig,
     Returns:
         True if successful
     """
+    if config.morph_kernel_size % 2 == 0:
+        print("⚠ Warning: morph_kernel_size should be odd for best results")
+        config.morph_kernel_size += 1  # Auto-correct to next odd number
+
     # Convert display name to key if needed
     bacteria_key = bacterium.lower().replace(' ', '_').replace('.', '').replace('-', '_')
     return _manager.update_config(bacteria_key, config, create_backup=backup)

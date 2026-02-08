@@ -22,7 +22,6 @@ from dataclasses import dataclass, fields
 import xml.etree.ElementTree as ET
 import ast
 import astor
-from zmq import has
 
 from bacteria_configs import SegmentationConfig, _manager
 
@@ -74,29 +73,10 @@ class UIScaler:
 
 class ParameterPanel(ttk.Frame):
     """Modern collapsible parameter panel with sliders and input boxes"""
-
-    def _format_value(self, value: float, resolution: float) -> str:
-        """Format value based on resolution for display"""
-        try:
-            value = float(value)
-            if resolution >= 1:
-                # Integer display for whole numbers
-                return f"{int(round(value))}"
-            else:
-                # Decimal display based on resolution precision
-                decimals = len(str(resolution).split('.')[-1])
-                return f"{value:.{decimals}f}"
-        except (ValueError, TypeError):
-            return str(value)
-
-
-
+    
     def __init__(self, parent, tuner_instance):
         super().__init__(parent)
         self.tuner = tuner_instance
-
-        print(f"🐛 ParameterPanel DEBUG: tuner.morph_kernel_size = {self.tuner.morph_kernel_size}")
-
         self.sliders = {}
         self.value_labels = {}
         self.input_boxes = {}
@@ -121,9 +101,7 @@ class ParameterPanel(ttk.Frame):
             'invert_image': self.tuner.invert_image
         }
         
-        self.debounce_delay = 150  # milliseconds (adjust as needed)
-        self._updating_slider = False
-        self.configure(relief=tk.RIDGE, borderwidth=1, width=420)
+        self.configure(relief=tk.RIDGE, borderwidth=1, width=320)
         self.pack_propagate(False)
         
         # Header
@@ -340,98 +318,107 @@ class ParameterPanel(ttk.Frame):
         title_label.bind("<Button-1>", toggle)
         
         return content_frame
-
-
-    def _add_slider_with_input(self, parent, label: str, param_name: str,
-                            initial_value: float, min_val: float, 
-                            max_val: float, resolution: float = 1.0):
-        """Add a parameter row with slider and text entry"""
+    
+    def _add_slider_with_input(self, parent, label: str, param_name: str, 
+                               initial: float, min_val: float, max_val: float, step: float):
+        """Add a parameter slider with input box"""
+        container = tk.Frame(parent, bg='white')
+        container.pack(fill=tk.X, padx=8, pady=6)
         
-        row_frame = ttk.Frame(parent, style='ParamRow.TFrame')
-        row_frame.pack(fill='x', padx=10, pady=5)
+        # Label and input box row
+        label_row = tk.Frame(container, bg='white')
+        label_row.pack(fill=tk.X)
         
-        # Label
-        label_widget = ttk.Label(
-            row_frame,
-            text=f"{label}:",
-            font=('Segoe UI', 9),
-            foreground='#E0E0E0',
-            background='#2D2D30'
+        tk.Label(
+            label_row,
+            text=label + ":",
+            font=("Segoe UI", 9),
+            bg='white',
+            fg='#555',
+            anchor='w'
+        ).pack(side=tk.LEFT)
+        
+        # Input box (Entry widget)
+        input_frame = tk.Frame(label_row, bg='white')
+        input_frame.pack(side=tk.RIGHT)
+        
+        if step < 1:
+            value_text = f"{initial:.2f}"
+        else:
+            value_text = f"{int(initial)}"
+        
+        input_var = tk.StringVar(value=value_text)
+        input_box = tk.Entry(
+            input_frame,
+            textvariable=input_var,
+            font=("Segoe UI", 9, "bold"),
+            width=8,
+            bg='#f0f0f0',
+            fg=SegmentationTuner.COLORS['header'],
+            relief=tk.SUNKEN,
+            borderwidth=1,
+            justify='center'
         )
-        label_widget.pack(side='left', padx=(0, 10))
+        input_box.pack(side=tk.LEFT)
+        self.input_boxes[param_name] = (input_box, input_var, step)
         
-        # Slider and value container
-        slider_frame = ttk.Frame(row_frame, style='ParamRow.TFrame')
-        slider_frame.pack(side='left', fill='x', expand=True)
-        slider_frame.columnconfigure(0, weight=1)
+        # Bind Enter key to update from input
+        def on_input_change(event=None):
+            try:
+                val = float(input_var.get())
+                val = max(min_val, min(max_val, val))
+
+                if param_name == 'morph_kernel_size':
+                    if val % 2 == 0:
+                        val += 1  # Ensure kernel size is odd
+                    val = max(min_val, min(max_val, val))
+
+                if step >= 1:
+                    val = int(round(val / step) * step)
+                else:
+                    val = round(val / step) * step
+                self.sliders[param_name].set(val)
+                if step < 1:
+                    input_var.set(f"{val:.2f}")
+                else:
+                    input_var.set(f"{int(val)}")
+            except ValueError:
+                val = self.sliders[param_name].get()
+                if step < 1:
+                    input_var.set(f"{val:.2f}")
+                else:
+                    input_var.set(f"{int(val)}")
         
-        # Value label
-        value_label = ttk.Label(
-            slider_frame,
-            text=self._format_value(initial_value, resolution),
-            font=('Consolas', 9, 'bold'),
-            foreground='#4EC9B0',
-            background='#2D2D30',
-            width=6
-        )
-        value_label.grid(row=0, column=1)
+        input_box.bind('<Return>', on_input_change)
+        input_box.bind('<FocusOut>', on_input_change)
         
-        # Text entry for precise input
-        entry_var = tk.StringVar(value=str(initial_value))
-        
-        # ✅ Create slider WITHOUT command first
-        slider = ttk.Scale(
-            slider_frame,
+        # Slider
+        slider = tk.Scale(
+            container,
             from_=min_val,
             to=max_val,
+            resolution=step,
             orient=tk.HORIZONTAL,
-            style='Custom.Horizontal.TScale'
+            showvalue=False,
+            bg='white',
+            highlightthickness=0,
+            troughcolor='#ddd',
+            activebackground=SegmentationTuner.COLORS['primary'],
+            command=lambda val: self._on_slider_change(param_name, val, step, input_var)
         )
-        slider.grid(row=0, column=0, sticky='ew', padx=(0, 10))
-        
-        if param_name == 'morph_kernel_size':
-            if int(initial_value) % 2 == 0:
-                initial_value += 1
-                print(f"⚠️ Auto-corrected initial morph_kernel_size to odd: {initial_value}")
-
-
-        # Store references
+        slider.set(initial)
+        slider.pack(fill=tk.X, pady=(2, 0))
         self.sliders[param_name] = slider
-        self.value_labels[param_name] = value_label
         
-        # ✅ Set initial value BEFORE binding command
-        slider.set(initial_value)
-        value_label.config(text=self._format_value(initial_value, resolution))
-        entry_var.set(str(initial_value))
-        
-        # ✅ NOW bind the command after setting initial value
-        slider.configure(command=lambda v: self._on_slider_change(param_name, v, resolution, entry_var))
-        
-        # Text entry
-        entry = ttk.Entry(
-            row_frame,
-            textvariable=entry_var,
-            width=8
-        )
-        entry.pack(side='right', padx=(10, 0))
-        
-        # Entry change callback
-        def on_entry_change(*args):
-            try:
-                value = float(entry_var.get())
-                if min_val <= value <= max_val:
-                    slider.set(value)
-                    self._on_slider_change(param_name, str(value), resolution, entry_var)
-            except ValueError:
-                pass
-        
-        entry_var.trace_add('write', on_entry_change)
-        entry.bind('<Return>', lambda e: on_entry_change())
-        entry.bind('<FocusOut>', lambda e: on_entry_change())
-
-
-
-
+        # Range label
+        tk.Label(
+            container,
+            text=f"Range: {min_val} - {max_val}",
+            font=("Segoe UI", 7),
+            bg='white',
+            fg='#999'
+        ).pack(anchor='w')
+    
     def _add_threshold_controls(self, parent):
         """Add threshold mode controls"""
         container = tk.Frame(parent, bg='white')
@@ -518,112 +505,28 @@ class ParameterPanel(ttk.Frame):
         reset_btn.pack(fill=tk.X, pady=3)
     
     def _on_slider_change(self, param_name: str, value: str, step: float, input_var: tk.StringVar):
-        """Handle slider value changes with debouncing and odd-number enforcement"""
+        """Handle slider value change"""
+        val = float(value)
         
-        if hasattr(self, '_updating_slider') and self._updating_slider:
-            return
+        if step >= 1:
+            val = int(round(val / step) * step)
+        else:
+            val = round(val / step) * step
         
-        try:
-            # Convert string to number
-            numeric_value = float(value)
-            
-            # Round to step precision
-            if step >= 1:
-                numeric_value = int(round(numeric_value / step) * step)
-            else:
-                numeric_value = round(numeric_value / step) * step
-            
-            # ✅ FIX: Ensure morph_kernel_size is ALWAYS ODD
-            
-            if param_name == 'morph_kernel_size':
-                numeric_value = int(numeric_value)
-                original_value = numeric_value
-                if numeric_value % 2 == 0:  # If even
-                    numeric_value += 1  # Make it odd
-                    print(f"⚠️ Auto-corrected {original_value} to {numeric_value}")
-            
-            # ✅ FIX: Check if parameter is in params dictionary or direct attribute
-            params_dict_keys = ['gaussian_sigma', 'min_area', 'max_area', 
-                            'dilate_iterations', 'erode_iterations']
-            
-            # Get current value
-            if param_name in params_dict_keys:
-                current_value = self.tuner.params[param_name]
-            elif hasattr(self.tuner, param_name):
-                current_value = getattr(self.tuner, param_name)
-            else:
-                print(f"⚠️ Warning: self.tuner.{param_name} does not exist")
-                return
-            
-            # ✅ CRITICAL FIX: Skip if value unchanged (prevents spam)
-            if numeric_value == current_value:
-                return  # Exit immediately - no processing needed
-            
-            # Update the parameter immediately (for UI responsiveness)
-            if param_name in params_dict_keys:
-                self.tuner.params[param_name] = numeric_value
-            elif hasattr(self.tuner, param_name):
-                setattr(self.tuner, param_name, numeric_value)
-            
-            print(f"🔄 {param_name}: {current_value} → {numeric_value}")
-            
-            # Update value display label
-            if param_name in self.value_labels:
-                formatted = self._format_value(numeric_value, step)
-                self.value_labels[param_name].config(text=formatted)
-            
-            # Update text entry (prevent infinite loop)
-            entry_value = str(int(numeric_value)) if step >= 1 else str(numeric_value)
-            if input_var.get() != entry_value:
-                input_var.set(entry_value)
-            
-            # Update slider to corrected value (important for odd number correction)
-            if param_name in self.sliders:
-                current_slider_val = self.sliders[param_name].get()
-                if abs(float(current_slider_val) - numeric_value) > 0.01:
-                    # Block recursive calls during slider update
-                    self._updating_slider = True
-                    self.sliders[param_name].set(numeric_value)
-                    self._updating_slider = False
-            
-            # ✅ DEBOUNCE: Cancel previous pending update for this parameter
-            if not hasattr(self, 'update_timers'):
-                self.update_timers = {}
-            
-            if param_name in self.update_timers:
-                self.after_cancel(self.update_timers[param_name])
-            
-            # ✅ DEBOUNCE: Schedule new update after delay
-            self.update_timers[param_name] = self.after(
-                self.debounce_delay,
-                lambda p=param_name: self._execute_visualization_update(p)
-            )
-            
-        except (ValueError, AttributeError, TypeError) as e:
-            print(f"❌ Error in _on_slider_change for {param_name}: {e}")
-            import traceback
-            traceback.print_exc()
-
-
-    def _execute_visualization_update(self, param_name: str):
-        """Execute the actual visualization update (called after debounce delay)"""
-        try:
-            # Clear the timer reference
-            if param_name in self.update_timers:
-                del self.update_timers[param_name]
-            
-            # Trigger preview update
-            if hasattr(self.tuner, 'update_visualization'):
-                self.tuner.update_visualization()
-            elif hasattr(self.tuner, 'update_preview'):
-                self.tuner.update_preview()
-            elif hasattr(self.tuner, 'process_frame'):
-                self.tuner.process_frame()
-                
-        except Exception as e:
-            print(f"❌ Error updating visualization for {param_name}: {e}")
-
-
+        if step < 1:
+            input_var.set(f"{val:.2f}")
+        else:
+            input_var.set(f"{int(val)}")
+        
+        if param_name in self.tuner.params:
+            self.tuner.update_parameter(param_name, val)
+        elif param_name in ['morph_kernel_size', 'morph_iterations']:
+            self.tuner.update_morph(param_name, val)
+        elif param_name == 'manual_threshold':
+            self.tuner.update_threshold(param_name, val)
+        else:
+            self.tuner.update_shape_filter(param_name, val)
+    
     def _cycle_threshold_mode(self):
         """Cycle through threshold modes"""
         modes = ["otsu", "manual", "adaptive"]
@@ -700,8 +603,6 @@ class ParameterPanel(ttk.Frame):
                 
                 # ✅ Convert µm² to pixels for area parameters
                 um2_per_px2 = self.tuner.pixel_size_um ** 2
-
-                
                 
                 # Reset sliders with proper parameter mapping
                 slider_mappings = {
@@ -1541,13 +1442,6 @@ class SegmentationTuner:
         for key, value in self.DEFAULT_SHAPE_FILTERS.items():
             setattr(self, key, value)
         
-        # ✅ ALWAYS initialize threshold params (BEFORE loading config!)
-        self.threshold_mode = self.DEFAULT_THRESHOLD_PARAMS['threshold_mode']
-        self.manual_threshold = self.DEFAULT_THRESHOLD_PARAMS['manual_threshold']
-        self.morph_kernel_size = self.DEFAULT_THRESHOLD_PARAMS['morph_kernel_size']
-        self.morph_iterations = self.DEFAULT_THRESHOLD_PARAMS['morph_iterations']
-        self.invert_image = False
-        
         # Convert bacterium name to config key
         config_key = self.bacterium.lower().replace(' ', '_').replace('.', '').replace('-', '_')
         
@@ -1561,27 +1455,20 @@ class SegmentationTuner:
                 with open(config_file, 'r', encoding='utf-8') as f:
                     json_data = json.load(f)
                 
-                # ✅ Handle nested "config" structure
+                # ✅ FIX: Handle nested structure with "config" key
                 if "config" in json_data:
                     config_data = json_data["config"]
                 else:
                     config_data = json_data
                 
-                # ✅ Validate and correct morph_kernel_size
-                if 'morph_kernel_size' in config_data:
-                    kernel_size = config_data['morph_kernel_size']
-                    if kernel_size % 2 == 0:
-                        print(f"⚠️ WARNING: morph_kernel_size={kernel_size} is even, correcting to {kernel_size + 1}")
-                        config_data['morph_kernel_size'] = kernel_size + 1
-                
                 # Extract parameters
                 um2_per_px2 = self.pixel_size_um ** 2
                 
-                # ✅ LOAD THRESHOLD PARAMS (these were missing!)
                 self.threshold_mode = config_data.get('threshold_mode', 'otsu')
                 self.manual_threshold = config_data.get('manual_threshold', 127)
                 self.morph_kernel_size = config_data.get('morph_kernel_size', 3)
                 self.morph_iterations = config_data.get('morph_iterations', 1)
+
 
                 self.params = {
                     "gaussian_sigma": float(config_data.get('gaussian_sigma', 2.0)),
@@ -1598,13 +1485,10 @@ class SegmentationTuner:
                 self.max_aspect_ratio = float(config_data.get('max_aspect_ratio', 10.0))
                 self.min_solidity = float(config_data.get('min_solidity', 0.3))
                 
-                self.invert_image = config_data.get('invert_image', False)
+                self.invert_image = False
                 
                 print(f"✅ Loaded PERMANENT config from: {config_file}")
                 print(f"   • Gaussian σ: {self.params['gaussian_sigma']:.2f}")
-                print(f"   • Morph Kernel: {self.morph_kernel_size}x{self.morph_kernel_size}")  # ✅ Add this line
-                print(f"   • Morph Iterations: {self.morph_iterations}")  # ✅ Add this line
-                print(f"   • Threshold: {self.threshold_mode.upper()}")  # ✅ Add this line
                 print(f"   • Min area: {self.params['min_area']:.1f} px "
                     f"({config_data.get('min_area_um2', 0):.2f} µm²)")
                 print(f"   • Max area: {self.params['max_area']:.1f} px "
@@ -2088,9 +1972,8 @@ class SegmentationTuner:
             
             self.param_labels[label_text] = value_label
 
-
     def _create_target_analysis_section(self, parent: ttk.Frame):
-        """Create target analysis section with scrollbar"""
+        """Create target analysis section with responsive sizing"""
         header_height = self.ui_scaler.scale_dimension(26)
         header = tk.Frame(parent, bg=self.COLORS['warning'], height=header_height)
         header.pack(fill=tk.X, pady=(8, 0))
@@ -2106,40 +1989,26 @@ class SegmentationTuner:
             fg="white"
         ).pack(side=tk.LEFT, padx=10, pady=3)
         
-        # Container with border
         display = ttk.Frame(parent, relief=tk.SUNKEN, borderwidth=1)
         display.pack(fill=tk.X, padx=5, pady=(0, 5))
         
-        # Text widget with scrollbar
-        text_frame = tk.Frame(display, bg="white")
-        text_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Scrollbar
-        scrollbar = tk.Scrollbar(text_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Text widget
         label_font = ("Segoe UI", self.ui_scaler.scale_font(8))
+        wraplength = self.ui_scaler.scale_dimension(360)
         
-        self.target_analysis_text = tk.Text(
-            text_frame,
+        self.target_analysis_label = tk.Label(
+            display,
+            text="Click on image to analyze a particle",
             font=label_font,
-            wrap=tk.WORD,
-            height=10,
+            foreground="gray",
+            justify=tk.LEFT,
+            wraplength=wraplength,
             bg="white",
-            fg="gray",
+            anchor="w",
             padx=8,
-            pady=8,
-            yscrollcommand=scrollbar.set,
-            relief=tk.FLAT
+            pady=8
         )
-        self.target_analysis_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=self.target_analysis_text.yview)
-        
-        # Initial message
-        self.target_analysis_text.insert('1.0', "Click on image to analyze a particle or detect missed particles")
-        self.target_analysis_text.config(state=tk.NORMAL)  # Keep editable for updates
-
+        self.target_analysis_label.pack(fill=tk.BOTH, expand=True)
+    
     def _create_histogram_section(self, parent: ttk.Frame):
         """Create histogram section with optimal sizing"""
         header = tk.Frame(parent, bg=self.COLORS['info'], height=28)
@@ -2659,279 +2528,29 @@ class SegmentationTuner:
         self.btn_invert.color = invert_color
         
         self.update_visualization()
-
-
+    
     def on_image_click(self, event):
-        """Handle click on image to analyze particle or detect missed particles"""
+        """Handle click on image to analyze particle"""
         if event.inaxes != self.ax_image or event.xdata is None or event.ydata is None:
             return
         
         x, y = int(event.xdata), int(event.ydata)
         
-        # First check if clicking on a detected contour
         clicked_contour = None
         for cnt in self.contours:
             if cv2.pointPolygonTest(cnt, (float(x), float(y)), False) >= 0:
                 clicked_contour = cnt
                 break
         
-        if clicked_contour is not None:
-            # Normal analysis of detected particle
-            self._analyze_particle(clicked_contour)
-        else:
-            # ✅ NEW: Reverse target analysis for missed particles
-            self._analyze_missed_particle(x, y)
-
-    def _analyze_missed_particle(self, x: int, y: int):
-        """Analyze a region where no particle was detected and suggest parameters"""
-        
-        # Define region of interest around click
-        roi_size = 50  # pixels
-        h, w = self.original_image.shape[:2]
-        
-        x1 = max(0, x - roi_size)
-        x2 = min(w, x + roi_size)
-        y1 = max(0, y - roi_size)
-        y2 = min(h, y + roi_size)
-        
-        # Extract ROI from original and processed images
-        roi_original = self.original_image[y1:y2, x1:x2]
-        roi_binary = self.binary_mask[y1:y2, x1:x2]
-        roi_processed = self.processed_image[y1:y2, x1:x2]
-        
-        # Analyze the region
-        analysis = self._analyze_roi_characteristics(
-            roi_original, roi_binary, roi_processed, (x-x1, y-y1)
-        )
-        
-        if analysis is None:
-            self.target_analysis_text.delete('1.0', tk.END)
-            self.target_analysis_text.insert('1.0', "❌ No particle-like structure detected in clicked region")
-            self.target_analysis_text.tag_config("error", foreground="red")
-            self.target_analysis_text.tag_add("error", "1.0", "end")
+        if clicked_contour is None:
+            self.target_analysis_label.config(
+                text="No particle found at click location",
+                foreground="red"
+            )
             return
         
-        # Generate suggestions
-        suggestions = self._generate_missed_particle_suggestions(analysis)
-        self.current_suggestions = suggestions
-        
-        # Display analysis
-        self._display_missed_particle_analysis(analysis, suggestions)
-
-    def _analyze_roi_characteristics(
-        self, 
-        roi_original: np.ndarray, 
-        roi_binary: np.ndarray,
-        roi_processed: np.ndarray,
-        click_offset: Tuple[int, int]
-    ) -> Optional[Dict[str, Any]]:
-        """Analyze characteristics of a region that wasn't detected as a particle"""
-        
-        # Calculate intensity statistics
-        mean_intensity = float(np.mean(roi_original))
-        std_intensity = float(np.std(roi_original))
-        min_intensity = float(np.min(roi_original))
-        max_intensity = float(np.max(roi_original))
-        
-        # Check if region has contrast (potential particle)
-        if std_intensity < 10:  # Too uniform
-            return None
-        
-        # Apply aggressive thresholding to find potential particle
-        if self.threshold_mode == "otsu":
-            _, test_binary = cv2.threshold(
-                roi_processed, 0, 255, 
-                cv2.THRESH_BINARY + cv2.THRESH_OTSU
-            )
-        else:
-            # Try with lower threshold
-            test_threshold = max(0, self.manual_threshold - 30)
-            _, test_binary = cv2.threshold(
-                roi_processed, test_threshold, 255, cv2.THRESH_BINARY
-            )
-        
-        # Find contours in test binary
-        test_contours, _ = cv2.findContours(
-            test_binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-        
-        if not test_contours:
-            return None
-        
-        # Find contour closest to click point
-        click_x, click_y = click_offset
-        min_dist = float('inf')
-        closest_contour = None
-        
-        for cnt in test_contours:
-            M = cv2.moments(cnt)
-            if M['m00'] > 0:
-                cx = int(M['m10'] / M['m00'])
-                cy = int(M['m01'] / M['m00'])
-                dist = np.sqrt((cx - click_x)**2 + (cy - click_y)**2)
-                if dist < min_dist:
-                    min_dist = dist
-                    closest_contour = cnt
-        
-        if closest_contour is None or cv2.contourArea(closest_contour) < 5:
-            return None
-        
-        # Calculate properties
-        area_px = float(cv2.contourArea(closest_contour))
-        perimeter = float(cv2.arcLength(closest_contour, True))
-        
-        x, y, w, h = cv2.boundingRect(closest_contour)
-        aspect_ratio = float(w) / h if h > 0 else 0.0
-        
-        if perimeter > 0:
-            circularity = (4 * np.pi * area_px) / (perimeter ** 2)
-        else:
-            circularity = 0.0
-        
-        hull = cv2.convexHull(closest_contour)
-        hull_area = float(cv2.contourArea(hull))
-        solidity = area_px / hull_area if hull_area > 0 else 0.0
-        
-        # Calculate intensity in contour region
-        mask = np.zeros(roi_original.shape, dtype=np.uint8)
-        cv2.drawContours(mask, [closest_contour], -1, 255, -1)
-        particle_mean = float(np.mean(roi_original[mask > 0]))
-        
-        return {
-            'area_px': area_px,
-            'perimeter': perimeter,
-            'aspect_ratio': aspect_ratio,
-            'circularity': circularity,
-            'solidity': solidity,
-            'mean_intensity': mean_intensity,
-            'particle_intensity': particle_mean,
-            'std_intensity': std_intensity,
-            'test_contour': closest_contour,
-            'test_binary': test_binary,
-            'roi_size': roi_original.shape
-        }
-
-    def _generate_missed_particle_suggestions(
-        self, 
-        analysis: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Generate parameter suggestions to detect missed particle"""
-        
-        suggestions = {}
-        area_px = analysis['area_px']
-        circularity = analysis['circularity']
-        aspect_ratio = analysis['aspect_ratio']
-        solidity = analysis['solidity']
-        
-        # Area suggestions
-        current_min = self.params['min_area']
-        current_max = self.params['max_area']
-        
-        if area_px < current_min:
-            suggestions['min_area'] = int(area_px * 0.7)
-        
-        if area_px > current_max:
-            suggestions['max_area'] = int(area_px * 1.3)
-        
-        # Threshold suggestions
-        if self.threshold_mode == "manual":
-            suggestions['manual_threshold'] = max(0, self.manual_threshold - 20)
-        else:
-            suggestions['threshold_mode'] = 'manual'
-            suggestions['manual_threshold'] = 100
-        
-        # Gaussian blur suggestion
-        if analysis['std_intensity'] < 20:  # Low contrast
-            suggestions['gaussian_sigma'] = min(20.0, self.params['gaussian_sigma'] + 2.0)
-        
-        # Morphology suggestions
-        if circularity < self.min_circularity:
-            suggestions['min_circularity'] = max(0.0, circularity - 0.1)
-        
-        if aspect_ratio > self.max_aspect_ratio:
-            suggestions['max_aspect_ratio'] = min(20.0, aspect_ratio + 1.0)
-        elif aspect_ratio < self.min_aspect_ratio:
-            suggestions['min_aspect_ratio'] = max(0.1, aspect_ratio - 0.1)
-        
-        if solidity < self.min_solidity:
-            suggestions['min_solidity'] = max(0.0, solidity - 0.1)
-        
-        # Erosion/dilation suggestions
-        if circularity < 0.5:
-            suggestions['dilate_iterations'] = min(5, self.params['dilate_iterations'] + 1)
-        
-        return suggestions
-
-    def _display_missed_particle_analysis(
-        self, 
-        analysis: Dict[str, Any], 
-        suggestions: Dict[str, Any]
-    ):
-        """Display analysis of missed particle with suggestions"""
-        
-        area_px = analysis['area_px']
-        um2_per_px2 = self.pixel_size_um ** 2
-        area_um2 = area_px * um2_per_px2
-        
-        analysis_text = (
-            f"🔍 MISSED PARTICLE DETECTED\n\n"
-            f"📊 Characteristics:\n"
-            f"• Area: {area_px:.1f} px² ({area_um2:.2f} µm²)\n"
-            f"• Perimeter: {analysis['perimeter']:.1f} px\n"
-            f"• Aspect Ratio: {analysis['aspect_ratio']:.2f}\n"
-            f"• Circularity: {analysis['circularity']:.3f}\n"
-            f"• Solidity: {analysis['solidity']:.3f}\n"
-            f"• Mean Intensity: {analysis['mean_intensity']:.1f}\n"
-            f"• Contrast (std): {analysis['std_intensity']:.1f}\n\n"
-            f"💡 SUGGESTIONS TO DETECT:\n"
-        )
-        
-        for param, value in suggestions.items():
-            if 'area' in param:
-                value_um2 = value * um2_per_px2
-                analysis_text += f"• {param}: {value} px ({value_um2:.2f} µm²)\n"
-            else:
-                analysis_text += f"• {param}: {value}\n"
-        
-        analysis_text += f"\n✅ Click 'APPLY SUGGESTIONS' to enable detection"
-        
-        # Clear and insert new text
-        self.target_analysis_text.delete('1.0', tk.END)
-        self.target_analysis_text.insert('1.0', analysis_text)
-
-        # Apply warning color to entire text
-        self.target_analysis_text.tag_add("warning", "1.0", "end")
-        self.target_analysis_text.tag_config("warning", foreground=self.COLORS['warning'])
-        
-        # Optional: Highlight the detected region on the image
-        self._highlight_missed_particle(analysis['test_contour'])
-
-    def _highlight_missed_particle(self, contour: np.ndarray):
-        """Highlight the missed particle region on the display"""
-        # Create a temporary overlay
-        self.ax_image.clear()
-        
-        if len(self.original_image.shape) == 2:
-            display = cv2.cvtColor(self.original_image, cv2.COLOR_GRAY2RGB)
-        else:
-            display = self.original_image.copy()
-        
-        # Draw detected contours in green
-        cv2.drawContours(display, self.contours, -1, (0, 255, 0), 2)
-        
-        # Draw missed particle in orange
-        cv2.drawContours(display, [contour], -1, (255, 165, 0), 3)
-        
-        self.ax_image.imshow(display)
-        self.ax_image.set_title(
-            "Original + Contours (Orange = Missed Particle)", 
-            fontsize=12, fontweight='bold', pad=10
-        )
-        self.ax_image.axis("off")
-        
-        self.canvas_image.draw()
-
-
+        self._analyze_particle(clicked_contour)
+    
     def _analyze_particle(self, contour: np.ndarray):
         """Analyze a specific particle"""
         area_px = cv2.contourArea(contour)
@@ -2941,142 +2560,64 @@ class SegmentationTuner:
         aspect_ratio = float(w) / h if h > 0 else 0
         circularity = 4 * np.pi * area_px / (perimeter ** 2) if perimeter > 0 else 0
         
-        hull = cv2.convexHull(contour)
-        hull_area = float(cv2.contourArea(hull))
-        solidity = area_px / hull_area if hull_area > 0 else 0.0
-        
         um2_per_px2 = self.pixel_size_um ** 2
         area_um2 = area_px * um2_per_px2
         
         suggestions = self._generate_suggestions(area_px, circularity, aspect_ratio)
         self.current_suggestions = suggestions
         
-        # Clear and build text
-        self.target_analysis_text.delete('1.0', tk.END)
+        analysis_text = (
+            f"🎯 Target Particle Analysis:\n\n"
+            f"Area: {area_px:.1f} px² ({area_um2:.2f} µm²)\n"
+            f"Perimeter: {perimeter:.1f} px\n"
+            f"Aspect Ratio: {aspect_ratio:.2f}\n"
+            f"Circularity: {circularity:.3f}\n\n"
+            f"📊 Suggestions:\n"
+        )
         
-        # Header
-        self.target_analysis_text.insert('end', "🎯 Target Particle Analysis\n\n", "header")
+        for param, value in suggestions.items():
+            if 'area' in param:
+                value_um2 = value * um2_per_px2
+                analysis_text += f"• {param}: {value} px ({value_um2:.2f} µm²)\n"
+            else:
+                analysis_text += f"• {param}: {value}\n"
         
-        # Measurements
-        self.target_analysis_text.insert('end', "📏 Measurements:\n", "section")
-        self.target_analysis_text.insert('end', f"• Area: {area_px:.1f} px² ({area_um2:.2f} µm²)\n")
-        self.target_analysis_text.insert('end', f"• Perimeter: {perimeter:.1f} px\n")
-        self.target_analysis_text.insert('end', f"• Aspect Ratio: {aspect_ratio:.2f}\n")
-        self.target_analysis_text.insert('end', f"• Circularity: {circularity:.3f}\n")
-        self.target_analysis_text.insert('end', f"• Solidity: {solidity:.3f}\n\n")
+        self.target_analysis_label.config(text=analysis_text, foreground="black")
+    
+    def _generate_suggestions(self, area: float, circularity: float,
+                             aspect_ratio: float) -> Dict[str, Any]:
+        """Generate parameter suggestions"""
+        suggestions: Dict[str, Any] = {}
         
-        # Suggestions
-        if suggestions:
-            self.target_analysis_text.insert('end', "📊 Suggestions:\n", "section")
-            for param, value in suggestions.items():
-                if 'area' in param:
-                    value_um2 = value * um2_per_px2
-                    self.target_analysis_text.insert('end', f"• {param}: {value} px ({value_um2:.2f} µm²)\n", "suggestion")
-                else:
-                    self.target_analysis_text.insert('end', f"• {param}: {value}\n", "suggestion")
+        suggestions["min_area"] = max(10, int(area * 0.3))
+        suggestions["max_area"] = min(20000, int(area * 3.0))
         
-        # Configure tags
-        self.target_analysis_text.tag_config("header", foreground=self.COLORS['success'], font=("Segoe UI", 10, "bold"))
-        self.target_analysis_text.tag_config("section", foreground=self.COLORS['header'], font=("Segoe UI", 9, "bold"))
-        self.target_analysis_text.tag_config("suggestion", foreground=self.COLORS['primary'], font=("Segoe UI", 8, "bold"))
-
-
-    def _generate_suggestions(
-        self, 
-        area_px: float, 
-        circularity: float, 
-        aspect_ratio: float
-    ) -> Dict[str, Any]:
-        """Generate parameter suggestions based on particle analysis"""
-        suggestions = {}
+        if circularity < 0.6:
+            suggestions["dilate_iterations"] = min(3, self.params["dilate_iterations"] + 1)
+            suggestions["erode_iterations"] = min(3, self.params["erode_iterations"] + 1)
         
-        current_min = self.params['min_area']
-        current_max = self.params['max_area']
-        
-        if area_px < current_min:
-            suggestions['min_area'] = int(area_px * 0.8)
-        
-        if area_px > current_max:
-            suggestions['max_area'] = int(area_px * 1.2)
-        
-        if circularity < self.min_circularity:
-            suggestions['min_circularity'] = max(0.0, circularity - 0.05)
-        
-        if circularity > self.max_circularity:
-            suggestions['max_circularity'] = min(1.0, circularity + 0.05)
-        
-        if aspect_ratio > self.max_aspect_ratio:
-            suggestions['max_aspect_ratio'] = min(20.0, aspect_ratio + 0.5)
-        elif aspect_ratio < self.min_aspect_ratio:
-            suggestions['min_aspect_ratio'] = max(0.1, aspect_ratio - 0.5)
+        if aspect_ratio > 2.5 or aspect_ratio < 0.4:
+            suggestions["gaussian_sigma"] = min(10.0, self.params["gaussian_sigma"] + 1.0)
         
         return suggestions
-
-    def apply_suggestions(self, event=None):
-        """Apply the current suggestions to parameters"""
+    
+    def apply_suggestions(self, event):
+        """Apply suggested parameters"""
         if not self.current_suggestions:
-            self.target_analysis_text.delete('1.0', tk.END)
-            self.target_analysis_text.insert('1.0', "No suggestions to apply")
+            print("⚠ No suggestions available. Click on a particle first.")
             return
         
-        # Apply each suggestion
+        print("\n✅ Applying suggestions:")
         for param, value in self.current_suggestions.items():
-            if param == 'threshold_mode':
-                # Cycle threshold mode button until we reach desired mode
-                modes = ["otsu", "manual", "adaptive"]
-                while self.threshold_mode != value:
-                    self.cycle_threshold_mode(None)
-            
-            elif param in self.sliders:
-                # ✅ FIX: Use set_val() for matplotlib Sliders
-                self.sliders[param].set_val(value)
-            
-            elif param in ['min_circularity', 'max_circularity', 'min_aspect_ratio', 
-                        'max_aspect_ratio', 'min_solidity']:
-                # Shape filter - update via slider if exists
-                if param in self.sliders:
-                    self.sliders[param].set_val(value)  # ✅ FIX
-                else:
-                    # Fallback: update directly
-                    setattr(self, param, value)
-            
-            elif param == 'manual_threshold':
-                self.manual_threshold = value
-                if 'manual_threshold' in self.sliders:
-                    self.sliders['manual_threshold'].set_val(value)  # ✅ FIX
-            
-            elif param == 'gaussian_sigma':
-                self.params['gaussian_sigma'] = value
-                if 'gaussian_sigma' in self.sliders:
-                    self.sliders['gaussian_sigma'].set_val(value)  # ✅ FIX
-            
-            elif param in ['dilate_iterations', 'erode_iterations', 'min_area', 'max_area']:
+            if param in self.params:
+                old_value = self.params[param]
                 self.params[param] = value
                 if param in self.sliders:
-                    self.sliders[param].set_val(value)  # ✅ FIX
+                    self.sliders[param].set_val(value)
+                print(f"   {param}: {old_value} → {value}")
         
-        # Clear suggestions
-        self.current_suggestions = {}
-        
-        # Update display
-        self.target_analysis_text.delete('1.0', tk.END)
-        self.target_analysis_text.insert('1.0', "✅ Suggestions applied! Processing...", "success")
-        self.target_analysis_text.tag_config("success", 
-                                            foreground=self.COLORS['success'], 
-                                            font=("Segoe UI", 9, "bold"))
-        
-        # Re-process
         self.update_visualization()
-        
-        # Update display
-        self.target_analysis_text.delete('1.0', tk.END)
-        self.target_analysis_text.insert('1.0', "✅ Suggestions applied! Processing...", "success")
-        self.target_analysis_text.tag_config("success", foreground=self.COLORS['success'], 
-                                            font=("Segoe UI", 9, "bold"))
-        
-        # Re-process
-        self.update_visualization()
-
+    
     def load_new_image(self):
         """Load a new image file"""
         file_path = filedialog.askopenfilename(

@@ -1,18 +1,18 @@
 {
-  "bacterium": "Proteus mirabilis",
+  "bacterium": "Klebsiella pneumoniae",
   "structure": "bacteria",
   "pixel_size_um": 0.10949166666666665,
   "parameters": {
-    "gaussian_sigma": 11.762978723404256,
-    "min_area": 395,
-    "max_area": 3958,
-    "dilate_iterations": 1,
-    "erode_iterations": 3,
-    "min_circularity": 0.15,
+    "gaussian_sigma": 19.077399527186763,
+    "min_area": 260.0,
+    "max_area": 8341.379240453818,
+    "dilate_iterations": 0,
+    "erode_iterations": 1,
+    "min_circularity": 0.06,
     "max_circularity": 1.0,
     "min_aspect_ratio": 0.2,
-    "max_aspect_ratio": 10.0,
-    "min_solidity": 0.2
+    "max_aspect_ratio": 10.1,
+    "min_solidity": 0.51
   },
-  "timestamp": "2026-02-05T04:03:58.146696"
+  "timestamp": "2026-02-09T02:41:51.733965"
 }

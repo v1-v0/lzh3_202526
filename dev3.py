@@ -4292,7 +4292,6 @@ def select_folder_dialog(title: str = "Select Folder") -> Optional[str]:
 # Main Function
 # ==================================================
 
-
 def main():
     """Main execution function"""
     
@@ -4300,6 +4299,9 @@ def main():
     print("\n" + "="*80)
     print("MICROGEL FLUORESCENCE ANALYSIS PIPELINE")
     print("="*80 + "\n")
+    
+    # ✅ Initialize output_dir at the start
+    output_dir = None
     
     try:
         # Step 1: SELECT BACTERIA CONFIGURATION FIRST
@@ -4311,7 +4313,7 @@ def main():
         print(f"\n✓ Configuration loaded: {bacteria_type}")
 
         # Load config directly from JSON
-        bacteria_config = load_bacteria_config_from_json(bacteria_type)  # ✅ NEW WAY
+        bacteria_config = load_bacteria_config_from_json(bacteria_type)
 
         if bacteria_config is None:
             print("\n✗ Failed to load bacteria configuration")
@@ -4351,8 +4353,11 @@ def main():
             print("Processing in BATCH mode...\n")
             
             # Setup SINGLE output directory for entire batch
-            output_root = setup_output_directory(config)  # ✅ This modifies config in-place
-            config['output_dir'] = output_root  # Store root for reference
+            output_root = setup_output_directory(config)
+            config['output_dir'] = output_root
+            
+            # ✅ Set output_dir for batch mode
+            output_dir = output_root
             
             print(f"📁 Output directory: {output_root}\n")
             
@@ -4369,10 +4374,10 @@ def main():
                 print("─" * 80)
                 
                 # Create processing config (inherit from main config)
-                subdir_full_config = config.copy()  # ✅ Includes positive_output and negative_output
+                subdir_full_config = config.copy()
                 subdir_full_config['source_dir'] = subdir_path
                 subdir_full_config['microgel_type'] = microgel_type
-                subdir_full_config['dataset_id'] = label  # For logging
+                subdir_full_config['dataset_id'] = label
                 
                 # Process this subdirectory
                 result = process_single_dataset(subdir_full_config)
@@ -4393,7 +4398,6 @@ def main():
             print("="*80 + "\n")
             
             try:
-                # ✅ Use the paths from config (which were set by setup_output_directory)
                 positive_dir = config.get('positive_output')
                 negative_dir = config.get('negative_output')
                 
@@ -4450,9 +4454,7 @@ def main():
                 status = "✓" if res['success'] else "✗"
                 print(f"  {status} {label}: {res['images_processed']} images processed")
             
-                
             print()
-            
             
         else:
             # ==================== SINGLE MODE ====================
@@ -4484,23 +4486,27 @@ def main():
                     print(f"  ✓ Classification: {Path(result['classification_file']).name}")
                 if result['comparison_plot']:
                     print(f"  ✓ Comparison plot: {Path(result['comparison_plot']).name}")
-
             else:
                 print(f"  ✗ Processing failed")
                 if 'error' in result:
                     print(f"     Error: {result['error']}")
             print()
 
-        if _log_path and _log_path.exists():
-            log_copy = copy_log_to_output(_log_path, output_root)
-        if log_copy:
-            rel_path = log_copy.relative_to(output_root)
-            print(f"  Log copied to: {rel_path}")
+        # ✅ Check if output_dir is set before using it
+        if output_dir is not None:
+            # Copy log file
+            if _log_path and _log_path.exists():
+                log_copy = copy_log_to_output(_log_path, output_dir)
+                if log_copy:
+                    rel_path = log_copy.relative_to(output_dir)
+                    print(f"  Log copied to: {rel_path}")
+                else:
+                    print(f"  ⚠ Could not copy log file to output")
+            
+            # Offer to open folder
+            open_output_folder(output_dir)
         else:
-            print(f"  !!!Could not copy log file to output!!!")
-
-        # Offer to open folder
-        open_output_folder(output_dir)
+            print("  ⚠ No output directory to process")
         
     except KeyboardInterrupt:
         print("\n\n⚠ Processing interrupted by user")
@@ -4517,8 +4523,6 @@ def main():
     print("="*80 + "\n")
     
     print("Thank you for using the Microgel Fluorescence Analysis Pipeline!")
-
-
 
 
 

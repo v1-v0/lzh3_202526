@@ -1,8 +1,8 @@
 {
-  "bacteria_key": "klebsiella_pneumoniae",
+  "bacteria_type": "klebsiella_pneumoniae",
   "config": {
     "name": "Klebsiella pneumoniae",
-    "description": "bacteria segmentation - Tuned 2026-02-04 03:35:55",
+    "description": "bacteria segmentation - Tuned 2026-02-09 02:41:51",
     "gaussian_sigma": 19.077399527186763,
     "min_area_um2": 3.116990518055555,
     "max_area_um2": 99.99999999999999,
@@ -20,15 +20,12 @@
     "min_solidity": 0.51,
     "max_fraction_of_image": 0.25,
     "fluor_min_area_um2": 3.0,
-    "fluor_max_area_um2": 99.99999999999999,
+    "fluor_max_area_um2": 2000.0,
     "fluor_match_min_intersection_px": 5.0,
-    "last_modified": "2026-02-04T03:35:55.902978",
+    "invert_image": false,
     "pixel_size_um": 0.10949166666666665,
+    "last_modified": "2026-02-09T02:41:51.733965",
     "tuned_by": "Interactive Tuner"
   },
-  "metadata": {
-    "version": "2.0",
-    "file_created": "2026-02-04T03:35:55.902978",
-    "compatible_with": ["dev2a.py", "tuner.py"]
-  }
+  "updated": "2026-02-09T02:41:51.733965"
 }
