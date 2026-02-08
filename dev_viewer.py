@@ -2334,5 +2334,5 @@ def launch_viewer(initial_folder: Optional[Path] = None):
 
 if __name__ == "__main__":
     # Only run if not being imported by PyInstaller
-    if not getattr(sys, 'frozen', False):
+    #if not getattr(sys, 'frozen', False):
         launch_viewer()

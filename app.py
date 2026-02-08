@@ -52,9 +52,8 @@ from bacteria_configs import (
 
 
 
-
 def load_bacteria_config_from_json(bacteria_key: str) -> Optional['SegmentationConfig']:
-    """Load bacteria configuration directly from JSON file
+    """Load bacteria configuration directly from JSON file with null handling
     
     Args:
         bacteria_key: Bacteria configuration key (e.g., 'klebsiella_pneumoniae')
@@ -81,32 +80,64 @@ def load_bacteria_config_from_json(bacteria_key: str) -> Optional['SegmentationC
         else:
             config_data = json_data
         
-        # Create SegmentationConfig object
+        # Helper function to safely get float with default
+        def get_float(key: str, default: float) -> float:
+            value = config_data.get(key)
+            if value is None or value == '':
+                return default
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                print(f"[WARN] Invalid value for {key}: {value}, using default: {default}")
+                return default
+        
+        # Helper function to safely get int with default
+        def get_int(key: str, default: int) -> int:
+            value = config_data.get(key)
+            if value is None or value == '':
+                return default
+            try:
+                return int(value)
+            except (ValueError, TypeError):
+                print(f"[WARN] Invalid value for {key}: {value}, using default: {default}")
+                return default
+        
+        # Helper function to safely get bool with default
+        def get_bool(key: str, default: bool) -> bool:
+            value = config_data.get(key)
+            if value is None or value == '':
+                return default
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.lower() in ('true', '1', 'yes')
+            return bool(value)
+        
+        # Create SegmentationConfig object with safe defaults
         config = SegmentationConfig(
             name=config_data.get('name', 'Unknown'),
             description=config_data.get('description', ''),
-            gaussian_sigma=float(config_data.get('gaussian_sigma', 15.0)),
-            min_area_um2=float(config_data.get('min_area_um2', 3.0)),
-            max_area_um2=float(config_data.get('max_area_um2', 2000.0)),
-            dilate_iterations=int(config_data.get('dilate_iterations', 0)),
-            erode_iterations=int(config_data.get('erode_iterations', 0)),
-            morph_kernel_size=int(config_data.get('morph_kernel_size', 3)),
-            morph_iterations=int(config_data.get('morph_iterations', 1)),
-            min_circularity=float(config_data.get('min_circularity', 0.0)),
-            max_circularity=float(config_data.get('max_circularity', 1.0)),
-            min_aspect_ratio=float(config_data.get('min_aspect_ratio', 0.2)),
-            max_aspect_ratio=float(config_data.get('max_aspect_ratio', 10.0)),
-            min_mean_intensity=int(config_data.get('min_mean_intensity', 0)),
-            max_mean_intensity=int(config_data.get('max_mean_intensity', 255)),
-            max_edge_gradient=int(config_data.get('max_edge_gradient', 200)),
-            min_solidity=float(config_data.get('min_solidity', 0.3)),
-            max_fraction_of_image=float(config_data.get('max_fraction_of_image', 0.25)),
-            fluor_min_area_um2=float(config_data.get('fluor_min_area_um2', 3.0)),
-            fluor_max_area_um2=float(config_data.get('fluor_max_area_um2', 3.0)),
-            fluor_match_min_intersection_px=float(config_data.get('fluor_match_min_intersection_px', 5.0)),
-            invert_image=bool(config_data.get('invert_image', False)),
-
-            pixel_size_um=float(config_data.get('pixel_size_um', 0.109492)),
+            gaussian_sigma=get_float('gaussian_sigma', 15.0),
+            min_area_um2=get_float('min_area_um2', 3.0),
+            max_area_um2=get_float('max_area_um2', 2000.0),
+            dilate_iterations=get_int('dilate_iterations', 0),
+            erode_iterations=get_int('erode_iterations', 0),
+            morph_kernel_size=get_int('morph_kernel_size', 3),
+            morph_iterations=get_int('morph_iterations', 1),
+            min_circularity=get_float('min_circularity', 0.0),
+            max_circularity=get_float('max_circularity', 1.0),
+            min_aspect_ratio=get_float('min_aspect_ratio', 0.2),
+            max_aspect_ratio=get_float('max_aspect_ratio', 10.0),
+            min_mean_intensity=get_int('min_mean_intensity', 0),
+            max_mean_intensity=get_int('max_mean_intensity', 255),
+            max_edge_gradient=get_int('max_edge_gradient', 200),
+            min_solidity=get_float('min_solidity', 0.3),
+            max_fraction_of_image=get_float('max_fraction_of_image', 0.25),
+            fluor_min_area_um2=get_float('fluor_min_area_um2', 3.0),
+            fluor_max_area_um2=get_float('fluor_max_area_um2', 3.0),
+            fluor_match_min_intersection_px=get_float('fluor_match_min_intersection_px', 5.0),
+            invert_image=get_bool('invert_image', False),
+            pixel_size_um=get_float('pixel_size_um', 0.109492),
             last_modified=config_data.get('last_modified'),
             tuned_by=config_data.get('tuned_by')
         )
