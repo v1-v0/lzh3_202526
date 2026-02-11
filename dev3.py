@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 from arrow import get
 import numpy as np
 import pandas as pd
+from pyparsing import Diagnostics
 from scipy import stats as scipy_stats
 from tqdm import tqdm
 
@@ -769,30 +770,112 @@ def save_debug_ids(
 # ==================================================
 # Fluorescence Registration / Alignment
 # ==================================================
-def align_fluorescence_channel(bf_img: np.ndarray, fluor_img: np.ndarray) -> tuple[np.ndarray, tuple[float, float]]:
+
+def align_fluorescence_channel(bf_img: np.ndarray, fluor_img: np.ndarray) -> tuple[np.ndarray, tuple[float, float], dict]:
     """Aligns the fluorescence image to the brightfield image using Phase Correlation."""
+    
+    # Convert to grayscale if needed
     if bf_img.ndim == 3:
         bf_gray = cv2.cvtColor(bf_img, cv2.COLOR_BGR2GRAY)
     else:
-        bf_gray = bf_img
+        bf_gray = bf_img.copy()
 
     if fluor_img.ndim == 3:
         fluor_gray = cv2.cvtColor(fluor_img, cv2.COLOR_BGR2GRAY)
     else:
-        fluor_gray = fluor_img
+        fluor_gray = fluor_img.copy()
 
-    bf_inverted = cv2.bitwise_not(bf_gray)
-
-    shift, error, diffphase = phase_cross_correlation(bf_inverted, fluor_gray, upsample_factor=10)
+    # ✅ DIAGNOSTIC: Save pre-alignment comparison
+    # Create overlay BEFORE alignment
+    bf_norm = np.zeros_like(bf_gray, dtype=np.uint8)
+    cv2.normalize(bf_gray, bf_norm, 0, 255, cv2.NORM_MINMAX)
+    
+    fluor_norm = np.zeros_like(fluor_gray, dtype=np.uint8)
+    cv2.normalize(fluor_gray, fluor_norm, 0, 255, cv2.NORM_MINMAX)
+    
+    pre_overlay = np.zeros((bf_norm.shape[0], bf_norm.shape[1], 3), dtype=np.uint8)
+    pre_overlay[:, :, 1] = bf_norm  # Green channel = BF
+    pre_overlay[:, :, 0] = fluor_norm  # Red channel = Fluorescence
+    
+    # Test 1: Use brightfield as-is (no inversion)
+    bf_for_corr = bf_gray.astype(np.float32) / 255.0
+    fluor_for_corr = fluor_gray.astype(np.float32) / 255.0
+    
+    shift1, error1, _ = phase_cross_correlation(bf_for_corr, fluor_for_corr, upsample_factor=10)
+    
+    # Test 2: Use inverted brightfield
+    bf_inverted = 255 - bf_gray
+    bf_inv_for_corr = bf_inverted.astype(np.float32) / 255.0
+    
+    shift2, error2, _ = phase_cross_correlation(bf_inv_for_corr, fluor_for_corr, upsample_factor=10)
+    
+    # Choose the one with lower error
+    if error1 < error2:
+        shift = shift1
+        error = error1
+        method = "BF direct"
+    else:
+        shift = shift2
+        error = error2
+        method = "BF inverted"
+    
     shift_y, shift_x = shift
-
+    
+    print(f"  Alignment test:")
+    print(f"    Direct BF:   shift=({shift1[1]:.2f}, {shift1[0]:.2f}), error={error1:.6f}")
+    print(f"    Inverted BF: shift=({shift2[1]:.2f}, {shift2[0]:.2f}), error={error2:.6f}")
+    print(f"    Using: {method}, shift_x={shift_x:.2f}px, shift_y={shift_y:.2f}px")
+    
+    # Apply the shift
     rows, cols = fluor_img.shape[:2]
     
-    M = np.array([[1, 0, -shift_x], [0, 1, -shift_y]], dtype=np.float32)
+    # Create THREE versions to compare
+    # Version A: No shift (original)
+    no_shift = fluor_img.copy()
     
-    aligned_fluor = cv2.warpAffine(fluor_img, M, (cols, rows))
-
-    return aligned_fluor, (shift_y, shift_x)
+    # Version B: Shift in positive direction
+    M_pos = np.array([[1, 0, shift_x], [0, 1, shift_y]], dtype=np.float32)
+    aligned_pos = cv2.warpAffine(fluor_img, M_pos, (cols, rows), 
+                                  flags=cv2.INTER_LINEAR,
+                                  borderMode=cv2.BORDER_CONSTANT,
+                                  borderValue=0)
+    
+    # Version C: Shift in negative direction (current implementation)
+    M_neg = np.array([[1, 0, -shift_x], [0, 1, -shift_y]], dtype=np.float32)
+    aligned_neg = cv2.warpAffine(fluor_img, M_neg, (cols, rows), 
+                                  flags=cv2.INTER_LINEAR,
+                                  borderMode=cv2.BORDER_CONSTANT,
+                                  borderValue=0)
+    
+    # Create comparison overlays
+    def make_overlay(fluor_version: np.ndarray) -> np.ndarray:
+        overlay = np.zeros((bf_norm.shape[0], bf_norm.shape[1], 3), dtype=np.uint8)
+        overlay[:, :, 1] = bf_norm  # Green = BF
+        if fluor_version.ndim == 3:
+            fluor_disp = cv2.cvtColor(fluor_version, cv2.COLOR_BGR2GRAY)
+        else:
+            fluor_disp = fluor_version.copy()
+        fluor_disp_norm = np.zeros_like(fluor_disp, dtype=np.uint8)
+        cv2.normalize(fluor_disp, fluor_disp_norm, 0, 255, cv2.NORM_MINMAX)
+        overlay[:, :, 0] = fluor_disp_norm  # Red = Fluorescence
+        return overlay
+    
+    overlay_none = make_overlay(no_shift)
+    overlay_pos = make_overlay(aligned_pos)
+    overlay_neg = make_overlay(aligned_neg)
+    
+    # Return the negative shift version (current implementation)
+    # But we'll save all three for comparison
+    diagnostics = {
+        'overlay_none': overlay_none,
+        'overlay_pos': overlay_pos,
+        'overlay_neg': overlay_neg,
+        'shift_pos': (float(shift_y), float(shift_x)),
+        'shift_neg': (float(-shift_y), float(-shift_x))
+    }
+    
+    #return aligned_neg, (float(shift_y), float(shift_x)), diagnostics
+    return no_shift, (0.0, 0.0), diagnostics
 
 
 # ==================================================
@@ -2813,8 +2896,14 @@ def process_image(
         # Use Unicode-safe imread for fluorescence
         fluor_img = safe_imread(fluor_path, cv2.IMREAD_UNCHANGED)
         if fluor_img is not None:
-            fluor_img, (sy, sx) = align_fluorescence_channel(img, fluor_img)
+            fluor_img, (sy, sx), diagnostics = align_fluorescence_channel(img, fluor_img)
             
+            cv2.imwrite(str(img_out / "DIAG_A_no_shift.png"), diagnostics['overlay_none'])
+            cv2.imwrite(str(img_out / "DIAG_B_positive_shift.png"), diagnostics['overlay_pos'])
+            cv2.imwrite(str(img_out / "DIAG_C_negative_shift.png"), diagnostics['overlay_neg'])
+            
+            print(f"  📊 Check DIAG_*.png files to see which alignment is correct!")
+
             save_debug(img_out, "20_fluorescence_aligned_raw.png", normalize_to_8bit(fluor_img), um_per_px_avg)
 
             if fluor_img.ndim == 3:
