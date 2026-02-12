@@ -772,9 +772,13 @@ def save_debug_ids(
 # ==================================================
 
 def align_fluorescence_channel(bf_img: np.ndarray, fluor_img: np.ndarray) -> tuple[np.ndarray, tuple[float, float], dict]:
-    """Aligns the fluorescence image to the brightfield image using Phase Correlation."""
+    """Aligns fluorescence to brightfield using phase correlation with validation
     
-    # Convert to grayscale if needed
+    Returns:
+        (aligned_image, (shift_y, shift_x), diagnostics)
+    """
+    
+    # Convert to grayscale
     if bf_img.ndim == 3:
         bf_gray = cv2.cvtColor(bf_img, cv2.COLOR_BGR2GRAY)
     else:
@@ -785,97 +789,201 @@ def align_fluorescence_channel(bf_img: np.ndarray, fluor_img: np.ndarray) -> tup
     else:
         fluor_gray = fluor_img.copy()
 
-    # ✅ DIAGNOSTIC: Save pre-alignment comparison
-    # Create overlay BEFORE alignment
+    # Normalize for better correlation
     bf_norm = np.zeros_like(bf_gray, dtype=np.uint8)
     cv2.normalize(bf_gray, bf_norm, 0, 255, cv2.NORM_MINMAX)
     
     fluor_norm = np.zeros_like(fluor_gray, dtype=np.uint8)
     cv2.normalize(fluor_gray, fluor_norm, 0, 255, cv2.NORM_MINMAX)
     
-    pre_overlay = np.zeros((bf_norm.shape[0], bf_norm.shape[1], 3), dtype=np.uint8)
-    pre_overlay[:, :, 1] = bf_norm  # Green channel = BF
-    pre_overlay[:, :, 0] = fluor_norm  # Red channel = Fluorescence
+    # Prepare for correlation
+    bf_for_corr = bf_norm.astype(np.float32) / 255.0
+    fluor_for_corr = fluor_norm.astype(np.float32) / 255.0
     
-    # Test 1: Use brightfield as-is (no inversion)
-    bf_for_corr = bf_gray.astype(np.float32) / 255.0
-    fluor_for_corr = fluor_gray.astype(np.float32) / 255.0
+    # Test 1: Direct correlation
+    try:
+        shift1, error1, _ = phase_cross_correlation(
+            bf_for_corr, 
+            fluor_for_corr, 
+            upsample_factor=10
+        )
+    except Exception as e:
+        print(f"  ⚠ Direct correlation failed: {e}")
+        shift1, error1 = (0.0, 0.0), 1.0
     
-    shift1, error1, _ = phase_cross_correlation(bf_for_corr, fluor_for_corr, upsample_factor=10)
-    
-    # Test 2: Use inverted brightfield
-    bf_inverted = 255 - bf_gray
+    # Test 2: Inverted BF correlation
+    bf_inverted = 255 - bf_norm
     bf_inv_for_corr = bf_inverted.astype(np.float32) / 255.0
     
-    shift2, error2, _ = phase_cross_correlation(bf_inv_for_corr, fluor_for_corr, upsample_factor=10)
+    try:
+        shift2, error2, _ = phase_cross_correlation(
+            bf_inv_for_corr, 
+            fluor_for_corr, 
+            upsample_factor=10
+        )
+    except Exception as e:
+        print(f"  ⚠ Inverted correlation failed: {e}")
+        shift2, error2 = (0.0, 0.0), 1.0
     
-    # Choose the one with lower error
-    if error1 < error2:
-        shift = shift1
-        error = error1
-        method = "BF direct"
-    else:
-        shift = shift2
-        error = error2
-        method = "BF inverted"
-    
-    shift_y, shift_x = shift
+    shift_y1, shift_x1 = shift1
+    shift_y2, shift_x2 = shift2
     
     print(f"  Alignment test:")
-    print(f"    Direct BF:   shift=({shift1[1]:.2f}, {shift1[0]:.2f}), error={error1:.6f}")
-    print(f"    Inverted BF: shift=({shift2[1]:.2f}, {shift2[0]:.2f}), error={error2:.6f}")
-    print(f"    Using: {method}, shift_x={shift_x:.2f}px, shift_y={shift_y:.2f}px")
+    print(f"    Direct BF:   shift=({shift_x1:.2f}, {shift_y1:.2f}), error={error1:.6f}")
+    print(f"    Inverted BF: shift=({shift_x2:.2f}, {shift_y2:.2f}), error={error2:.6f}")
+    
+    # ========== DECISION LOGIC ==========
+    # If both errors are very high (> 0.5), correlation failed
+    CORRELATION_FAILURE_THRESHOLD = 0.5
+    
+    if error1 > CORRELATION_FAILURE_THRESHOLD and error2 > CORRELATION_FAILURE_THRESHOLD:
+        print(f"  ⚠️ Correlation failed (both errors > {CORRELATION_FAILURE_THRESHOLD})")
+        print(f"     Images may already be aligned or have no overlap")
+        print(f"     Using NO alignment (original fluorescence)")
+        
+        # Create diagnostics with no shift
+        diagnostics = create_alignment_diagnostics(
+            bf_norm, fluor_img, fluor_img, fluor_img,
+            (0.0, 0.0), (0.0, 0.0), error1, error2
+        )
+        
+        return fluor_img.copy(), (0.0, 0.0), diagnostics
+    
+    # If shifts are unreasonably large (> 50px), suspect failure
+    MAX_REASONABLE_SHIFT_PX = 50
+    shift1_magnitude = np.sqrt(shift_x1**2 + shift_y1**2)
+    shift2_magnitude = np.sqrt(shift_x2**2 + shift_y2**2)
+    
+    if shift1_magnitude > MAX_REASONABLE_SHIFT_PX and shift2_magnitude > MAX_REASONABLE_SHIFT_PX:
+        print(f"  ⚠️ Both shifts unreasonably large (>{MAX_REASONABLE_SHIFT_PX}px)")
+        print(f"     Using NO alignment")
+        
+        diagnostics = create_alignment_diagnostics(
+            bf_norm, fluor_img, fluor_img, fluor_img,
+            (0.0, 0.0), (0.0, 0.0), error1, error2
+        )
+        
+        return fluor_img.copy(), (0.0, 0.0), diagnostics
+    
+    # Choose the better correlation
+    if error1 < error2:
+        chosen_shift = shift1
+        chosen_error = error1
+        method = "Direct BF"
+        shift_y, shift_x = shift_y1, shift_x1
+    else:
+        chosen_shift = shift2
+        chosen_error = error2
+        method = "Inverted BF"
+        shift_y, shift_x = shift_y2, shift_x2
+    
+    print(f"    Using: {method}, shift=({shift_x:.2f}, {shift_y:.2f})px, error={chosen_error:.6f}")
+    
+    # Apply shift if it's reasonable
+    if np.sqrt(shift_x**2 + shift_y**2) > MAX_REASONABLE_SHIFT_PX:
+        print(f"  ⚠️ Chosen shift too large (>{MAX_REASONABLE_SHIFT_PX}px) - using NO alignment")
+        
+        diagnostics = create_alignment_diagnostics(
+            bf_norm, fluor_img, fluor_img, fluor_img,
+            (0.0, 0.0), (0.0, 0.0), error1, error2
+        )
+        
+        return fluor_img.copy(), (0.0, 0.0), diagnostics
     
     # Apply the shift
     rows, cols = fluor_img.shape[:2]
     
-    # Create THREE versions to compare
-    # Version A: No shift (original)
+    # Create shifted versions
     no_shift = fluor_img.copy()
     
-    # Version B: Shift in positive direction
     M_pos = np.array([[1, 0, shift_x], [0, 1, shift_y]], dtype=np.float32)
-    aligned_pos = cv2.warpAffine(fluor_img, M_pos, (cols, rows), 
-                                  flags=cv2.INTER_LINEAR,
-                                  borderMode=cv2.BORDER_CONSTANT,
-                                  borderValue=0)
+    aligned_pos = cv2.warpAffine(
+        fluor_img, M_pos, (cols, rows),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0
+    )
     
-    # Version C: Shift in negative direction (current implementation)
     M_neg = np.array([[1, 0, -shift_x], [0, 1, -shift_y]], dtype=np.float32)
-    aligned_neg = cv2.warpAffine(fluor_img, M_neg, (cols, rows), 
-                                  flags=cv2.INTER_LINEAR,
-                                  borderMode=cv2.BORDER_CONSTANT,
-                                  borderValue=0)
+    aligned_neg = cv2.warpAffine(
+        fluor_img, M_neg, (cols, rows),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0
+    )
     
-    # Create comparison overlays
+    # Create diagnostics
+    diagnostics = create_alignment_diagnostics(
+        bf_norm, no_shift, aligned_pos, aligned_neg,
+        (shift_y, shift_x), (-shift_y, -shift_x),
+        error1, error2
+    )
+    
+    # Return the version that matches the chosen shift direction
+    if method == "Direct BF":
+        return aligned_pos, (shift_y, shift_x), diagnostics
+    else:
+        return aligned_neg, (-shift_y, -shift_x), diagnostics
+
+
+def create_alignment_diagnostics(
+    bf_norm: np.ndarray,
+    fluor_none: np.ndarray,
+    fluor_pos: np.ndarray,
+    fluor_neg: np.ndarray,
+    shift_pos: tuple[float, float],
+    shift_neg: tuple[float, float],
+    error_direct: float,
+    error_inverted: float
+) -> dict:
+    """Create diagnostic overlay images for alignment verification"""
+    
     def make_overlay(fluor_version: np.ndarray) -> np.ndarray:
         overlay = np.zeros((bf_norm.shape[0], bf_norm.shape[1], 3), dtype=np.uint8)
         overlay[:, :, 1] = bf_norm  # Green = BF
+        
         if fluor_version.ndim == 3:
             fluor_disp = cv2.cvtColor(fluor_version, cv2.COLOR_BGR2GRAY)
         else:
             fluor_disp = fluor_version.copy()
+        
         fluor_disp_norm = np.zeros_like(fluor_disp, dtype=np.uint8)
         cv2.normalize(fluor_disp, fluor_disp_norm, 0, 255, cv2.NORM_MINMAX)
         overlay[:, :, 0] = fluor_disp_norm  # Red = Fluorescence
+        
         return overlay
     
-    overlay_none = make_overlay(no_shift)
-    overlay_pos = make_overlay(aligned_pos)
-    overlay_neg = make_overlay(aligned_neg)
-    
-    # Return the negative shift version (current implementation)
-    # But we'll save all three for comparison
-    diagnostics = {
-        'overlay_none': overlay_none,
-        'overlay_pos': overlay_pos,
-        'overlay_neg': overlay_neg,
-        'shift_pos': (float(shift_y), float(shift_x)),
-        'shift_neg': (float(-shift_y), float(-shift_x))
+    return {
+        'overlay_none': make_overlay(fluor_none),
+        'overlay_pos': make_overlay(fluor_pos),
+        'overlay_neg': make_overlay(fluor_neg),
+        'shift_pos': shift_pos,
+        'shift_neg': shift_neg,
+        'error_direct': error_direct,
+        'error_inverted': error_inverted,
     }
+
+
+def validate_alignment(diagnostics: dict, output_dir: Path):
+    """Let user visually confirm alignment quality"""
+    print("\n" + "="*80)
+    print("ALIGNMENT VALIDATION REQUIRED")
+    print("="*80)
+    print(f"\nPlease check these diagnostic images in: {output_dir}")
+    print("  • DIAG_A_no_shift.png     - Original (no alignment)")
+    print("  • DIAG_B_positive_shift.png - Forward shift")
+    print("  • DIAG_C_negative_shift.png - Reverse shift")
+    print("\nWhich alignment looks best?")
+    print("  [1] No shift (A)")
+    print("  [2] Positive shift (B)")
+    print("  [3] Negative shift (C)")
     
-    #return aligned_neg, (float(shift_y), float(shift_x)), diagnostics
-    return no_shift, (0.0, 0.0), diagnostics  # TEMPORARILY DISABLE ALIGNMENT   
+    while True:
+        choice = input("Select [1-3]: ").strip()
+        if choice in ['1', '2', '3']:
+            return int(choice)
+        print("Invalid choice. Enter 1, 2, or 3.")
+
 
 
 # ==================================================
@@ -1996,6 +2104,10 @@ def classify_groups_clinical(
 ) -> pd.DataFrame:
     """Classify all groups based on clinical thresholds."""
     
+    if not (0.01 <= threshold_pct <= 0.50):
+        print(f" Unusual threshold: {threshold_pct*100:.1f}% (expected 1-50%)")
+
+
     control_mean: Optional[float] = None
     control_std: Optional[float] = None
     control_folder = None
@@ -2034,7 +2146,7 @@ def classify_groups_clinical(
     
     results = []
     
-    # ✅ FIX: Add Control group to results FIRST
+    # Control group to results FIRST
     results.append({
         'Group': 'Control',
         'N': len(control_values),
@@ -2771,7 +2883,6 @@ def display_configuration_summary(config: dict) -> None:
 # Image Processing
 # ==================================================
 
-
 def process_image(
     img_path: Path, 
     output_root: Path,
@@ -2783,13 +2894,19 @@ def process_image(
         img_path: Path to input image
         output_root: Root output directory
         bacteria_config: Bacteria-specific segmentation configuration
+    
+    Raises:
+        FileNotFoundError: If image cannot be read
+        ValueError: If pixel size cannot be determined
     """
     
+    # ========== VALIDATION ==========
     # Validate path encoding
     if not validate_path_encoding(img_path):
         print(f"[ERROR] Cannot process image with problematic path: {img_path}")
         return
     
+    # ========== METADATA EXTRACTION ==========
     xml_props, xml_main = find_metadata_paths(img_path)
     
     try:
@@ -2803,175 +2920,248 @@ def process_image(
         um_per_px_x = um_per_px_y = float(FALLBACK_UM_PER_PX)
 
     um_per_px_avg = (um_per_px_x + um_per_px_y) / 2.0
+    um2_per_px2 = float(um_per_px_x) * float(um_per_px_y)
 
+    # ========== OUTPUT DIRECTORY SETUP ==========
     img_out = output_root / img_path.stem
     ensure_dir(img_out)
 
-    # Use Unicode-safe imread
-    img = safe_imread(img_path, cv2.IMREAD_UNCHANGED)
-    if img is None:
-        raise FileNotFoundError(f"Could not read image: {img_path}")
-    if img.ndim == 3:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    try:
+        # ========== LOAD BRIGHTFIELD IMAGE ==========
+        img = safe_imread(img_path, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            raise FileNotFoundError(f"Could not read image: {img_path}")
+        
+        # Convert to grayscale if needed
+        if img.ndim == 3:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    img8 = normalize_to_8bit(img)
-    save_debug(img_out, "01_gray_8bit.png", img8, um_per_px_avg)
+        img8 = normalize_to_8bit(img)
+        save_debug(img_out, "01_gray_8bit.png", img8, um_per_px_avg)
 
-    # Call segmentation with bacteria config
-    mask = segment_particles_brightfield(img8, float(um_per_px_avg), img_out, bacteria_config)
+        # ========== SEGMENT PARTICLES ==========
+        mask = segment_particles_brightfield(img8, float(um_per_px_avg), img_out, bacteria_config)
 
-    _fc = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contours = cast(list[np.ndarray], _fc[-2])
+        # Find contours
+        _fc = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours = cast(list[np.ndarray], _fc[-2])
 
-    vis_all = cv2.cvtColor(img8, cv2.COLOR_GRAY2BGR)
-    cv2.drawContours(vis_all, contours, -1, (0, 0, 255), 1)
-    save_debug(img_out, "10_contours_all.png", vis_all, um_per_px_avg)
+        # Visualize all contours
+        vis_all = cv2.cvtColor(img8, cv2.COLOR_GRAY2BGR)
+        cv2.drawContours(vis_all, contours, -1, (0, 0, 255), 1)
+        save_debug(img_out, "10_contours_all.png", vis_all, um_per_px_avg)
 
-    # Use config parameters for filtering
-    um2_per_px2 = float(um_per_px_x) * float(um_per_px_y)
-    min_area_px = bacteria_config.min_area_px
-    max_area_px = bacteria_config.max_area_px
+        # ========== FILTER PARTICLES ==========
+        min_area_px = bacteria_config.min_area_px
+        max_area_px = bacteria_config.max_area_px
 
-    H, W = img8.shape[:2]
-    img_area_px = float(H * W)
-    max_big_area_px = bacteria_config.max_fraction_of_image * img_area_px
+        H, W = img8.shape[:2]
+        img_area_px = float(H * W)
+        max_big_area_px = bacteria_config.max_fraction_of_image * img_area_px
 
-    accepted: list[np.ndarray] = []
-    rejected: list[np.ndarray] = []
+        accepted: list[np.ndarray] = []
+        rejected: list[np.ndarray] = []
 
-    for c in contours:
-        area_px = float(cv2.contourArea(c))
-        if area_px <= 0:
-            rejected.append(c)
-            continue
+        for c in contours:
+            area_px = float(cv2.contourArea(c))
+            if area_px <= 0:
+                rejected.append(c)
+                continue
 
-        if area_px >= max_big_area_px:
-            rejected.append(c)
-            continue
+            # Filter by absolute size
+            if area_px >= max_big_area_px:
+                rejected.append(c)
+                continue
 
-        perim_px = float(cv2.arcLength(c, True))
-        circ = (4 * np.pi * area_px / (perim_px ** 2)) if perim_px > 0 else 0.0
+            perim_px = float(cv2.arcLength(c, True))
+            circ = (4 * np.pi * area_px / (perim_px ** 2)) if perim_px > 0 else 0.0
 
-        # Get bounding box for aspect ratio
-        x, y, w, h = cv2.boundingRect(c)
-        aspect_ratio = float(w) / h if h > 0 else 0.0
+            # Get bounding box for aspect ratio
+            x, y, w, h = cv2.boundingRect(c)
+            aspect_ratio = float(w) / h if h > 0 else 0.0
 
-        # Calculate solidity (convex hull ratio)
-        hull = cv2.convexHull(c)
-        hull_area = float(cv2.contourArea(hull))
-        solidity = area_px / hull_area if hull_area > 0 else 0.0
+            # Calculate solidity (convex hull ratio)
+            hull = cv2.convexHull(c)
+            hull_area = float(cv2.contourArea(hull))
+            solidity = area_px / hull_area if hull_area > 0 else 0.0
 
-        # Apply bacteria-specific filters
-        ok = (
-            min_area_px <= area_px <= max_area_px and
-            bacteria_config.min_circularity <= circ <= bacteria_config.max_circularity and
-            bacteria_config.min_aspect_ratio <= aspect_ratio <= bacteria_config.max_aspect_ratio and
-            solidity >= bacteria_config.min_solidity
+            # Apply bacteria-specific filters
+            ok = (
+                min_area_px <= area_px <= max_area_px and
+                bacteria_config.min_circularity <= circ <= bacteria_config.max_circularity and
+                bacteria_config.min_aspect_ratio <= aspect_ratio <= bacteria_config.max_aspect_ratio and
+                solidity >= bacteria_config.min_solidity
+            )
+
+            (accepted if ok else rejected).append(c)
+
+        # ========== VISUALIZE FILTERED PARTICLES ==========
+        vis_acc = cv2.cvtColor(img8, cv2.COLOR_GRAY2BGR)
+        cv2.drawContours(vis_acc, rejected, -1, (0, 165, 255), 1)  # Orange
+        cv2.drawContours(vis_acc, accepted, -1, (0, 255, 255), 1)  # Yellow
+        vis_acc = draw_object_ids(vis_acc, accepted)
+        save_debug(
+            img_out, 
+            "11_contours_rejected_orange_accepted_yellow_ids_green.png", 
+            vis_acc, 
+            um_per_px_avg
         )
 
-        (accepted if ok else rejected).append(c)
+        # Save masks
+        mask_all = np.zeros_like(mask)
+        cv2.drawContours(mask_all, contours, -1, 255, thickness=-1)
+        save_debug(img_out, "12_mask_all.png", mask_all)
 
-    vis_acc = cv2.cvtColor(img8, cv2.COLOR_GRAY2BGR)
-    cv2.drawContours(vis_acc, rejected, -1, (0, 165, 255), 1)
-    cv2.drawContours(vis_acc, accepted, -1, (0, 255, 255), 1)
-    vis_acc = draw_object_ids(vis_acc, accepted)
-    save_debug(img_out, "11_contours_rejected_orange_accepted_yellow_ids_green.png", vis_acc, um_per_px_avg)
+        mask_acc = np.zeros_like(mask)
+        cv2.drawContours(mask_acc, accepted, -1, 255, thickness=-1)
+        save_debug(img_out, "13_mask_accepted.png", mask_acc)
 
-    mask_all = np.zeros_like(mask)
-    cv2.drawContours(mask_all, contours, -1, 255, thickness=-1)
-    save_debug(img_out, "12_mask_all.png", mask_all)
+        # ========== FLUORESCENCE PROCESSING ==========
+        fluor_path = img_path.parent / img_path.name.replace("_ch00", "_ch01")
+        fluor_measurements: Optional[list[dict]] = None
+        fluor_bw: Optional[np.ndarray] = None
+        vis_fluor: Optional[np.ndarray] = None
+        vis_match: Optional[np.ndarray] = None
 
-    mask_acc = np.zeros_like(mask)
-    cv2.drawContours(mask_acc, accepted, -1, 255, thickness=-1)
-    save_debug(img_out, "13_mask_accepted.png", mask_acc)
-
-    fluor_path = img_path.parent / img_path.name.replace("_ch00", "_ch01")
-    fluor_measurements: Optional[list[dict]] = None
-
-    fluor_bw: Optional[np.ndarray] = None
-    vis_fluor: Optional[np.ndarray] = None
-    vis_match: Optional[np.ndarray] = None
-
-    if fluor_path.exists():
-        # Use Unicode-safe imread for fluorescence
-        fluor_img = safe_imread(fluor_path, cv2.IMREAD_UNCHANGED)
-        if fluor_img is not None:
-            fluor_img, (sy, sx), diagnostics = align_fluorescence_channel(img, fluor_img)
+        if fluor_path.exists():
+            # Load fluorescence image
+            fluor_img = safe_imread(fluor_path, cv2.IMREAD_UNCHANGED)
             
-            cv2.imwrite(str(img_out / "DIAG_A_no_shift.png"), diagnostics['overlay_none'])
-            cv2.imwrite(str(img_out / "DIAG_B_positive_shift.png"), diagnostics['overlay_pos'])
-            cv2.imwrite(str(img_out / "DIAG_C_negative_shift.png"), diagnostics['overlay_neg'])
-            
-            print(f"  📊 Check DIAG_*.png files to see which alignment is correct!")
+            if fluor_img is not None:
+                # ========== ALIGN FLUORESCENCE CHANNEL ==========
+                fluor_img_aligned, (sy, sx), diagnostics = align_fluorescence_channel(img, fluor_img)
+                
+                # Save alignment diagnostics
+                safe_imwrite(img_out / "DIAG_A_no_shift.png", diagnostics['overlay_none'])
+                safe_imwrite(img_out / "DIAG_B_positive_shift.png", diagnostics['overlay_pos'])
+                safe_imwrite(img_out / "DIAG_C_negative_shift.png", diagnostics['overlay_neg'])
+                
+                print(f"  📊 Alignment shift: ({sx:.2f}, {sy:.2f}) px")
+                print(f"     Check DIAG_*.png files to verify alignment quality")
 
-            save_debug(img_out, "20_fluorescence_aligned_raw.png", normalize_to_8bit(fluor_img), um_per_px_avg)
+                save_debug(
+                    img_out, 
+                    "20_fluorescence_aligned_raw.png", 
+                    normalize_to_8bit(fluor_img_aligned), 
+                    um_per_px_avg
+                )
 
-            if fluor_img.ndim == 3:
-                fluor_img = cv2.cvtColor(fluor_img, cv2.COLOR_BGR2GRAY)
+                # Convert to grayscale if needed
+                if fluor_img_aligned.ndim == 3:
+                    fluor_img_aligned = cv2.cvtColor(fluor_img_aligned, cv2.COLOR_BGR2GRAY)
 
-            fluor_img8 = normalize_to_8bit(fluor_img)
-            save_debug(img_out, "20_fluorescence_8bit.png", fluor_img8, um_per_px_avg)
+                fluor_img8 = normalize_to_8bit(fluor_img_aligned)
+                save_debug(img_out, "20_fluorescence_8bit.png", fluor_img8, um_per_px_avg)
 
-            # Use bacteria config for fluorescence
-            fluor_bw = segment_fluorescence_global(fluor_img8, bacteria_config)
-            save_debug(img_out, "22_fluorescence_mask_global.png", fluor_bw, um_per_px_avg)
+                # ========== SEGMENT FLUORESCENCE ==========
+                fluor_bw = segment_fluorescence_global(fluor_img8, bacteria_config)
+                save_debug(img_out, "22_fluorescence_mask_global.png", fluor_bw, um_per_px_avg)
 
-            _fc2 = cv2.findContours(fluor_bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            fluor_contours_all = cast(list[np.ndarray], _fc2[-2])
+                # Find fluorescence contours
+                _fc2 = cv2.findContours(fluor_bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                fluor_contours_all = cast(list[np.ndarray], _fc2[-2])
 
-            min_fluor_area_px = bacteria_config.fluor_min_area_um2 / um2_per_px2 if um2_per_px2 > 0 else 0.0
-            fluor_contours = [c for c in fluor_contours_all if float(cv2.contourArea(c)) >= float(min_fluor_area_px)]
+                # Filter fluorescence contours by size
+                min_fluor_area_px = bacteria_config.fluor_min_area_um2 / um2_per_px2 if um2_per_px2 > 0 else 0.0
+                fluor_contours = [
+                    c for c in fluor_contours_all 
+                    if float(cv2.contourArea(c)) >= float(min_fluor_area_px)
+                ]
 
-            vis_fluor = cv2.cvtColor(fluor_img8, cv2.COLOR_GRAY2BGR)
-            cv2.drawContours(vis_fluor, fluor_contours, -1, (0, 255, 0), 1)
-            save_debug(img_out, "23_fluorescence_contours_global.png", vis_fluor, um_per_px_avg)
+                # Visualize fluorescence contours
+                vis_fluor = cv2.cvtColor(fluor_img8, cv2.COLOR_GRAY2BGR)
+                cv2.drawContours(vis_fluor, fluor_contours, -1, (0, 255, 0), 1)
+                save_debug(img_out, "23_fluorescence_contours_global.png", vis_fluor, um_per_px_avg)
 
-            matches = match_fluor_to_bf_by_overlap(
+                # ========== MATCH FLUORESCENCE TO BF PARTICLES ==========
+                matches = match_fluor_to_bf_by_overlap(
+                    accepted, 
+                    fluor_contours, 
+                    fluor_img8.shape[:2],
+                    min_intersection_px=bacteria_config.fluor_match_min_intersection_px
+                )
+
+                # Measure fluorescence intensity
+                fluor_measurements = measure_fluorescence_intensity_with_global_area(
+                    fluor_img_aligned, 
+                    accepted, 
+                    fluor_contours, 
+                    matches, 
+                    float(um_per_px_x), 
+                    float(um_per_px_y)
+                )
+
+                # Visualize matching
+                vis_match = cv2.cvtColor(fluor_img8, cv2.COLOR_GRAY2BGR)
+                for idx, bf_c in enumerate(accepted):
+                    j = matches[idx]
+                    cv2.drawContours(vis_match, [bf_c], -1, (0, 0, 255), 1)  # BF in red
+                    if j is not None:
+                        cv2.drawContours(vis_match, [fluor_contours[j]], -1, (0, 255, 0), 2)  # Fluor in green
+                save_debug(img_out, "24_bf_fluor_matching_overlay.png", vis_match, um_per_px_avg)
+
+                # Overlay with measurements
+                fluor_overlay = visualize_fluorescence_measurements(fluor_img8, accepted, fluor_measurements)
+                save_debug(img_out, "21_fluorescence_overlay.png", fluor_overlay, um_per_px_avg)
+
+        # ========== GENERATE OBJECT IDs ==========
+        parts = img_path.stem.split()
+        group_id = parts[0] if parts else "unk"
+        sequence_num = parts[-1].split("_")[0] if parts else "0"
+
+        object_ids = [f"{group_id}_{sequence_num}_{i}" for i in range(1, len(accepted) + 1)]
+
+        # ========== SAVE LABELED VERSIONS ==========
+        # BF mask with IDs
+        mask_acc_bgr = cv2.cvtColor(mask_acc, cv2.COLOR_GRAY2BGR)
+        save_debug_ids(
+            img_out, 
+            "13_mask_accepted.png", 
+            mask_acc_bgr, 
+            accepted, 
+            object_ids, 
+            um_per_px_avg
+        )
+
+        # Fluorescence visualizations with IDs
+        if fluor_bw is not None:
+            fluor_bw_bgr = cv2.cvtColor(fluor_bw, cv2.COLOR_GRAY2BGR)
+            save_debug_ids(
+                img_out, 
+                "22_fluorescence_mask_global.png", 
+                fluor_bw_bgr, 
                 accepted, 
-                fluor_contours, 
-                fluor_img8.shape[:2],
-                min_intersection_px=bacteria_config.fluor_match_min_intersection_px
+                object_ids, 
+                um_per_px_avg
             )
 
-            fluor_measurements = measure_fluorescence_intensity_with_global_area(
-                fluor_img, accepted, fluor_contours, matches, float(um_per_px_x), float(um_per_px_y)
+        if vis_fluor is not None:
+            save_debug_ids(
+                img_out, 
+                "23_fluorescence_contours_global.png", 
+                vis_fluor, 
+                accepted, 
+                object_ids, 
+                um_per_px_avg
             )
 
-            vis_match = cv2.cvtColor(fluor_img8, cv2.COLOR_GRAY2BGR)
-            for idx, bf_c in enumerate(accepted):
-                j = matches[idx]
-                cv2.drawContours(vis_match, [bf_c], -1, (0, 0, 255), 1)
-                if j is not None:
-                    cv2.drawContours(vis_match, [fluor_contours[j]], -1, (0, 255, 0), 2)
-            save_debug(img_out, "24_bf_fluor_matching_overlay.png", vis_match, um_per_px_avg)
+        if vis_match is not None:
+            save_debug_ids(
+                img_out, 
+                "24_bf_fluor_matching_overlay.png", 
+                vis_match, 
+                accepted, 
+                object_ids, 
+                um_per_px_avg
+            )
 
-            fluor_overlay = visualize_fluorescence_measurements(fluor_img8, accepted, fluor_measurements)
-            save_debug(img_out, "21_fluorescence_overlay.png", fluor_overlay, um_per_px_avg)
-
-    parts = img_path.stem.split()
-    group_id = parts[0] if parts else "unk"
-    sequence_num = parts[-1].split("_")[0] if parts else "0"
-
-    object_ids = [f"{group_id}_{sequence_num}_{i}" for i in range(1, len(accepted) + 1)]
-
-    mask_acc_bgr = cv2.cvtColor(mask_acc, cv2.COLOR_GRAY2BGR)
-    save_debug_ids(img_out, "13_mask_accepted.png", mask_acc_bgr, accepted, object_ids, um_per_px_avg)
-
-    if fluor_bw is not None:
-        fluor_bw_bgr = cv2.cvtColor(fluor_bw, cv2.COLOR_GRAY2BGR)
-        save_debug_ids(img_out, "22_fluorescence_mask_global.png", fluor_bw_bgr, accepted, object_ids, um_per_px_avg)
-
-    if vis_fluor is not None:
-        save_debug_ids(img_out, "23_fluorescence_contours_global.png", vis_fluor, accepted, object_ids, um_per_px_avg)
-
-    if vis_match is not None:
-        save_debug_ids(img_out, "24_bf_fluor_matching_overlay.png", vis_match, accepted, object_ids, um_per_px_avg)
-
-    csv_path = img_out / "object_stats.csv"
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(
-            [
+        # ========== EXPORT MEASUREMENTS TO CSV ==========
+        csv_path = img_out / "object_stats.csv"
+        with open(csv_path, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            
+            # Write header
+            w.writerow([
                 "Object_ID",
                 "BF_Area_px",
                 "BF_Area_um2",
@@ -3000,59 +3190,65 @@ def process_image(
                 "Fluor_Min",
                 "Fluor_Max",
                 "Fluor_IntegratedDensity",
-            ]
-        )
+            ])
 
-        for i, c in enumerate(accepted, 1):
-            compound_id = f"{group_id}_{sequence_num}_{i}"
+            # Write data for each particle
+            for i, c in enumerate(accepted, 1):
+                compound_id = f"{group_id}_{sequence_num}_{i}"
 
-            area_px = float(cv2.contourArea(c))
-            area_um2 = area_px * (float(um_per_px_x) * float(um_per_px_y))
+                # Area measurements
+                area_px = float(cv2.contourArea(c))
+                area_um2 = area_px * um2_per_px2
 
-            perim_px = float(cv2.arcLength(c, True))
-            perim_um = contour_perimeter_um(c, float(um_per_px_x), float(um_per_px_y))
+                # Perimeter measurements
+                perim_px = float(cv2.arcLength(c, True))
+                perim_um = contour_perimeter_um(c, float(um_per_px_x), float(um_per_px_y))
 
-            eqd_px = equivalent_diameter_from_area(area_px)
-            eqd_um = equivalent_diameter_from_area(area_um2)
+                # Equivalent diameter
+                eqd_px = equivalent_diameter_from_area(area_px)
+                eqd_um = equivalent_diameter_from_area(area_um2)
 
-            circ = (4 * np.pi * area_px / (perim_px**2)) if perim_px > 0 else 0.0
+                # Shape metrics
+                circ = (4 * np.pi * area_px / (perim_px**2)) if perim_px > 0 else 0.0
 
-            x, y, bw, bh = cv2.boundingRect(c)
-            aspect = (float(bw) / float(bh)) if bh > 0 else 0.0
+                x, y, bw, bh = cv2.boundingRect(c)
+                aspect = (float(bw) / float(bh)) if bh > 0 else 0.0
 
-            # Calculate solidity
-            hull = cv2.convexHull(c)
-            hull_area = float(cv2.contourArea(hull))
-            solidity = area_px / hull_area if hull_area > 0 else 0.0
+                # Solidity
+                hull = cv2.convexHull(c)
+                hull_area = float(cv2.contourArea(hull))
+                solidity = area_px / hull_area if hull_area > 0 else 0.0
 
-            M = cv2.moments(c)
-            if M["m00"] != 0:
-                cx = float(M["m10"] / M["m00"])
-                cy = float(M["m01"] / M["m00"])
-            else:
-                cx, cy = 0.0, 0.0
+                # Centroid
+                M = cv2.moments(c)
+                if M["m00"] != 0:
+                    cx = float(M["m10"] / M["m00"])
+                    cy = float(M["m01"] / M["m00"])
+                else:
+                    cx, cy = 0.0, 0.0
 
-            cx_um = cx * float(um_per_px_x)
-            cy_um = cy * float(um_per_px_y)
-            bw_um = float(bw) * float(um_per_px_x)
-            bh_um = float(bh) * float(um_per_px_y)
+                cx_um = cx * float(um_per_px_x)
+                cy_um = cy * float(um_per_px_y)
+                bw_um = float(bw) * float(um_per_px_x)
+                bh_um = float(bh) * float(um_per_px_y)
 
-            if fluor_measurements is not None:
-                fm = fluor_measurements[i - 1]
-            else:
-                fm = {
-                    "fluor_area_px": 0.0,
-                    "fluor_area_um2": 0.0,
-                    "fluor_mean": 0.0,
-                    "fluor_median": 0.0,
-                    "fluor_std": 0.0,
-                    "fluor_min": 0.0,
-                    "fluor_max": 0.0,
-                    "fluor_integrated_density": 0.0,
-                }
+                # Fluorescence measurements
+                if fluor_measurements is not None:
+                    fm = fluor_measurements[i - 1]
+                else:
+                    fm = {
+                        "fluor_area_px": 0.0,
+                        "fluor_area_um2": 0.0,
+                        "fluor_mean": 0.0,
+                        "fluor_median": 0.0,
+                        "fluor_std": 0.0,
+                        "fluor_min": 0.0,
+                        "fluor_max": 0.0,
+                        "fluor_integrated_density": 0.0,
+                    }
 
-            w.writerow(
-                [
+                # Write row
+                w.writerow([
                     compound_id,
                     f"{area_px:.2f}",
                     f"{area_um2:.4f}",
@@ -3081,8 +3277,28 @@ def process_image(
                     f"{float(fm['fluor_min']):.2f}",
                     f"{float(fm['fluor_max']):.2f}",
                     f"{float(fm['fluor_integrated_density']):.2f}",
-                ]
-            )
+                ])
+
+        print(f"  ✓ Processed: {img_path.name} ({len(accepted)} particles)")
+
+    except Exception as e:
+        print(f"[ERROR] Failed to process {img_path.name}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+    
+    finally:
+        # Explicit memory cleanup for large images
+        import gc
+        if 'img' in locals():
+            del img
+        if 'img8' in locals():
+            del img8
+        if 'fluor_img' in locals():
+            del fluor_img
+        if 'fluor_img_aligned' in locals():
+            del fluor_img_aligned
+        gc.collect()
 
 
 
