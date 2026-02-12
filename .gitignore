@@ -68,5 +68,5 @@ Thumbs.db
 
 # Logs
 *.log
-*.spec
+.spec
 .last_bacteria_selection
