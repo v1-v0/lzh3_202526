@@ -89,8 +89,6 @@ class ParameterPanel(ttk.Frame):
         except (ValueError, TypeError):
             return str(value)
 
-
-
     def __init__(self, parent, tuner_instance):
         super().__init__(parent)
         self.tuner = tuner_instance
@@ -210,6 +208,25 @@ class ParameterPanel(ttk.Frame):
         """Update canvas window width when canvas is resized"""
         self.canvas.itemconfig(self.canvas_window, width=event.width)
     
+    def _snap_morph_kernel(self, v: float, min_val: int = 1, max_val: int = 15) -> int:
+        """Snap to nearest odd integer within [min_val, max_val]."""
+        v = int(round(v))
+        v = max(min_val, min(max_val, v))
+        if v % 2 == 0:
+            # Choose the nearest odd
+            down = v - 1
+            up = v + 1
+            if down < min_val:
+                v = up
+            elif up > max_val:
+                v = down
+            else:
+                # Prefer lower odd number for consistency
+                v = down
+        return v
+
+
+
     def _on_mousewheel(self, event):
         """Handle mouse wheel scrolling"""
         if event.num == 4:
@@ -235,7 +252,7 @@ class ParameterPanel(ttk.Frame):
         self._add_threshold_controls(seg_content)
         
         self._add_slider_with_input(seg_content, "Morph Kernel", "morph_kernel_size",
-                                   self.tuner.morph_kernel_size, 3, 15, 2)
+                                   self.tuner.morph_kernel_size, 1, 15, 1)
         
         self._add_slider_with_input(seg_content, "Morph Iterations", "morph_iterations",
                                    self.tuner.morph_iterations, 0, 5, 1)
@@ -341,10 +358,9 @@ class ParameterPanel(ttk.Frame):
         
         return content_frame
 
-
     def _add_slider_with_input(self, parent, label: str, param_name: str,
-                            initial_value: float, min_val: float, 
-                            max_val: float, resolution: float = 1.0):
+                        initial_value: float, min_val: float, 
+                        max_val: float, resolution: float = 1.0):
         """Add a parameter row with slider and text entry"""
         
         row_frame = ttk.Frame(parent, style='ParamRow.TFrame')
@@ -365,6 +381,10 @@ class ParameterPanel(ttk.Frame):
         slider_frame.pack(side='left', fill='x', expand=True)
         slider_frame.columnconfigure(0, weight=1)
         
+        # ✅ Enforce odd number for initial value if morph_kernel_size
+        if param_name == 'morph_kernel_size':
+            initial_value = self._snap_morph_kernel(initial_value, min_val=int(min_val), max_val=int(max_val))
+        
         # Value label
         value_label = ttk.Label(
             slider_frame,
@@ -377,7 +397,10 @@ class ParameterPanel(ttk.Frame):
         value_label.grid(row=0, column=1)
         
         # Text entry for precise input
-        entry_var = tk.StringVar(value=str(initial_value))
+        entry_var = tk.StringVar(value=str(int(initial_value) if resolution >= 1 else initial_value))
+        
+        # ✅ Flag to prevent recursion
+        updating = {'flag': False}
         
         # ✅ Create slider WITHOUT command first
         slider = ttk.Scale(
@@ -389,25 +412,27 @@ class ParameterPanel(ttk.Frame):
         )
         slider.grid(row=0, column=0, sticky='ew', padx=(0, 10))
         
-        if param_name == 'morph_kernel_size':
-            if int(initial_value) % 2 == 0:
-                initial_value += 1
-                print(f"⚠️ Auto-corrected initial morph_kernel_size to odd: {initial_value}")
-
-
         # Store references
         self.sliders[param_name] = slider
         self.value_labels[param_name] = value_label
         
         # ✅ Set initial value BEFORE binding command
         slider.set(initial_value)
-        value_label.config(text=self._format_value(initial_value, resolution))
-        entry_var.set(str(initial_value))
+        
+        # ✅ Slider change callback with recursion guard
+        def on_slider_change(v):
+            if updating['flag']:
+                return
+            updating['flag'] = True
+            try:
+                self._on_slider_change(param_name, v, resolution, entry_var)
+            finally:
+                updating['flag'] = False
         
         # ✅ NOW bind the command after setting initial value
-        slider.configure(command=lambda v: self._on_slider_change(param_name, v, resolution, entry_var))
+        slider.configure(command=on_slider_change)
         
-        # Text entry
+        # ✅ CREATE TEXT ENTRY (this was missing!)
         entry = ttk.Entry(
             row_frame,
             textvariable=entry_var,
@@ -415,21 +440,71 @@ class ParameterPanel(ttk.Frame):
         )
         entry.pack(side='right', padx=(10, 0))
         
-        # Entry change callback
+        # ✅ Entry change callback with recursion guard
         def on_entry_change(*args):
+            if updating['flag']:
+                return
+            updating['flag'] = True
             try:
-                value = float(entry_var.get())
-                if min_val <= value <= max_val:
-                    slider.set(value)
-                    self._on_slider_change(param_name, str(value), resolution, entry_var)
+                value_str = entry_var.get().strip()
+                if not value_str:
+                    return
+
+                value = float(value_str)
+
+                # Validate range
+                if not (min_val <= value <= max_val):
+                    return
+
+                # Round to resolution
+                if resolution >= 1:
+                    value = int(round(value / resolution) * resolution)
+                else:
+                    value = round(value / resolution) * resolution
+
+                # Enforce odd for morph_kernel_size
+                if param_name == 'morph_kernel_size':
+                    value = self._snap_morph_kernel(value, min_val=int(min_val), max_val=int(max_val))
+
+                # Update the green value label
+                if param_name in self.value_labels:
+                    self.value_labels[param_name].config(
+                        text=self._format_value(value, resolution)
+                    )
+
+                # Update the tuner parameter
+                params_dict_keys = ['gaussian_sigma', 'min_area', 'max_area',
+                                    'dilate_iterations', 'erode_iterations']
+                if param_name in params_dict_keys:
+                    self.tuner.params[param_name] = value
+                elif hasattr(self.tuner, param_name):
+                    setattr(self.tuner, param_name, value)
+
+                # Move the slider
+                slider.set(value)
+
+                # Normalize entry text to the corrected value
+                entry_var.set(str(int(value)) if resolution >= 1 else str(value))
+
+                # Debounce visualization refresh
+                if not hasattr(self, 'update_timers'):
+                    self.update_timers = {}
+                if param_name in self.update_timers:
+                    self.after_cancel(self.update_timers[param_name])
+                self.update_timers[param_name] = self.after(
+                    self.debounce_delay,
+                    lambda p=param_name: self._execute_visualization_update(p)
+                )
+
             except ValueError:
                 pass
-        
+            finally:
+                updating['flag'] = False
+
+        # Bind entry events
         entry_var.trace_add('write', on_entry_change)
         entry.bind('<Return>', lambda e: on_entry_change())
         entry.bind('<FocusOut>', lambda e: on_entry_change())
-
-
 
 
     def _add_threshold_controls(self, parent):
@@ -534,14 +609,10 @@ class ParameterPanel(ttk.Frame):
                 numeric_value = round(numeric_value / step) * step
             
             # ✅ FIX: Ensure morph_kernel_size is ALWAYS ODD
-            
             if param_name == 'morph_kernel_size':
-                numeric_value = int(numeric_value)
-                original_value = numeric_value
-                if numeric_value % 2 == 0:  # If even
-                    numeric_value += 1  # Make it odd
-                    print(f"⚠️ Auto-corrected {original_value} to {numeric_value}")
-            
+                numeric_value = self._snap_morph_kernel(numeric_value, min_val=3, max_val=15)
+                print(f"Morph_kernel_size snapped to: {numeric_value}")
+           
             # ✅ FIX: Check if parameter is in params dictionary or direct attribute
             params_dict_keys = ['gaussian_sigma', 'min_area', 'max_area', 
                             'dilate_iterations', 'erode_iterations']
@@ -1263,7 +1334,7 @@ class SegmentationTuner:
     DEFAULT_THRESHOLD_PARAMS = {
     "threshold_mode": "otsu",
     "manual_threshold": 127,
-    "morph_kernel_size": 3,
+    "morph_kernel_size": 1,
     "morph_iterations": 1,
     }   
 
@@ -3118,403 +3189,678 @@ class SegmentationTuner:
     
 
 # ==================================================
-# SECTION 6: Main Menu (Pathogen Config Manager)
+# SECTION 6: Merged Main Menu (Pathogen Selection + Tuner Setup) - FIXED
 # ==================================================
 
 class PathogenConfigManager:
-    """Main menu for managing pathogen configurations"""
-    
+    """Unified pathogen configuration manager with integrated tuner setup"""
+
     PATHOGENS = {
         "Proteus mirabilis": {
             "config_key": "proteus_mirabilis",
             "description": "Rod-shaped, flagellated bacterium",
-            "common_in": "Catheter-associated infections"
+            "common_in": "Catheter-associated infections",
         },
         "Klebsiella pneumoniae": {
             "config_key": "klebsiella_pneumoniae",
             "description": "Gram-negative, encapsulated bacterium",
-            "common_in": "Healthcare-associated infections"
+            "common_in": "Healthcare-associated infections",
         },
         "Streptococcus mitis": {
             "config_key": "streptococcus_mitis",
             "description": "Gram-positive cocci in chains",
-            "common_in": "Touch contamination"
-        }
+            "common_in": "Touch contamination",
+        },
     }
-    
+
     COLORS = {
-        'bg': '#1e1e1e',
-        'fg': '#ffffff',
-        'accent': '#007acc',
-        'button': '#2d2d2d',
-        'button_hover': '#3e3e3e',
-        'success': '#4ec9b0',
-        'warning': '#ce9178',
-        'error': '#f48771',
-        'header': '#569cd6'
+        "bg": "#1e1e1e",
+        "fg": "#ffffff",
+        "accent": "#007acc",
+        "button": "#2d2d2d",
+        "button_hover": "#3e3e3e",
+        "success": "#4ec9b0",
+        "warning": "#ce9178",
+        "error": "#f48771",
+        "header": "#569cd6",
+        "selected": "#094771",
+        "muted": "#b9b9b9",
+        "panel": "#232323",
+        "panel_border": "#2f2f2f",
     }
-    
-    def __init__(self, root: tk.Tk):
-        """Initialize the pathogen configuration manager"""
+
+    def __init__(self, root: "tk.Tk"):
         self.root = root
-        self.root.title("🦠 Pathogen Configuration Manager")
-        self.root.geometry("900x700")
-        self.root.resizable(False, False)
-        self.root.configure(bg=self.COLORS['bg'])
-        
+        self.root.title("🦠 Pathogen Segmentation Tuner Setup")
+        self.root.geometry("980x760")
+        self.root.minsize(980, 760)
+        self.root.maxsize(980, 760)
+        self.root.configure(**{"bg": self.COLORS["bg"]})
+
+        # State
+        self.selected_pathogen: "Optional[str]" = None
+        self.image_path_var = tk.StringVar()
+        self.structure_var = tk.StringVar(value="bacteria")
+        self.mode_var = tk.StringVar(value="DARK")
+
+        # Card refs
+        self.pathogen_cards: "Dict[str, tk.Frame]" = {}
+        self.card_indicators: "Dict[str, tk.Label]" = {}
+        self.card_contents: "Dict[str, tk.Frame]" = {}
+        self.card_left_frames: "Dict[str, tk.Frame]" = {}
+        self.card_right_frames: "Dict[str, tk.Frame]" = {}
+
+        # Minor polish: consistent fonts
+        self.FONT_TITLE = ("Segoe UI", 22, "bold")
+        self.FONT_H2 = ("Segoe UI", 11, "bold")
+        self.FONT_BODY = ("Segoe UI", 10)
+        self.FONT_SMALL = ("Segoe UI", 9)
+        self.FONT_TINY = ("Segoe UI", 8, "italic")
+
         self._create_ui()
         self._center_window()
-        
+
+    # ---------------------------
+    # Layout helpers
+    # ---------------------------
     def _center_window(self):
-        """Center the window on screen"""
         self.root.update_idletasks()
         width = self.root.winfo_width()
         height = self.root.winfo_height()
         x = (self.root.winfo_screenwidth() // 2) - (width // 2)
         y = (self.root.winfo_screenheight() // 2) - (height // 2)
-        self.root.geometry(f'{width}x{height}+{x}+{y}')
-        
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _panel(self, parent, padx=14, pady=12):
+        """A section container with subtle border-like framing."""
+        outer = tk.Frame(parent)
+        outer["bg"] = self.COLORS["panel_border"]
+        inner = tk.Frame(outer)
+        inner.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+        inner["bg"] = self.COLORS["panel"]
+        content = tk.Frame(inner)
+        content.pack(fill=tk.BOTH, expand=True, padx=padx, pady=pady)
+        content["bg"] = self.COLORS["panel"]
+        return outer, content
+
+    def _hsep(self, parent, pady=14):
+        sep = tk.Frame(parent, height=1)
+        sep.pack(fill=tk.X, pady=pady)
+        sep["bg"] = self.COLORS["panel_border"]
+
+    def _section_title(self, parent, step_text: str, title: str):
+        row = tk.Frame(parent)
+        row.pack(fill=tk.X, pady=(0, 10))
+        row["bg"] = parent["bg"] if isinstance(parent, tk.Widget) else self.COLORS["panel"]
+
+        step = tk.Label(row, text=step_text, font=self.FONT_H2)
+        step.pack(side=tk.LEFT)
+        step["bg"] = row["bg"]
+        step["fg"] = self.COLORS["success"]
+
+        ttl = tk.Label(row, text=title, font=self.FONT_H2)
+        ttl.pack(side=tk.LEFT, padx=(8, 0))
+        ttl["bg"] = row["bg"]
+        ttl["fg"] = self.COLORS["fg"]
+
+        return row
+
+    # ---------------------------
+    # UI
+    # ---------------------------
     def _create_ui(self):
-        """Create the main user interface"""
-        main_frame = tk.Frame(self.root, bg=self.COLORS['bg'])
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
-        
-        self._create_header(main_frame)
-        self._create_pathogen_cards(main_frame)
-        self._create_footer(main_frame)
-        
+        # Top-level padding
+        root_pad = tk.Frame(self.root)
+        root_pad.pack(fill=tk.BOTH, expand=True, padx=18, pady=16)
+        root_pad["bg"] = self.COLORS["bg"]
+
+        # Header
+        self._create_header(root_pad)
+
+        # Main two-column area (left: pathogen cards; right: config options)
+        main_grid = tk.Frame(root_pad)
+        main_grid.pack(fill=tk.BOTH, expand=True, pady=(10, 0))
+        main_grid["bg"] = self.COLORS["bg"]
+
+        main_grid.grid_columnconfigure(0, weight=3, uniform="cols")
+        main_grid.grid_columnconfigure(1, weight=2, uniform="cols")
+        main_grid.grid_rowconfigure(0, weight=1)
+
+        # Left panel: Step 1 (cards)
+        left_outer, left_panel = self._panel(main_grid, padx=14, pady=12)
+        left_outer.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        left_panel["bg"] = self.COLORS["panel"]
+
+        self._create_pathogen_section(left_panel)
+
+        # Right panel: Step 3 (options)
+        right_outer, right_panel = self._panel(main_grid, padx=14, pady=12)
+        right_outer.grid(row=0, column=1, sticky="nsew")
+        right_panel["bg"] = self.COLORS["panel"]
+
+        self._create_config_section(right_panel)
+
+        # Step 2 (image) full width below
+        self._hsep(root_pad, pady=14)
+
+        image_outer, image_panel = self._panel(root_pad, padx=14, pady=12)
+        image_outer.pack(fill=tk.X)
+        self._create_image_section(image_panel)
+
+        # Actions at bottom
+        self._hsep(root_pad, pady=14)
+        self._create_action_buttons(root_pad)
+
     def _create_header(self, parent):
-        """Create header section for main menu"""
-        header_frame = tk.Frame(parent, bg=self.COLORS['bg'])
-        header_frame.pack(fill=tk.X, pady=(0, 30))
-        
-        # Main title
+        header = tk.Frame(parent)
+        header.pack(fill=tk.X)
+        header["bg"] = self.COLORS["bg"]
+
+        title_row = tk.Frame(header)
+        title_row.pack()
+        title_row["bg"] = self.COLORS["bg"]
+
         title = tk.Label(
-            header_frame,
-            text="🦠 Pathogen Configuration Manager",
-            font=('Segoe UI', 24, 'bold'),
-            bg=self.COLORS['bg'],
-            fg=self.COLORS['header']
+            title_row,
+            text="🦠  Pathogen Segmentation Tuner",
+            font=self.FONT_TITLE,
         )
-        title.pack(pady=(0, 10))
-        
-        # Subtitle
+        title.pack()
+        title["bg"] = self.COLORS["bg"]
+        title["fg"] = self.COLORS["header"]
+
         subtitle = tk.Label(
-            header_frame,
+            header,
             text="Configure image analysis parameters for peritoneal dialysis pathogens",
-            font=('Segoe UI', 11),
-            bg=self.COLORS['bg'],
-            fg=self.COLORS['fg']
+            font=self.FONT_BODY,
         )
-        subtitle.pack()
-        
-    def _create_pathogen_cards(self, parent):
-        """Create cards for each pathogen"""
-        cards_frame = tk.Frame(parent, bg=self.COLORS['bg'])
+        subtitle.pack(pady=(6, 0))
+        subtitle["bg"] = self.COLORS["bg"]
+        subtitle["fg"] = self.COLORS["muted"]
+
+    # ---------------------------
+    # Step 1: Pathogen selection
+    # ---------------------------
+    def _create_pathogen_section(self, parent):
+        parent["bg"] = self.COLORS["panel"]
+        self._section_title(parent, "1", "Select pathogen")
+
+        hint = tk.Label(
+            parent,
+            text="Click a card to choose the pathogen profile used for tuning.",
+            font=self.FONT_SMALL,
+        )
+        hint.pack(anchor=tk.W, pady=(0, 12))
+        hint["bg"] = self.COLORS["panel"]
+        hint["fg"] = self.COLORS["muted"]
+
+        cards_frame = tk.Frame(parent)
         cards_frame.pack(fill=tk.BOTH, expand=True)
-        
+        cards_frame["bg"] = self.COLORS["panel"]
+
         for pathogen_name, info in self.PATHOGENS.items():
             card = self._create_pathogen_card(cards_frame, pathogen_name, info)
-            card.pack(fill=tk.X, pady=(0, 15))
-            
+            card.pack(fill=tk.X, pady=(0, 10))
+
     def _create_pathogen_card(self, parent, pathogen_name: str, info: dict):
-        """Create a card for a single pathogen"""
-        card = tk.Frame(
-            parent,
-            bg=self.COLORS['button'],
-            relief=tk.RAISED,
-            borderwidth=1
-        )
-        
-        card.bind('<Enter>', lambda e: card.configure(bg=self.COLORS['button_hover']))
-        card.bind('<Leave>', lambda e: card.configure(bg=self.COLORS['button']))
-        
-        content = tk.Frame(card, bg=self.COLORS['button'])
-        content.pack(fill=tk.BOTH, expand=True, padx=20, pady=15)
-        
-        left_frame = tk.Frame(content, bg=self.COLORS['button'])
-        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        name_label = tk.Label(
-            left_frame,
-            text=f"🔬 {pathogen_name}",
-            font=('Segoe UI', 16, 'bold'),
-            bg=self.COLORS['button'],
-            fg=self.COLORS['success'],
-            anchor=tk.W
-        )
-        name_label.pack(anchor=tk.W)
-        
-        desc_label = tk.Label(
-            left_frame,
-            text=info['description'],
-            font=('Segoe UI', 10),
-            bg=self.COLORS['button'],
-            fg=self.COLORS['fg'],
-            anchor=tk.W
-        )
-        desc_label.pack(anchor=tk.W, pady=(5, 0))
-        
-        common_label = tk.Label(
-            left_frame,
-            text=f"Common in: {info['common_in']}",
-            font=('Segoe UI', 9, 'italic'),
-            bg=self.COLORS['button'],
-            fg=self.COLORS['warning'],
-            anchor=tk.W
-        )
-        common_label.pack(anchor=tk.W, pady=(3, 0))
-        
-        config_label = tk.Label(
-            left_frame,
-            text=f"📄 Config: {info['config_key']}",
-            font=('Segoe UI', 8),
-            bg=self.COLORS['button'],
-            fg=self.COLORS['fg'],
-            anchor=tk.W
-        )
-        config_label.pack(anchor=tk.W, pady=(8, 0))
-        
-        right_frame = tk.Frame(content, bg=self.COLORS['button'])
-        right_frame.pack(side=tk.RIGHT, padx=(20, 0))
-        
-        seg_btn = tk.Button(
-            right_frame,
-            text="🎨 Segmentation",
-            font=('Segoe UI', 10, 'bold'),
-            bg=self.COLORS['accent'],
-            fg='white',
-            activebackground=self.COLORS['header'],
-            activeforeground='white',
-            relief=tk.FLAT,
-            cursor='hand2',
-            padx=15,
-            pady=8,
-            command=lambda p=pathogen_name: self._launch_segmentation_tuner(p)
-        )
-        seg_btn.pack(pady=(0, 8))
-        
+        card = tk.Frame(parent, relief=tk.FLAT, borderwidth=0, cursor="hand2")
+        card["bg"] = self.COLORS["button"]
+
+        self.pathogen_cards[pathogen_name] = card
+
+        def select_pathogen(event=None):
+            self._select_pathogen(pathogen_name)
+
+        # Border frame to emulate crisp border without relying on highlight options
+        border = tk.Frame(card)
+        border.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+        border["bg"] = self.COLORS["panel_border"]
+        border.bind("<Button-1>", select_pathogen)
+
+        content = tk.Frame(border)
+        content.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
+        content["bg"] = self.COLORS["button"]
+        content.bind("<Button-1>", select_pathogen)
+
+        # Hover on the whole card surface
+        card.bind("<Enter>", lambda e: self._hover_card(pathogen_name, True))
+        card.bind("<Leave>", lambda e: self._hover_card(pathogen_name, False))
+        border.bind("<Enter>", lambda e: self._hover_card(pathogen_name, True))
+        border.bind("<Leave>", lambda e: self._hover_card(pathogen_name, False))
+        content.bind("<Enter>", lambda e: self._hover_card(pathogen_name, True))
+        content.bind("<Leave>", lambda e: self._hover_card(pathogen_name, False))
+
+        self.card_contents[pathogen_name] = content
+
+        # Left (text)
+        left = tk.Frame(content)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        left["bg"] = self.COLORS["button"]
+        left.bind("<Button-1>", select_pathogen)
+        self.card_left_frames[pathogen_name] = left
+
+        name = tk.Label(left, text=f"🔬 {pathogen_name}", font=("Segoe UI", 12, "bold"), anchor=tk.W)
+        name.pack(anchor=tk.W)
+        name["bg"] = self.COLORS["button"]
+        name["fg"] = self.COLORS["success"]
+        name.bind("<Button-1>", select_pathogen)
+
+        desc = tk.Label(left, text=info["description"], font=self.FONT_SMALL, anchor=tk.W)
+        desc.pack(anchor=tk.W, pady=(4, 0))
+        desc["bg"] = self.COLORS["button"]
+        desc["fg"] = self.COLORS["fg"]
+        desc.bind("<Button-1>", select_pathogen)
+
+        common = tk.Label(left, text=f"📌 {info['common_in']}", font=self.FONT_TINY, anchor=tk.W)
+        common.pack(anchor=tk.W, pady=(3, 0))
+        common["bg"] = self.COLORS["button"]
+        common["fg"] = self.COLORS["warning"]
+        common.bind("<Button-1>", select_pathogen)
+
+        # Right (indicator)
+        right = tk.Frame(content)
+        right.pack(side=tk.RIGHT, padx=(10, 0))
+        right["bg"] = self.COLORS["button"]
+        right.bind("<Button-1>", select_pathogen)
+        self.card_right_frames[pathogen_name] = right
+
+        indicator = tk.Label(right, text="○", font=("Segoe UI", 18))
+        indicator.pack(padx=6)
+        indicator["bg"] = self.COLORS["button"]
+        indicator["fg"] = self.COLORS["muted"]
+        indicator.bind("<Button-1>", select_pathogen)
+        self.card_indicators[pathogen_name] = indicator
+
         return card
-        
-    def _create_footer(self, parent):
-        """Create footer with utility buttons"""
-        footer_frame = tk.Frame(parent, bg=self.COLORS['bg'])
-        footer_frame.pack(fill=tk.X, pady=(30, 0))
-        
-        separator = tk.Frame(footer_frame, height=2, bg=self.COLORS['accent'])
-        separator.pack(fill=tk.X, pady=(0, 15))
-        
-        buttons_frame = tk.Frame(footer_frame, bg=self.COLORS['bg'])
-        buttons_frame.pack()
-        
-        info_btn = tk.Button(
-            buttons_frame,
-            text="ℹ️ About",
-            font=('Segoe UI', 10),
-            bg=self.COLORS['button'],
-            fg=self.COLORS['fg'],
-            activebackground=self.COLORS['button_hover'],
-            activeforeground=self.COLORS['fg'],
-            relief=tk.FLAT,
-            cursor='hand2',
-            padx=20,
-            pady=10,
-            command=self._show_about
-        )
-        info_btn.pack(side=tk.LEFT, padx=5)
-        
-        exit_btn = tk.Button(
-            buttons_frame,
-            text="❌ Exit",
-            font=('Segoe UI', 10),
-            bg=self.COLORS['error'],
-            fg='white',
-            activebackground='#d67060',
-            activeforeground='white',
-            relief=tk.FLAT,
-            cursor='hand2',
-            padx=20,
-            pady=10,
-            command=self._exit_application
-        )
-        exit_btn.pack(side=tk.RIGHT, padx=5)
-        
-    def _launch_segmentation_tuner(self, pathogen_name: str):
-        """Launch segmentation tuner with setup dialog"""
-        print(f"\n🎨 Launching segmentation tuner for {pathogen_name}...")
-        
-        # Create setup dialog
-        setup_dialog = tk.Toplevel(self.root)
-        setup_dialog.title(f"Tuner Setup - {pathogen_name}")
-        setup_dialog.geometry("500x350")
-        setup_dialog.resizable(False, False)
-        setup_dialog.configure(bg='white')
-        setup_dialog.transient(self.root)
-        setup_dialog.grab_set()
-        
-        # Variables
-        image_path_var = tk.StringVar()
-        structure_var = tk.StringVar(value="bacteria")
-        mode_var = tk.StringVar(value="DARK")
-        
-        # Main frame
-        main_frame = ttk.Frame(setup_dialog, padding=20)
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Title
-        ttk.Label(
-            main_frame,
-            text=f"🔬 {pathogen_name} Tuner Setup",
-            font=("Segoe UI", 12, "bold")
-        ).pack(pady=(0, 20))
-        
-        # Image selection
-        ttk.Label(
-            main_frame,
-            text="1. Select Image",
-            font=("Segoe UI", 10, "bold")
-        ).pack(anchor="w", pady=(0, 5))
-        
-        image_frame = ttk.Frame(main_frame)
-        image_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        ttk.Entry(image_frame, textvariable=image_path_var, width=40).pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        
-        def browse_image():
-            filename = filedialog.askopenfilename(
-                title="Select Image",
-                filetypes=[
-                    ("Image files", "*.jpg *.jpeg *.png *.bmp *.tif *.tiff"),
-                    ("All files", "*.*")
-                ]
-            )
-            if filename:
-                image_path_var.set(filename)
-        
-        ttk.Button(image_frame, text="Browse...", command=browse_image).pack(side=tk.LEFT)
-        
-        # Structure selection
-        ttk.Label(
-            main_frame,
-            text="2. Select Structure",
-            font=("Segoe UI", 10, "bold")
-        ).pack(anchor="w", pady=(0, 5))
-        
-        structure_frame = ttk.Frame(main_frame)
-        structure_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        ttk.Radiobutton(
-            structure_frame,
-            text="Bacteria",
-            variable=structure_var,
-            value="bacteria"
-        ).pack(side=tk.LEFT, padx=(0, 20))
-        
-        ttk.Radiobutton(
-            structure_frame,
-            text="Inclusions",
-            variable=structure_var,
-            value="inclusions"
-        ).pack(side=tk.LEFT)
-        
-        # Mode selection
-        ttk.Label(
-            main_frame,
-            text="3. Select Mode",
-            font=("Segoe UI", 10, "bold")
-        ).pack(anchor="w", pady=(0, 5))
-        
-        mode_frame = ttk.Frame(main_frame)
-        mode_frame.pack(fill=tk.X, pady=(0, 20))
-        
-        ttk.Radiobutton(
-            mode_frame,
-            text="DARK particles",
-            variable=mode_var,
-            value="DARK"
-        ).pack(side=tk.LEFT, padx=(0, 20))
-        
-        ttk.Radiobutton(
-            mode_frame,
-            text="BRIGHT particles",
-            variable=mode_var,
-            value="BRIGHT"
-        ).pack(side=tk.LEFT)
-        
-        # Buttons
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X)
-        
-        def start_tuner():
-            if not image_path_var.get():
-                messagebox.showerror("Error", "Please select an image file", parent=setup_dialog)
-                return
-            
-            setup_dialog.destroy()
-            self.root.destroy()
-            
+
+    def _hover_card(self, pathogen_name: str, is_hover: bool):
+        if self.selected_pathogen == pathogen_name:
+            return
+
+        bg = self.COLORS["button_hover"] if is_hover else self.COLORS["button"]
+
+        card = self.pathogen_cards[pathogen_name]
+        content = self.card_contents[pathogen_name]
+        left = self.card_left_frames[pathogen_name]
+        right = self.card_right_frames[pathogen_name]
+
+        card["bg"] = bg
+        content["bg"] = bg
+        left["bg"] = bg
+        right["bg"] = bg
+
+        for w in left.winfo_children():
             try:
-                tuner_root = tk.Tk()
-                
-                def return_to_menu():
-                    main()
-                
-                tuner = SegmentationTuner(
-                    root=tuner_root,
-                    image_path=image_path_var.get(),
-                    bacterium=pathogen_name,
-                    structure=structure_var.get(),
-                    mode=mode_var.get(),
-                    return_callback=return_to_menu
-                )
-                tuner_root.mainloop()
-                
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to start tuner:\n{str(e)}")
-                import traceback
-                traceback.print_exc()
-        
-        ttk.Button(
-            button_frame,
-            text="❌ Cancel",
-            command=setup_dialog.destroy
-        ).pack(side=tk.LEFT, padx=(0, 10))
-        
-        ttk.Button(
-            button_frame,
-            text="✅ Start Tuner",
-            command=start_tuner
-        ).pack(side=tk.LEFT)
-        
+                w["bg"] = bg
+            except Exception:
+                pass
+        for w in right.winfo_children():
+            try:
+                w["bg"] = bg
+            except Exception:
+                pass
+
+    def _select_pathogen(self, pathogen_name: str):
+        # Deselect old
+        if self.selected_pathogen:
+            old = self.selected_pathogen
+            old_card = self.pathogen_cards[old]
+            old_content = self.card_contents[old]
+            old_left = self.card_left_frames[old]
+            old_right = self.card_right_frames[old]
+            old_indicator = self.card_indicators[old]
+
+            for part in (old_card, old_content, old_left, old_right):
+                part["bg"] = self.COLORS["button"]
+            old_indicator["text"] = "○"
+            old_indicator["fg"] = self.COLORS["muted"]
+
+            for w in old_left.winfo_children():
+                try:
+                    w["bg"] = self.COLORS["button"]
+                except Exception:
+                    pass
+            for w in old_right.winfo_children():
+                try:
+                    w["bg"] = self.COLORS["button"]
+                except Exception:
+                    pass
+
+        # Select new
+        self.selected_pathogen = pathogen_name
+        card = self.pathogen_cards[pathogen_name]
+        content = self.card_contents[pathogen_name]
+        left = self.card_left_frames[pathogen_name]
+        right = self.card_right_frames[pathogen_name]
+        indicator = self.card_indicators[pathogen_name]
+
+        for part in (card, content, left, right):
+            part["bg"] = self.COLORS["selected"]
+
+        indicator["text"] = "●"
+        indicator["fg"] = self.COLORS["success"]
+
+        for w in left.winfo_children():
+            try:
+                w["bg"] = self.COLORS["selected"]
+            except Exception:
+                pass
+        for w in right.winfo_children():
+            try:
+                w["bg"] = self.COLORS["selected"]
+            except Exception:
+                pass
+
+        print(f"✓ Selected pathogen: {pathogen_name}")
+
+    # ---------------------------
+    # Step 2: Image selection
+    # ---------------------------
+    def _create_image_section(self, parent):
+        parent["bg"] = self.COLORS["panel"]
+        self._section_title(parent, "2", "Select image")
+
+        row = tk.Frame(parent)
+        row.pack(fill=tk.X)
+        row["bg"] = self.COLORS["panel"]
+
+        # Make entry grow, button fixed
+        row.grid_columnconfigure(0, weight=1)
+        row.grid_columnconfigure(1, weight=0)
+
+        entry = tk.Entry(
+            row,
+            textvariable=self.image_path_var,
+            font=self.FONT_BODY,
+            insertbackground=self.COLORS["fg"],
+            relief=tk.FLAT,
+            bd=6,
+        )
+        entry.grid(row=0, column=0, sticky="ew", padx=(0, 10), ipady=6)
+        entry["bg"] = self.COLORS["button"]
+        entry["fg"] = self.COLORS["fg"]
+
+        browse = tk.Button(
+            row,
+            text="📁 Browse…",
+            font=("Segoe UI", 10, "bold"),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=18,
+            pady=10,
+            command=self._browse_image,
+        )
+        browse.grid(row=0, column=1, sticky="e")
+        browse["bg"] = self.COLORS["accent"]
+        browse["fg"] = "white"
+        browse["activebackground"] = self.COLORS["header"]
+        browse["activeforeground"] = "white"
+
+        self.file_info_label = tk.Label(
+            parent,
+            text="No image selected",
+            font=self.FONT_TINY,
+            anchor=tk.W,
+        )
+        self.file_info_label.pack(anchor=tk.W, pady=(8, 0))
+        self.file_info_label["bg"] = self.COLORS["panel"]
+        self.file_info_label["fg"] = self.COLORS["warning"]
+
+    def _browse_image(self):
+        filename = filedialog.askopenfilename(
+            title="Select Image",
+            filetypes=[
+                ("Image files", "*.jpg *.jpeg *.png *.bmp *.tif *.tiff"),
+                ("All files", "*.*"),
+            ],
+        )
+        if filename:
+            self.image_path_var.set(filename)
+            path = Path(filename)
+            self.file_info_label["text"] = f"✓ {path.name} ({path.stat().st_size / 1024:.1f} KB)"
+            self.file_info_label["fg"] = self.COLORS["success"]
+
+    # ---------------------------
+    # Step 3: Config options
+    # ---------------------------
+    def _create_config_section(self, parent):
+        parent["bg"] = self.COLORS["panel"]
+        self._section_title(parent, "3", "Configure options")
+
+        # Structure group
+        g1 = tk.Frame(parent)
+        g1.pack(fill=tk.X, pady=(0, 12))
+        g1["bg"] = self.COLORS["panel"]
+
+        l1 = tk.Label(g1, text="Structure type", font=self.FONT_H2)
+        l1.pack(anchor=tk.W, pady=(0, 8))
+        l1["bg"] = self.COLORS["panel"]
+        l1["fg"] = self.COLORS["fg"]
+
+        box1 = tk.Frame(g1, relief=tk.FLAT, borderwidth=0)
+        box1.pack(fill=tk.X)
+        box1["bg"] = self.COLORS["button"]
+
+        rb1 = tk.Radiobutton(
+            box1,
+            text="🦠 Bacteria",
+            variable=self.structure_var,
+            value="bacteria",
+            font=self.FONT_BODY,
+            selectcolor=self.COLORS["selected"],
+            cursor="hand2",
+        )
+        rb1.pack(anchor=tk.W, padx=10, pady=8)
+        rb1["bg"] = self.COLORS["button"]
+        rb1["fg"] = self.COLORS["fg"]
+        rb1["activebackground"] = self.COLORS["button_hover"]
+        rb1["activeforeground"] = self.COLORS["fg"]
+
+        rb2 = tk.Radiobutton(
+            box1,
+            text="🔵 Inclusions",
+            variable=self.structure_var,
+            value="inclusions",
+            font=self.FONT_BODY,
+            selectcolor=self.COLORS["selected"],
+            cursor="hand2",
+        )
+        rb2.pack(anchor=tk.W, padx=10, pady=(0, 10))
+        rb2["bg"] = self.COLORS["button"]
+        rb2["fg"] = self.COLORS["fg"]
+        rb2["activebackground"] = self.COLORS["button_hover"]
+        rb2["activeforeground"] = self.COLORS["fg"]
+
+        # Mode group
+        g2 = tk.Frame(parent)
+        g2.pack(fill=tk.X)
+        g2["bg"] = self.COLORS["panel"]
+
+        l2 = tk.Label(g2, text="Particle mode", font=self.FONT_H2)
+        l2.pack(anchor=tk.W, pady=(0, 8))
+        l2["bg"] = self.COLORS["panel"]
+        l2["fg"] = self.COLORS["fg"]
+
+        box2 = tk.Frame(g2, relief=tk.FLAT, borderwidth=0)
+        box2.pack(fill=tk.X)
+        box2["bg"] = self.COLORS["button"]
+
+        rb3 = tk.Radiobutton(
+            box2,
+            text="⚫ Dark particles on bright background",
+            variable=self.mode_var,
+            value="DARK",
+            font=self.FONT_BODY,
+            selectcolor=self.COLORS["selected"],
+            cursor="hand2",
+        )
+        rb3.pack(anchor=tk.W, padx=10, pady=8)
+        rb3["bg"] = self.COLORS["button"]
+        rb3["fg"] = self.COLORS["fg"]
+        rb3["activebackground"] = self.COLORS["button_hover"]
+        rb3["activeforeground"] = self.COLORS["fg"]
+
+        rb4 = tk.Radiobutton(
+            box2,
+            text="⚪ Bright particles on dark background",
+            variable=self.mode_var,
+            value="BRIGHT",
+            font=self.FONT_BODY,
+            selectcolor=self.COLORS["selected"],
+            cursor="hand2",
+        )
+        rb4.pack(anchor=tk.W, padx=10, pady=(0, 10))
+        rb4["bg"] = self.COLORS["button"]
+        rb4["fg"] = self.COLORS["fg"]
+        rb4["activebackground"] = self.COLORS["button_hover"]
+        rb4["activeforeground"] = self.COLORS["fg"]
+
+    # ---------------------------
+    # Actions
+    # ---------------------------
+    def _create_action_buttons(self, parent):
+        row = tk.Frame(parent)
+        row.pack(fill=tk.X)
+        row["bg"] = self.COLORS["bg"]
+
+        info_btn = tk.Button(
+            row,
+            text="ℹ️ About",
+            font=self.FONT_BODY,
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=18,
+            pady=10,
+            command=self._show_about,
+        )
+        info_btn.pack(side=tk.LEFT)
+        info_btn["bg"] = self.COLORS["button"]
+        info_btn["fg"] = self.COLORS["fg"]
+        info_btn["activebackground"] = self.COLORS["button_hover"]
+        info_btn["activeforeground"] = self.COLORS["fg"]
+
+        right = tk.Frame(row)
+        right.pack(side=tk.RIGHT)
+        right["bg"] = self.COLORS["bg"]
+
+        exit_btn = tk.Button(
+            right,
+            text="❌ Exit",
+            font=("Segoe UI", 10, "bold"),
+            relief=tk.FLAT,
+            cursor="hand2",
+            padx=18,
+            pady=10,
+            command=self._exit_application,
+        )
+        exit_btn.pack(side=tk.LEFT, padx=(0, 10))
+        exit_btn["bg"] = self.COLORS["error"]
+        exit_btn["fg"] = "white"
+        exit_btn["activebackground"] = "#d67060"
+        exit_btn["activeforeground"] = "white"
+
+        start_btn = tk.Button(
+            right,
+            text="✅ Start tuner",
+            font=("Segoe UI", 11, "bold"),
+            relief=tk.RAISED,
+            cursor="hand2",
+            padx=22,
+            pady=10,
+            command=self._start_tuner,
+        )
+        start_btn.pack(side=tk.LEFT)
+        start_btn["bg"] = self.COLORS["success"]
+        start_btn["fg"] = "white"
+        start_btn["activebackground"] = "#3da88a"
+        start_btn["activeforeground"] = "white"
+
+    # ---------------------------
+    # Behavior
+    # ---------------------------
+    def _validate_inputs(self) -> bool:
+        errors = []
+        if not self.selected_pathogen:
+            errors.append("• Please select a pathogen")
+        if not self.image_path_var.get():
+            errors.append("• Please select an image file")
+        elif not Path(self.image_path_var.get()).exists():
+            errors.append("• Selected image file does not exist")
+
+        if errors:
+            messagebox.showerror("Validation Error", "Please fix:\n\n" + "\n".join(errors))
+            return False
+        return True
+
+    def _start_tuner(self):
+        if not self._validate_inputs():
+            return
+
+        assert self.selected_pathogen is not None
+
+        print(f"\n{'='*60}")
+        print("STARTING SEGMENTATION TUNER")
+        print(f"{'='*60}")
+        print(f"Pathogen: {self.selected_pathogen}")
+        print(f"Image: {Path(self.image_path_var.get()).name}")
+        print(f"Structure: {self.structure_var.get()}")
+        print(f"Mode: {self.mode_var.get()}")
+        print(f"{'='*60}\n")
+
+        self.root.destroy()
+
+        try:
+            tuner_root = tk.Tk()
+
+            def return_to_menu():
+                main()
+
+            _tuner = SegmentationTuner(
+                root=tuner_root,
+                image_path=self.image_path_var.get(),
+                bacterium=self.selected_pathogen,
+                structure=self.structure_var.get(),
+                mode=self.mode_var.get(),
+                return_callback=return_to_menu,
+            )
+            tuner_root.mainloop()
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to start tuner:\n{str(e)}")
+            import traceback
+
+            traceback.print_exc()
+            main()
+
     def _show_about(self):
-        """Show about dialog"""
         about_text = """
-Peritoneal Dialysis Pathogen Configuration Manager
+Peritoneal Dialysis Pathogen Segmentation Tuner
 Version 2.0
 
-This application manages image analysis configurations 
-for three common peritoneal dialysis pathogens:
+Interactive parameter tuning for image analysis of:
 
 • Proteus mirabilis
-• Klebsiella pneumoniae  
+• Klebsiella pneumoniae
 • Streptococcus mitis
 
 Features:
-🎨 Segmentation Tuner - Adjust image segmentation parameters
-📊 Histogram Analysis - Visualize particle distributions
-💾 Config Management - Save and apply configurations
+🎨 Real-time segmentation preview
+📊 Histogram analysis
+🎯 Click-to-analyze particles
+💾 Save configurations
 
 © 2026 Pathogen Analysis Suite
         """
         messagebox.showinfo("About", about_text.strip())
-        
+
     def _exit_application(self):
-        """Exit the application"""
         if messagebox.askyesno("Confirm Exit", "Are you sure you want to exit?"):
             print("\n👋 Exiting Pathogen Configuration Manager")
             self.root.quit()
             self.root.destroy()
+
+
+
 
 
 # ==================================================
