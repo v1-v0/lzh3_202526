@@ -39,6 +39,9 @@ class SegmentationConfig:
     invert_image: bool = False
     threshold_mode: str = "otsu"
     manual_threshold: int = 127
+
+    use_intensity_threshold: bool = False
+    intensity_threshold: float = 80.0
     
     # Metadata fields
     last_modified: Optional[str] = None

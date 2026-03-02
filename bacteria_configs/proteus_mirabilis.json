@@ -2,30 +2,41 @@
   "bacteria_type": "proteus_mirabilis",
   "config": {
     "name": "Proteus mirabilis",
-    "description": "bacteria segmentation - Tuned 2026-02-13 01:41:04",
-    "gaussian_sigma": 10.0,
-    "min_area_um2": 2.3976850138888883,
-    "max_area_um2": 143.8611008333333,
-    "dilate_iterations": 0,
+    "description": "Optimized for swarmer/swimmer morphology - Relaxed for small cells",
+    "gaussian_sigma": 4.0,
+
+    "min_area_um2": 2.0,
+    "max_area_um2": 500.0,
+
+    "dilate_iterations": 1,
     "erode_iterations": 1,
-    "morph_kernel_size": 5,
-    "morph_iterations": 1,
-    "min_circularity": 0.04,
-    "max_circularity": 1.0,
-    "min_aspect_ratio": 0.1,
-    "max_aspect_ratio": 20.0,
+    "morph_kernel_size": 3,
+    "morph_iterations": 2,
+
+    "min_circularity": 0.02,
+    "max_circularity": 0.95,
+
+    "min_aspect_ratio": 1.0,
+    "max_aspect_ratio": 30.0,
+
     "min_mean_intensity": 0,
     "max_mean_intensity": 255,
-    "max_edge_gradient": 200,
-    "min_solidity": 0.01,
+    "max_edge_gradient": 250,
+
+    "min_solidity": 0.2,
     "max_fraction_of_image": 0.25,
+
     "fluor_min_area_um2": 3.0,
     "fluor_max_area_um2": 2000.0,
     "fluor_match_min_intersection_px": 5.0,
+
     "invert_image": false,
+    "use_intensity_threshold": true,
+    "intensity_threshold": 35.0,
+
     "pixel_size_um": 0.10949166666666665,
-    "last_modified": "2026-02-13T01:41:04.464362",
-    "tuned_by": "Interactive Tuner"
+    "last_modified": "2026-03-02T12:30:00.000000",
+    "tuned_by": "Relaxed filters to accept all 3 detected objects"
   },
-  "updated": "2026-02-13T01:41:04.464362"
+  "updated": "2026-03-02T12:30:00.000000"
 }
