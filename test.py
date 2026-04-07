@@ -8,10 +8,11 @@ import os
 
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import textwrap
-import time
+import time as pytime
 # from tracemalloc import start
 import xml.etree.ElementTree as ET
 from datetime import datetime
@@ -1063,52 +1064,39 @@ def clear_old_cache(cache_dir: Path, max_age_days: int = 7) -> None:
 # against each config's own detection cutoff.
 # ==================================================
 
+
 def process_multi_configuration(config: dict) -> dict:
-    """Process images with all available bacteria configurations with statistical analysis
-    
-    Args:
-        config: Configuration dictionary with keys:
-            - bacteria_config_info: Dict with configs_to_scan and config_names
-            - current_source: ACTUAL source directory with images (G+ or G-)
-            - source_dir: Fallback source directory
-            - output_dir: Output directory
-            - percentile: Percentile for filtering
-            - threshold_pct: Clinical threshold
-            
-    Returns:
-        dict: Results with best match, statistics, and all scan results
+    """Process images with all available bacteria configurations.
+
+    v2 changes vs original:
+        • Separates per-image fluorescence into test vs control lists
+          so calculate_confidence_score can measure biological separation.
+        • Stores 'test_fluorescences', 'control_fluorescences',
+          'test_particles', 'control_particles' in each scan_results dict.
     """
     bacteria_config_info = config.get('bacteria_config_info', {})
     configs_to_scan      = bacteria_config_info.get('configs_to_scan', [])
     config_names         = bacteria_config_info.get('config_names', {})
 
+    _empty = {
+        'mode': 'multi_scan',
+        'all_results': {},
+        'comparison_df': pd.DataFrame(),
+        'best_match': None,
+        'confidence_report': "No configurations available",
+        'comparison_path': None,
+        'report_path': None,
+        'plot_path': None,
+    }
+
     if not configs_to_scan:
         print("[ERROR] No configurations to scan")
-        return {
-            'mode': 'multi_scan',
-            'all_results': {},
-            'comparison_df': pd.DataFrame(),
-            'best_match': None,
-            'confidence_report': "No configurations available",
-            'comparison_path': None,
-            'report_path': None,
-            'plot_path': None,
-        }
+        return _empty
 
     source_to_scan = config.get('current_source', config.get('source_dir'))
-
     if source_to_scan is None:
         print("[ERROR] No source directory specified")
-        return {
-            'mode': 'multi_scan',
-            'all_results': {},
-            'comparison_df': pd.DataFrame(),
-            'best_match': None,
-            'confidence_report': "No source directory",
-            'comparison_path': None,
-            'report_path': None,
-            'plot_path': None,
-        }
+        return _empty
 
     print("\n" + "=" * 80)
     print("MULTI-CONFIGURATION SCANNING")
@@ -1119,8 +1107,8 @@ def process_multi_configuration(config: dict) -> dict:
         print(f"   • {config_names[cfg_key]}")
     print()
 
-    image_groups  = collect_images_from_directory(source_to_scan)
-    total_images  = sum(len(g['images']) for g in image_groups.values())
+    image_groups = collect_images_from_directory(source_to_scan)
+    total_images = sum(len(g['images']) for g in image_groups.values())
 
     if total_images == 0:
         print(f"\n⚠️  WARNING: No images found in {source_to_scan}")
@@ -1134,16 +1122,8 @@ def process_multi_configuration(config: dict) -> dict:
                 print(f"     - {item.name} {'(dir)' if item.is_dir() else '(file)'}")
         except Exception as e:
             print(f"     Could not list directory: {e}")
-        return {
-            'mode': 'multi_scan',
-            'all_results': {},
-            'comparison_df': pd.DataFrame(),
-            'best_match': None,
-            'confidence_report': "No images found to process",
-            'comparison_path': None,
-            'report_path': None,
-            'plot_path': None,
-        }
+        _empty['confidence_report'] = "No images found to process"
+        return _empty
 
     print(f"📂 Found {total_images} images across {len(image_groups)} groups\n")
 
@@ -1161,7 +1141,6 @@ def process_multi_configuration(config: dict) -> dict:
         print("─" * 80)
 
         bacteria_config = load_bacteria_config_from_json(bacteria_type)
-
         if bacteria_config is None:
             print(f"  ✗ Failed to load configuration")
             continue
@@ -1169,11 +1148,7 @@ def process_multi_configuration(config: dict) -> dict:
         config_output = config['output_dir'] / bacteria_type
         config_output.mkdir(exist_ok=True)
 
-        # ------------------------------------------------------------------
-        # PATCH: carry threshold metadata so calculate_confidence_score can
-        #        normalise fluorescence against this config's own cutoff.
-        # ------------------------------------------------------------------
-        scan_results = {
+        scan_results: dict[str, Any] = {
             'particles_detected':       0,
             'fluorescence_sum':         0.0,
             'mean_fluorescence':        0.0,
@@ -1182,7 +1157,12 @@ def process_multi_configuration(config: dict) -> dict:
             'cached':                   False,
             'per_image_particles':      [],
             'per_image_fluorescence':   [],
-            # NEW ↓
+            # NEW — test vs control split
+            'test_fluorescences':       [],
+            'control_fluorescences':    [],
+            'test_particles':           [],
+            'control_particles':        [],
+            # Threshold metadata for report display
             'use_intensity_threshold':  bacteria_config.use_intensity_threshold,
             'intensity_threshold':      (bacteria_config.intensity_threshold
                                          if bacteria_config.use_intensity_threshold
@@ -1190,6 +1170,8 @@ def process_multi_configuration(config: dict) -> dict:
         }
 
         for group_name, group_data in image_groups.items():
+            is_control = group_name.lower().startswith('control')
+
             for img_path in group_data['images']:
                 cache_key    = get_cache_key(img_path, bacteria_config)
                 cached_result = check_cache(cache_dir, cache_key)
@@ -1198,14 +1180,6 @@ def process_multi_configuration(config: dict) -> dict:
                     cache_hits     += 1
                     particle_count  = cached_result.get('particle_count', 0)
                     mean_fluor      = cached_result.get('mean_fluorescence', 0.0)
-
-                    scan_results['particles_detected']     += particle_count
-                    scan_results['fluorescence_sum']       += mean_fluor
-                    scan_results['images_processed']       += 1
-                    scan_results['cached']                  = True
-                    scan_results['per_image_particles'].append(particle_count)
-                    scan_results['per_image_fluorescence'].append(mean_fluor)
-
                 else:
                     cache_misses += 1
                     try:
@@ -1226,36 +1200,51 @@ def process_multi_configuration(config: dict) -> dict:
                             else:
                                 mean_fluor = 0.0
 
-                            scan_results['particles_detected']     += particle_count
-                            scan_results['fluorescence_sum']       += mean_fluor
-                            scan_results['images_processed']       += 1
-                            scan_results['per_image_particles'].append(particle_count)
-                            scan_results['per_image_fluorescence'].append(mean_fluor)
-
                             save_cache(cache_dir, cache_key, {
                                 'particle_count':    particle_count,
                                 'mean_fluorescence': mean_fluor,
                             })
-
+                        else:
+                            continue
                     except Exception as e:
                         print(f"  ✗ Failed: {img_path.name} - {e}")
                         scan_results['images_failed'] += 1
+                        continue
 
-        # Statistics
-        if scan_results['images_processed'] > 0:
-            scan_results['mean_fluorescence'] = (scan_results['fluorescence_sum']
-                                                 / scan_results['images_processed'])
+                # ── Accumulate into both pooled AND split lists ──
+                scan_results['particles_detected']     += particle_count
+                scan_results['fluorescence_sum']       += mean_fluor
+                scan_results['images_processed']       += 1
+                scan_results['per_image_particles'].append(particle_count)
+                scan_results['per_image_fluorescence'].append(mean_fluor)
 
-            if len(scan_results['per_image_fluorescence']) > 1:
-                fa = np.array(scan_results['per_image_fluorescence'])
+                if cached_result is not None:
+                    scan_results['cached'] = True
+
+                # NEW: test vs control split
+                if is_control:
+                    scan_results['control_fluorescences'].append(mean_fluor)
+                    scan_results['control_particles'].append(particle_count)
+                else:
+                    scan_results['test_fluorescences'].append(mean_fluor)
+                    scan_results['test_particles'].append(particle_count)
+
+        # ── Aggregate statistics (pooled — for display) ──
+        n_proc = scan_results['images_processed']
+        if n_proc > 0:
+            scan_results['mean_fluorescence'] = (
+                scan_results['fluorescence_sum'] / n_proc)
+
+            fa = np.array(scan_results['per_image_fluorescence'])
+            if len(fa) > 1:
                 scan_results['std_fluorescence'] = float(np.std(fa, ddof=1))
                 scan_results['sem_fluorescence'] = float(scipy_stats.sem(fa))
             else:
                 scan_results['std_fluorescence'] = 0.0
                 scan_results['sem_fluorescence'] = 0.0
 
-            if len(scan_results['per_image_particles']) > 1:
-                pa = np.array(scan_results['per_image_particles'])
+            pa = np.array(scan_results['per_image_particles'])
+            if len(pa) > 1:
                 scan_results['mean_particles_per_image'] = float(np.mean(pa))
                 scan_results['std_particles']            = float(np.std(pa, ddof=1))
             else:
@@ -1263,35 +1252,40 @@ def process_multi_configuration(config: dict) -> dict:
                     scan_results['particles_detected'])
                 scan_results['std_particles'] = 0.0
         else:
-            scan_results['mean_fluorescence']        = 0.0
-            scan_results['std_fluorescence']         = 0.0
-            scan_results['sem_fluorescence']         = 0.0
-            scan_results['mean_particles_per_image'] = 0.0
-            scan_results['std_particles']            = 0.0
+            for k in ('mean_fluorescence', 'std_fluorescence',
+                      'sem_fluorescence', 'mean_particles_per_image',
+                      'std_particles'):
+                scan_results[k] = 0.0
 
         # Excel consolidation
-        if scan_results['images_processed'] > 0:
+        if n_proc > 0:
             for group_name in image_groups.keys():
                 group_dir = config_output / group_name
                 if group_dir.exists():
                     try:
-                        consolidate_to_excel(group_dir, group_name,
-                                             config['percentile'])
+                        consolidate_to_excel(
+                            group_dir, group_name, config['percentile'])
                     except Exception as e:
                         print(f"  ⚠ Excel consolidation failed: {e}")
 
         all_results[bacteria_type] = scan_results
 
+        # ── Console summary ──
+        n_test = len(scan_results['test_fluorescences'])
+        n_ctrl = len(scan_results['control_fluorescences'])
         print(f"\n  Results:")
-        print(f"    Particles detected: {scan_results['particles_detected']} total")
+        print(f"    Particles detected: "
+              f"{scan_results['particles_detected']} total")
         print(f"    Particles per image: "
               f"{scan_results['mean_particles_per_image']:.1f} "
               f"± {scan_results['std_particles']:.1f}")
         print(f"    Mean fluorescence: "
               f"{scan_results['mean_fluorescence']:.2f} "
               f"± {scan_results['std_fluorescence']:.2f} a.u./µm²")
-        print(f"    SEM fluorescence: ±{scan_results['sem_fluorescence']:.2f}")
-        print(f"    Images processed: {scan_results['images_processed']}")
+        print(f"    SEM fluorescence: "
+              f"±{scan_results['sem_fluorescence']:.2f}")
+        print(f"    Images processed: {n_proc} "
+              f"(test: {n_test}, control: {n_ctrl})")
         if scan_results['cached']:
             print(f"    Cache hits: ✓")
         print()
@@ -1299,9 +1293,9 @@ def process_multi_configuration(config: dict) -> dict:
     print(f"\n📊 Cache Statistics:")
     print(f"   Cache hits: {cache_hits}")
     print(f"   Cache misses: {cache_misses}")
-    if (cache_hits + cache_misses) > 0:
-        print(f"   Hit rate: "
-              f"{cache_hits / (cache_hits + cache_misses) * 100:.1f}%")
+    total_cache = cache_hits + cache_misses
+    if total_cache > 0:
+        print(f"   Hit rate: {cache_hits / total_cache * 100:.1f}%")
     else:
         print(f"   Hit rate: N/A")
 
@@ -1338,160 +1332,401 @@ def process_multi_configuration(config: dict) -> dict:
 
 
 # ==================================================
-# calculate_confidence_score  (patched)
-# Changes vs original:
-#   Factor 1 – raw fluorescence replaced with
-#              threshold-normalised fluorescence so
-#              configs with tighter cutoffs are not
-#              penalised for lower absolute signal.
-#   Factor 2 – particle score ceiling lowered to 25
-#              to make room for new factors.
-#   Factor 4 – NEW: fluorescence CV consistency.
-#   Factor 5 – NEW: per-image particle variability.
-#   Factor 6 – quality bonus reduced to 5 pts.
-#   Total max remains 100.
+# Scores based on how well
+# a config separates test images from control images,
+# NOT on absolute fluorescence magnitude.
+#
+# Scoring breakdown (max 100):
+#   Factor 1 — Effect size (Cohen's d)           0-35
+#   Factor 2 — Statistical significance           0-20
+#   Factor 3 — Particle count appropriateness     0-15  ← Approach 1 applied
+#   Factor 4 — Within-group consistency           0-15
+#   Factor 5 — Processing completeness            0-10  (reserved, not yet scored)
+#   Factor 6 — Direction & magnitude bonus         0-5
+#
+# Post-scoring modifiers:
+#   Approach 2 — Non-specific detection disqualifier
+#                (overcount + low fluorescence hard cap / multiplier)
+#   Approach 3 — Stores '_overcount_disqualified' flag back into
+#                the results dict for generate_confidence_report labeling
+#
+# Tunable constants (adjust to match your assay biology):
+#   OVERCOUNT_HARD_LIMIT    : particles/image above which hard cap triggers
+#   OVERCOUNT_MID_LIMIT     : particles/image for moderate penalty
+#   OVERCOUNT_SOFT_LIMIT    : particles/image for borderline penalty
+#   NONSPECIFIC_FLUOR_CAP   : a.u./µm²  — pooled mean below this is suspicious
+#   NONSPECIFIC_FLUOR_STRICT: a.u./µm²  — stricter version for borderline band
 # ==================================================
 
-def calculate_confidence_score(results: dict) -> float:
-    """Calculate confidence score for configuration match (0-100).
+def calculate_confidence_score(
+        results: dict,
+        default_fluor: Optional[float] = None
+    ) -> float:
+    """Score a bacteria configuration based on test-vs-control separation (0-100).
 
-    Scoring breakdown (max 100):
-        Factor 1 – Threshold-normalised fluorescence  0-45 pts
-        Factor 2 – Particle count appropriateness     0-25 pts
-        Factor 3 – Processing success rate            0-10 pts
-        Factor 4 – Fluorescence CV consistency        0-10 pts
-        Factor 5 – Per-image particle variability      0-5 pts
-        Factor 6 – Quality bonus                       0-5 pts
+    Approach 1 — Particle-count ceiling tightened to 30/image with
+                 a steep degradation ladder above it.  Configs detecting
+                 hundreds of particles/image at low fluorescence (noise,
+                 debris, crystal artefacts) can no longer score well on
+                 Factor 3 alone.
+
+    Approach 2 — Non-specific detection disqualifier applied AFTER all
+                 factor scores are summed.  Targets the specific artefact
+                 signature: high particle count AND low mean fluorescence.
+                 Three severity bands with progressively stronger penalties:
+                   • Extreme  (>100/img, fluor<2.0) → hard cap at 10 pts
+                   • Moderate ( >50/img, fluor<2.0) → score × 0.35
+                   • Borderline(>30/img, fluor<1.0) → score × 0.55
+
+    Approach 3 — Stores three diagnostic keys back into the results dict
+                 so that generate_confidence_report can label and section
+                 off disqualified configs without re-computing anything:
+                   results['_overcount_disqualified'] : bool
+                   results['_mean_per_image_used']    : float  (rounded)
+                   results['_pooled_fluor_mean']      : float  (rounded)
+
+    If the results dict does NOT contain test/control split keys
+    (backward compat), falls back to a minimal heuristic so the
+    function never crashes.
 
     Args:
-        results: Results dictionary produced by process_multi_configuration.
-                 Must contain 'use_intensity_threshold' and
-                 'intensity_threshold' keys (added by the patched
-                 process_multi_configuration).
+        results     : per-config dict produced by process_multi_configuration
+        default_fluor: mean_fluorescence of the 'default' config run, used
+                       as a signal-to-background reference (optional)
 
     Returns:
-        float: Confidence score clamped to [0, 100].
+        float in [0, 100]
     """
+
+    # ── Tunable disqualification thresholds ────────────────────────────────────
+    OVERCOUNT_HARD_LIMIT     = 100.0   # particles/image
+    OVERCOUNT_MID_LIMIT      =  50.0   # particles/image
+    OVERCOUNT_SOFT_LIMIT     =  30.0   # particles/image
+    NONSPECIFIC_FLUOR_CAP    =   2.0   # a.u./µm²  (hard / moderate bands)
+    NONSPECIFIC_FLUOR_STRICT =   1.0   # a.u./µm²  (borderline band)
+
+    # ── Approach 3: reset flags at the top so every call is clean ──────────────
+    results['_overcount_disqualified'] = False
+    results['_mean_per_image_used']    = 0.0
+    results['_pooled_fluor_mean']      = 0.0
+
+    # ── Pull arrays from results ────────────────────────────────────────────────
+    test_fluor = np.array(
+        results.get('test_fluorescences', []), dtype=float)
+    ctrl_fluor = np.array(
+        results.get('control_fluorescences', []), dtype=float)
+    test_particles = np.array(
+        results.get('test_particles', []), dtype=float)
+    ctrl_particles = np.array(
+        results.get('control_particles', []), dtype=float)
+
+    n_test = len(test_fluor)
+    n_ctrl = len(ctrl_fluor)
+
+    # ── Compute mean_per_image early — needed by Approaches 1-3 ────────────────
+    # Priority: per_image_particles list (most accurate) → test/ctrl split
+    # totals → stored aggregate value.
+    per_image_particles = results.get('per_image_particles', [])
+    if per_image_particles:
+        mean_per_image = float(np.mean(per_image_particles))
+    elif (n_test + n_ctrl) > 0:
+        total_particles = (
+            float(np.sum(test_particles)) + float(np.sum(ctrl_particles))
+        )
+        mean_per_image = total_particles / max(n_test + n_ctrl, 1)
+    else:
+        mean_per_image = float(results.get('mean_particles_per_image', 0))
+
+    # ── Guard: need ≥2 images in BOTH groups for separation scoring ─────────────
+    if n_test < 2 or n_ctrl < 2:
+        # Fallback: minimal heuristic from particle count alone.
+        # Still apply Approach 2/3 flags using aggregate fluorescence.
+        mean_fluor_fallback = float(results.get('mean_fluorescence', 0.0))
+        results['_mean_per_image_used'] = round(mean_per_image, 2)
+        results['_pooled_fluor_mean']   = round(mean_fluor_fallback, 3)
+
+        is_disqualified_fb = (
+            mean_per_image > OVERCOUNT_SOFT_LIMIT
+            and mean_fluor_fallback < NONSPECIFIC_FLUOR_CAP
+        )
+        results['_overcount_disqualified'] = is_disqualified_fb
+
+        n_particles = results.get('particles_detected', 0)
+        if is_disqualified_fb:
+            # Even in fallback, overcount disqualification applies
+            return 3.0
+        if 20 <= n_particles <= 200:
+            return 15.0
+        elif 5 <= n_particles < 20 or 200 < n_particles <= 500:
+            return 8.0
+        elif n_particles > 0:
+            return 3.0
+        return 0.0
+
+    # ── Descriptive stats ───────────────────────────────────────────────────────
+    test_mean = float(np.mean(test_fluor))
+    ctrl_mean = float(np.mean(ctrl_fluor))
+    test_std  = float(np.std(test_fluor,  ddof=1))
+    ctrl_std  = float(np.std(ctrl_fluor,  ddof=1))
+
     score = 0.0
 
-    n_particles = results['particles_detected']
-    mean_fluor  = results.get('mean_fluorescence', 0.0)
-    std_fluor   = results.get('std_fluorescence',  0.0)
-
-    if mean_fluor is None or (isinstance(mean_fluor, float)
-                               and np.isnan(mean_fluor)):
-        mean_fluor = 0.0
-    if std_fluor is None or (isinstance(std_fluor, float)
-                              and np.isnan(std_fluor)):
-        std_fluor = 0.0
-
-    # ── Factor 1: Threshold-normalised fluorescence (0-45 pts) ────────────
-    # Dividing by the config's own intensity cutoff removes the systematic
-    # bias where looser thresholds (higher cutoff) capture brighter objects
-    # and inflate the raw mean.  A value ≥ 1.0 means the detected signal
-    # exceeds the detection threshold, indicating genuine specificity.
-    use_threshold = results.get('use_intensity_threshold', False)
-    threshold_val = results.get('intensity_threshold', 80.0)
-
-    if use_threshold and threshold_val and threshold_val > 0:
-        normalised_fluor = mean_fluor / float(threshold_val)
+    # ── Factor 1: Effect size — |Cohen's d| (0-35 pts) ─────────────────────────
+    denom = n_test + n_ctrl - 2
+    if denom > 0:
+        pooled_std = np.sqrt(
+            ((n_test - 1) * test_std ** 2 + (n_ctrl - 1) * ctrl_std ** 2)
+            / denom
+        )
     else:
-        # Non-threshold configs: normalise against a nominal reference of 80
-        normalised_fluor = mean_fluor / 80.0
+        pooled_std = 1.0
 
-    if normalised_fluor >= 1.5:
-        fluor_score = 45   # Signal well above threshold – excellent specificity
-    elif normalised_fluor >= 1.0:
-        fluor_score = 40   # Signal at or above threshold – good specificity
-    elif normalised_fluor >= 0.75:
-        fluor_score = 33   # Signal close to threshold
-    elif normalised_fluor >= 0.50:
-        fluor_score = 25   # Moderate signal
-    elif normalised_fluor >= 0.30:
-        fluor_score = 15   # Low signal
-    elif normalised_fluor >= 0.15:
-        fluor_score = 8    # Very low signal
-    elif normalised_fluor > 0:
-        fluor_score = 3    # Minimal signal
-    else:
-        fluor_score = 0    # No signal
+    cohens_d = (
+        abs(test_mean - ctrl_mean) / pooled_std
+        if pooled_std > 0 else 0.0
+    )
 
-    score += fluor_score
+    if   cohens_d >= 2.0: effect_score = 35
+    elif cohens_d >= 1.5: effect_score = 30
+    elif cohens_d >= 1.0: effect_score = 25
+    elif cohens_d >= 0.8: effect_score = 20
+    elif cohens_d >= 0.5: effect_score = 12
+    elif cohens_d >= 0.2: effect_score = 5
+    else:                 effect_score = 0
+    score += effect_score
 
-    # ── Factor 2: Particle count appropriateness (0-25 pts) ───────────────
-    # Reward moderate, specific counts; penalise extremes that suggest
-    # under-detection or noise/crystal contamination.
-    if 20 <= n_particles <= 200:
-        particle_score = 25   # Sweet-spot: specific, reproducible detection
-    elif 10 <= n_particles < 20:
-        particle_score = 20   # Low but acceptable
-    elif 200 < n_particles <= 500:
-        particle_score = 15   # Getting noisy
-    elif 500 < n_particles <= 1000:
-        particle_score = 8    # Likely picking up artifacts
-    elif n_particles > 1000:
-        particle_score = 0    # Almost certainly noise / crystal contamination
-    elif 5 <= n_particles < 10:
-        particle_score = 12   # Very few – insufficient for statistics
-    elif n_particles > 0:
-        particle_score = 5    # Minimal detection
-    else:
-        particle_score = 0    # Nothing detected
+    # ── Factor 2: Statistical significance (0-20 pts) ──────────────────────────
+    try:
+        _, p_raw = scipy_stats.ttest_ind(
+            test_fluor, ctrl_fluor, equal_var=False)
+        p_value = float(np.asarray(p_raw).item())
+    except Exception:
+        p_value = 1.0
 
+    if   p_value < 0.001: sig_score = 20
+    elif p_value < 0.01:  sig_score = 15
+    elif p_value < 0.05:  sig_score = 10
+    elif p_value < 0.10:  sig_score = 3
+    else:                 sig_score = 0
+    score += sig_score
+
+    # ── Factor 3: Particle count appropriateness (0-15 pts) ────────────────────
+    # APPROACH 1 — Ceiling tightened from 50 → 30 particles/image.
+    # Steep degradation bands replace the single upper check so that
+    # configs detecting 100+ particles/image (likely noise) cannot earn
+    # a respectable Factor 3 score at all.
+    #
+    #   3 – 30  /img  → 15 pts  (optimal biological range)
+    #   2 – 3   /img  → 10 pts  (slightly sparse but plausible)
+    #  30 – 60  /img  →  5 pts  (borderline overcount)
+    #  60 – 150 /img  →  2 pts  (high overcount, probably artefact)
+    #  > 150    /img  →  0 pts  (extreme overcount — certain artefact)
+    #   1 – 2   /img  →  5 pts  (very sparse detection)
+    #   0 – 1   /img  →  0 pts  (nothing detected)
+    if   3  <= mean_per_image <= 30:   particle_score = 15
+    elif 2  <= mean_per_image <   3:   particle_score = 10
+    elif 30 <  mean_per_image <= 60:   particle_score =  5
+    elif 60 <  mean_per_image <= 150:  particle_score =  2
+    elif mean_per_image > 150:         particle_score =  0
+    elif mean_per_image >= 1:          particle_score =  5
+    else:                              particle_score =  0
     score += particle_score
 
-    # ── Factor 3: Processing success rate (0-10 pts) ──────────────────────
-    total_images = results['images_processed'] + results['images_failed']
-    if total_images > 0:
-        score += (results['images_processed'] / total_images) * 10.0
+    # ── Factor 4: Within-group consistency (0-15 pts) ──────────────────────────
+    test_cv = (test_std / test_mean) if test_mean > 0 else 999.0
+    ctrl_cv = (ctrl_std / ctrl_mean) if ctrl_mean > 0 else 999.0
+    avg_cv  = (test_cv + ctrl_cv) / 2.0
 
-    # ── Factor 4: Fluorescence CV consistency (0-10 pts) ──────────────────
-    # A high coefficient of variation across images means the config is
-    # inconsistently detecting objects – a sign of poor specificity.
-    # Lower CV is rewarded.
-    if mean_fluor > 0:
-        fluor_cv = std_fluor / mean_fluor
-        if fluor_cv < 0.30:
-            consistency_score = 10   # Very consistent across images
-        elif fluor_cv < 0.50:
-            consistency_score = 7    # Moderately consistent
-        elif fluor_cv < 0.80:
-            consistency_score = 3    # Noisy
-        else:
-            consistency_score = 0    # Highly variable – likely non-specific
-    else:
-        consistency_score = 0
-
+    if   avg_cv < 0.30: consistency_score = 15
+    elif avg_cv < 0.50: consistency_score = 10
+    elif avg_cv < 0.80: consistency_score = 5
+    else:               consistency_score = 0
     score += consistency_score
 
-    # ── Factor 5: Per-image particle variability (0-5 pts) ────────────────
-    # Complements Factor 4: a consistent particle count per image suggests
-    # the config is reliably targeting the same object class.
-    particles_std  = results.get('std_particles',            0.0)
-    particles_mean = results.get('mean_particles_per_image', 1.0)
+    # ── Factor 5: Processing completeness (0-10 pts) — reserved ───────────────
+    # Not yet scored; kept as a placeholder to preserve the max-100 design.
 
-    if particles_mean > 0:
-        particle_cv = particles_std / particles_mean
-        if particle_cv < 0.50:
-            variability_bonus = 5
-        elif particle_cv < 1.00:
-            variability_bonus = 2
-        else:
-            variability_bonus = 0
-    else:
-        variability_bonus = 0
+    # ── Factor 6: Direction & magnitude bonus (0-5 pts) ────────────────────────
+    # Bacteria presence quenches fluorescence → test < control is the
+    # expected direction.  Reward configs that show that.
+    direction_bonus = 0.0
+    if test_mean < ctrl_mean and cohens_d >= 0.5:
+        direction_bonus = 3.0
+    elif test_mean < ctrl_mean:
+        direction_bonus = 1.0
 
-    score += variability_bonus
+    sb_bonus = 0.0
+    if default_fluor is not None and default_fluor > 0:
+        pooled_mean_sb = float(
+            np.mean(np.concatenate([test_fluor, ctrl_fluor]))
+        )
+        sb_ratio = pooled_mean_sb / default_fluor
+        if sb_ratio >= 1.5:
+            sb_bonus = 2.0
+        elif sb_ratio >= 1.1:
+            sb_bonus = 1.0
 
-    # ── Factor 6: Combined quality bonus (0-5 pts) ────────────────────────
-    # Only awarded when both signal quality AND particle specificity are met
-    # simultaneously, acting as a confidence multiplier.
-    if normalised_fluor >= 1.0 and 10 <= n_particles <= 200:
-        score += 5   # High quality + specific detection
-    elif normalised_fluor >= 0.50 and 20 <= n_particles <= 500:
-        score += 2   # Moderate quality
+    score += min(direction_bonus + sb_bonus, 5.0)
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # APPROACH 2 — Non-specific Detection Disqualifier
+    # ══════════════════════════════════════════════════════════════════════════════
+    # Applied AFTER all factor scores are summed.
+    #
+    # Rationale: a config can score well on Cohen's d even when both test
+    # and control groups are flooded with noise detections, because the
+    # relative difference between two noisy distributions can still be
+    # statistically significant.  Biological plausibility requires BOTH a
+    # reasonable particle count AND a meaningful fluorescence signal.
+    #
+    # Three severity bands (use OVERCOUNT_* constants at top to re-tune):
+    #
+    #  Extreme   >100/img AND fluor < 2.0  → hard cap at 10
+    #             (Streptococcus 410/img, fluor=0.51 → hits this band)
+    #             (Default       855/img, fluor=0.64 → hits this band)
+    #
+    #  Moderate   >50/img AND fluor < 2.0  → score × 0.35
+    #
+    #  Borderline >30/img AND fluor < 1.0  → score × 0.55
+    #
+    #  Proteus  4.7/img, fluor=38.4  → no band triggered, score unchanged
+    #  Klebsiella 3.9/img, fluor=23  → no band triggered, score unchanged
+    # ══════════════════════════════════════════════════════════════════════════════
+
+    pooled_fluor_mean = float(
+        np.mean(np.concatenate([test_fluor, ctrl_fluor]))
+    )
+    is_disqualified = False
+
+    if mean_per_image > OVERCOUNT_HARD_LIMIT and pooled_fluor_mean < NONSPECIFIC_FLUOR_CAP:
+        # ── Extreme band ──────────────────────────────────────────────────────
+        original_score = score
+        score = min(score, 10.0)
+        is_disqualified = True
+        print(
+            f"  ⛔ OVERCOUNT DISQUALIFIED [extreme]: "
+            f"{mean_per_image:.1f} particles/img, "
+            f"fluor={pooled_fluor_mean:.3f} a.u./µm² "
+            f"→ score capped: {original_score:.1f} → {score:.1f}"
+        )
+
+    elif mean_per_image > OVERCOUNT_MID_LIMIT and pooled_fluor_mean < NONSPECIFIC_FLUOR_CAP:
+        # ── Moderate band ─────────────────────────────────────────────────────
+        original_score = score
+        score = score * 0.35
+        is_disqualified = True
+        print(
+            f"  ⚠ OVERCOUNT PENALTY [moderate]: "
+            f"{mean_per_image:.1f} particles/img, "
+            f"fluor={pooled_fluor_mean:.3f} a.u./µm² "
+            f"→ {original_score:.1f} × 0.35 = {score:.1f}"
+        )
+
+    elif mean_per_image > OVERCOUNT_SOFT_LIMIT and pooled_fluor_mean < NONSPECIFIC_FLUOR_STRICT:
+        # ── Borderline band ───────────────────────────────────────────────────
+        original_score = score
+        score = score * 0.55
+        is_disqualified = True
+        print(
+            f"  ⚠ OVERCOUNT PENALTY [borderline]: "
+            f"{mean_per_image:.1f} particles/img, "
+            f"fluor={pooled_fluor_mean:.3f} a.u./µm² "
+            f"→ {original_score:.1f} × 0.55 = {score:.1f}"
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # APPROACH 3 — Store diagnostic flags back into results dict
+    # ══════════════════════════════════════════════════════════════════════════════
+    # Consumed by generate_confidence_report to:
+    #   • Print a dedicated "DISQUALIFIED CONFIGURATIONS" section above Top-3
+    #   • Add an "Overcount_Disqualified" column to comparison_df
+    #   • Adjust clinical recommendations text accordingly
+    #
+    # Keys written:
+    #   _overcount_disqualified : bool  — True if any band above was triggered
+    #   _mean_per_image_used    : float — the mean_per_image value that was tested
+    #   _pooled_fluor_mean      : float — the pooled fluorescence mean that was tested
+    # ══════════════════════════════════════════════════════════════════════════════
+    results['_overcount_disqualified'] = is_disqualified
+    results['_mean_per_image_used']    = round(mean_per_image, 2)
+    results['_pooled_fluor_mean']      = round(pooled_fluor_mean, 3)
 
     return min(score, 100.0)
+
+
+
+
+def _apply_pairwise_discrimination_penalties(
+    all_results: dict,
+    raw_scores: dict[str, float],
+) -> tuple[dict[str, float], dict[str, dict]]:
+    """Adjust confidence scores based on pairwise statistical separation.
+
+    For each adjacent pair (by descending score), if their per-image
+    fluorescence distributions are NOT significantly different (p >= 0.05),
+    the higher-scoring config's score is pulled toward the lower one.
+
+    Returns
+    -------
+    adjusted_scores : dict  config_key -> adjusted score
+    penalty_log     : dict  config_key -> {peer, p_value, factor, old_score, new_score}
+    """
+    adjusted = dict(raw_scores)
+    penalty_log: dict[str, dict] = {}
+
+    sorted_keys = sorted(raw_scores, key=lambda k: raw_scores[k], reverse=True)
+
+    for i in range(len(sorted_keys) - 1):
+        key_hi = sorted_keys[i]
+        key_lo = sorted_keys[i + 1]
+
+        fluor_hi = [
+            float(x) for x in
+            all_results[key_hi].get('per_image_fluorescence', [])
+            if x is not None and not (isinstance(x, float) and np.isnan(x))
+        ]
+        fluor_lo = [
+            float(x) for x in
+            all_results[key_lo].get('per_image_fluorescence', [])
+            if x is not None and not (isinstance(x, float) and np.isnan(x))
+        ]
+
+        if len(fluor_hi) < 3 or len(fluor_lo) < 3:
+            continue
+
+        try:
+            _, p_raw = scipy_stats.ttest_ind(
+                fluor_hi, fluor_lo, equal_var=False)
+            p_val = float(np.asarray(p_raw).item())
+        except Exception:
+            continue
+
+        if p_val >= 0.05:
+            score_hi = adjusted[key_hi]
+            score_lo = adjusted[key_lo]
+
+            convergence_factor = 0.30 + 0.60 * min(
+                (p_val - 0.05) / 0.95, 1.0)
+
+            new_hi = score_hi - (score_hi - score_lo) * convergence_factor
+            new_hi = round(max(new_hi, score_lo), 1)
+
+            adjusted[key_hi] = new_hi
+
+            penalty_log[key_hi] = {
+                'peer':      key_lo,
+                'p_value':   round(p_val, 6),
+                'factor':    round(convergence_factor, 3),
+                'old_score': round(score_hi, 1),
+                'new_score': new_hi,
+            }
+
+            print(f"  ⚠ Pairwise penalty: {key_hi} "
+                  f"{score_hi:.1f}% → {new_hi:.1f}% "
+                  f"(vs {key_lo}, p={p_val:.4f}, "
+                  f"factor={convergence_factor:.2f})")
+
+    return adjusted, penalty_log
 
 
 # ==================================================
@@ -1507,62 +1742,128 @@ def calculate_confidence_score(results: dict) -> float:
 #   • Updates report text to surface ambiguity clearly.
 # ==================================================
 
+
 def generate_confidence_report(
     all_results: dict,
     config_names: dict,
     output_dir: Path,
 ) -> tuple[pd.DataFrame, str]:
-    """Generate confidence report with statistical analysis, S/B ratios,
-    and convergence penalty for statistically tied top configurations.
+    """Generate confidence report with test-vs-control separation metrics."""
 
-    Args:
-        all_results:  Dict of results from each configuration scan, as
-                      produced by process_multi_configuration.
-        config_names: Mapping of config file-stem keys to display names.
-        output_dir:   Output directory (used only for the report header).
-
-    Returns:
-        tuple: (comparison DataFrame, formatted report string)
-    """
-
-    # ── Signal-to-background baseline ─────────────────────────────────────
-    # Use the 'default' (general-purpose) config's mean fluorescence as a
-    # proxy for non-specific background signal.  All other configs are then
-    # scored relative to this baseline.
+    # ── Background baseline from 'default' config ─────────────
     _default_fluor = None
     if 'default' in all_results:
         _raw = all_results['default'].get('mean_fluorescence', 0.0)
-        _default_fluor = max(float(_raw), 0.1)   # guard against zero
+        _default_fluor = max(float(_raw), 0.1)
 
-    # ── Build comparison table ─────────────────────────────────────────────
+    # ── PASS 1: Compute raw per-config scores ─────────────────
+    raw_scores: dict[str, float] = {}
+    for bacteria_type, results in all_results.items():
+        raw_scores[bacteria_type] = calculate_confidence_score(
+            results, default_fluor=_default_fluor)
+
+    # ── PASS 2: Apply pairwise discrimination penalties ───────
+    adjusted_scores, penalty_log = _apply_pairwise_discrimination_penalties(
+        all_results, raw_scores)
+
+    # ── FIX: Compute and store per-config Cohen's d and p-value ──
+    # calculate_confidence_score computes these internally but never
+    # stores them back, so the display table always showed d=0.00,
+    # p=1.0000. We compute them here and write them into each
+    # results dict so comparison_data can read them correctly.
+    for bacteria_type, results in all_results.items():
+        test_fl  = np.array(results.get('test_fluorescences',    []), dtype=float)
+        ctrl_fl  = np.array(results.get('control_fluorescences', []), dtype=float)
+
+        if len(test_fl) >= 2 and len(ctrl_fl) >= 2:
+            n_t   = len(test_fl)
+            n_c   = len(ctrl_fl)
+            denom = n_t + n_c - 2
+
+            pooled_std = (
+                np.sqrt(
+                    ((n_t - 1) * np.std(test_fl,  ddof=1) ** 2
+                   + (n_c - 1) * np.std(ctrl_fl, ddof=1) ** 2)
+                    / denom
+                )
+                if denom > 0 else 1.0
+            )
+
+            d_display = (
+                float((np.mean(test_fl) - np.mean(ctrl_fl)) / pooled_std)
+                if pooled_std > 0 else 0.0
+            )
+
+            try:
+                _, p_raw   = scipy_stats.ttest_ind(test_fl, ctrl_fl, equal_var=False)
+                p_display  = float(np.asarray(p_raw).item())
+            except Exception:
+                p_display  = np.nan
+        else:
+            d_display = 0.0
+            p_display = np.nan
+
+        results['_score_cohens_d'] = round(d_display, 3)
+        results['_score_p_value']  = (
+            round(p_display, 6) if not np.isnan(p_display) else np.nan
+        )
+
+    # ── PASS 3: Build comparison table using ADJUSTED scores ──
     comparison_data = []
 
     for bacteria_type, results in all_results.items():
-        confidence_score = calculate_confidence_score(results)
+        confidence_score = adjusted_scores[bacteria_type]
 
-        # S/B ratio: how much brighter is this config vs background?
+        # S/B ratio
         if (_default_fluor is not None
                 and _default_fluor > 0
                 and bacteria_type != 'default'):
             sb_ratio = results['mean_fluorescence'] / _default_fluor
         else:
-            sb_ratio = 1.0   # Default config references itself
+            sb_ratio = 1.0
+
+        # Test vs control means (for display)
+        test_fl = results.get('test_fluorescences', [])
+        ctrl_fl = results.get('control_fluorescences', [])
+        test_mean = float(np.mean(test_fl)) if test_fl else 0.0
+        ctrl_mean = float(np.mean(ctrl_fl)) if ctrl_fl else 0.0
+
+        # Low-fluorescence non-specific detection penalty (display flag only)
+        pooled_mean_fluor = float(
+            np.mean(np.array(test_fl + ctrl_fl, dtype=float))
+        ) if (test_fl or ctrl_fl) else 0.0
+        low_fluor_penalty = pooled_mean_fluor < 1.0
 
         comparison_data.append({
-            'Rank':                  0,          # filled after sort
-            'Bacteria_Type':         config_names.get(bacteria_type, bacteria_type),
-            'Config_Key':            bacteria_type,
-            'Particles_Detected':    int(results['particles_detected']),
-            'Particles_Per_Image':   float(results.get('mean_particles_per_image', 0)),
-            'Particles_Std':         float(results.get('std_particles', 0)),
-            'Mean_Fluorescence':     float(results['mean_fluorescence']),
-            'Fluor_Std':             float(results.get('std_fluorescence', 0)),
-            'Fluor_SEM':             float(results.get('sem_fluorescence', 0)),
-            'Signal_to_Background':  round(sb_ratio, 2),
-            'Images_Processed':      int(results['images_processed']),
-            'Images_Failed':         int(results['images_failed']),
-            'Confidence_Score':      float(confidence_score),
-            'Confidence_Percent':    float(confidence_score),
+            'Rank':                   0,
+            'Bacteria_Type':          config_names.get(bacteria_type,
+                                                       bacteria_type),
+            'Config_Key':             bacteria_type,
+            'Particles_Detected':     int(results['particles_detected']),
+            'Particles_Per_Image':    float(results.get(
+                'mean_particles_per_image', 0)),
+            'Particles_Std':          float(results.get('std_particles', 0)),
+            'Mean_Fluorescence':      float(results['mean_fluorescence']),
+            'Fluor_Std':              float(results.get('std_fluorescence', 0)),
+            'Fluor_SEM':              float(results.get('sem_fluorescence', 0)),
+            'Signal_to_Background':   round(sb_ratio, 2),
+            'Test_Mean':              round(test_mean, 2),
+            'Control_Mean':           round(ctrl_mean, 2),
+            'Cohens_d':               float(results.get('_score_cohens_d', 0)),
+            'P_Value_TvC':            (
+                float(results['_score_p_value'])
+                if not pd.isna(results.get('_score_p_value', np.nan))
+                else np.nan
+            ),
+            'Images_Processed':       int(results['images_processed']),
+            'Images_Failed':          int(results['images_failed']),
+            'Raw_Score':              round(raw_scores[bacteria_type], 1),
+            'Confidence_Score':       float(confidence_score),
+            'Confidence_Percent':     float(confidence_score),
+            'Penalty_Applied':        bacteria_type in penalty_log,
+            'Low_Fluor_Flag':         low_fluor_penalty,
+
+            'Overcount_Disqualified': bool(results.get('_overcount_disqualified', False)),
         })
 
     comparison_df = pd.DataFrame(comparison_data)
@@ -1570,344 +1871,347 @@ def generate_confidence_report(
     if comparison_df.empty:
         return comparison_df, "No results to report"
 
-    comparison_df = comparison_df.sort_values('Confidence_Percent',
-                                              ascending=False)
+    comparison_df = comparison_df.sort_values(
+        'Confidence_Percent', ascending=False).reset_index(drop=True)
     comparison_df['Rank'] = range(1, len(comparison_df) + 1)
 
-    # ── Column order ───────────────────────────────────────────────────────
-    comparison_df = comparison_df[[
-        'Rank', 'Bacteria_Type', 'Config_Key',
-        'Particles_Detected', 'Particles_Per_Image', 'Particles_Std',
-        'Mean_Fluorescence', 'Fluor_Std', 'Fluor_SEM',
-        'Signal_to_Background',
-        'Confidence_Score', 'Images_Processed', 'Images_Failed',
-        'Confidence_Percent',
-    ]]
-
-    # ── t-test between rank-1 and rank-2 ──────────────────────────────────
+    # ── t-test between rank-1 and rank-2 ──────────────────────
     config_keys = list(comparison_df['Config_Key'].values)
-    top1_key    = str(config_keys[0])
-    top2_key    = str(config_keys[1]) if len(config_keys) > 1 else None
+    top1_key = str(config_keys[0])
+    top2_key = str(config_keys[1]) if len(config_keys) > 1 else None
 
-    stat_ambiguous = False
-    p_value_top2   = np.nan
-    t_stat_top2    = np.nan
-    convergence_applied = False
+    stat_ambiguous      = False
+    p_value_top2        = np.nan
+    t_stat_top2         = np.nan
 
     if top2_key is not None:
-        top1_fluor = [float(x) for x in
-                      all_results[top1_key].get('per_image_fluorescence', [])
-                      if x is not None and not (isinstance(x, float)
-                                                and np.isnan(x))]
-        top2_fluor = [float(x) for x in
-                      all_results[top2_key].get('per_image_fluorescence', [])
-                      if x is not None and not (isinstance(x, float)
-                                                and np.isnan(x))]
+        top1_fluor = [
+            float(x) for x in
+            all_results[top1_key].get('per_image_fluorescence', [])
+            if x is not None and not (isinstance(x, float) and np.isnan(x))
+        ]
+        top2_fluor = [
+            float(x) for x in
+            all_results[top2_key].get('per_image_fluorescence', [])
+            if x is not None and not (isinstance(x, float) and np.isnan(x))
+        ]
 
         if len(top1_fluor) >= 3 and len(top2_fluor) >= 3:
             try:
-                t_raw, p_raw     = scipy_stats.ttest_ind(top1_fluor,
-                                                          top2_fluor,
-                                                          equal_var=False)
-                t_stat_top2      = float(np.asarray(t_raw).item())
-                p_value_top2     = float(np.asarray(p_raw).item())
+                t_raw, p_raw = scipy_stats.ttest_ind(
+                    top1_fluor, top2_fluor, equal_var=False)
+                t_stat_top2  = float(np.asarray(t_raw).item())
+                p_value_top2 = float(np.asarray(p_raw).item())
 
-                # ── Convergence penalty ────────────────────────────────────
-                # When the top two configs are NOT significantly different
-                # (p ≥ 0.05) the rank-1 score is pulled toward rank-2 to
-                # reflect statistical equivalence.  The strength of pull
-                # increases linearly with the p-value:
-                #   p = 0.05 → 30 % convergence
-                #   p = 0.50 → 57 % convergence
-                #   p ≥ 1.00 → 90 % convergence (capped)
                 if p_value_top2 >= 0.05:
                     stat_ambiguous = True
-
-                    rank1_score = float(
-                        comparison_df.iloc[0]['Confidence_Percent'])
-                    rank2_score = float(
-                        comparison_df.iloc[1]['Confidence_Percent'])
-
-                    convergence_factor = 0.30 + 0.60 * min(
-                        (p_value_top2 - 0.05) / 0.95, 1.0)
-                    adjusted_score = rank1_score - (
-                        (rank1_score - rank2_score) * convergence_factor)
-                    adjusted_score = round(max(adjusted_score, rank2_score),
-                                           1)
-
-                    idx_0 = comparison_df.index[0]
-                    comparison_df.loc[idx_0, 'Confidence_Percent'] = (
-                        adjusted_score)
-                    comparison_df.loc[idx_0, 'Confidence_Score'] = (
-                        adjusted_score)
-                    convergence_applied = True
-
-                    print(f"  ⚠ Convergence penalty applied: "
-                          f"{rank1_score:.1f}% → {adjusted_score:.1f}% "
-                          f"(p={p_value_top2:.4f}, "
-                          f"factor={convergence_factor:.2f})")
 
             except Exception as e:
                 print(f"  Could not perform t-test: {e}")
 
-    # ── Build report text ──────────────────────────────────────────────────
-    report_lines = []
-    report_lines.append("=" * 80)
-    report_lines.append("BACTERIA IDENTIFICATION CONFIDENCE REPORT")
-    report_lines.append("=" * 80)
-    report_lines.append("")
-    report_lines.append(
+    # ── Build report text ─────────────────────────────────────
+    lines: list[str] = []
+    lines.append("=" * 80)
+    lines.append("BACTERIA IDENTIFICATION CONFIDENCE REPORT")
+    lines.append("=" * 80)
+    lines.append("")
+    lines.append(
         f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    report_lines.append(f"Output Directory: {output_dir.name}")
-    report_lines.append("")
+    lines.append(f"Output Directory: {output_dir.name}")
+    lines.append("")
 
     top_result     = comparison_df.iloc[0]
     top_confidence = float(top_result['Confidence_Percent'])
     top_particles  = int(top_result['Particles_Detected'])
     top_name       = str(top_result['Bacteria_Type'])
 
-    report_lines.append("DETECTION SUMMARY:")
-    report_lines.append("─" * 80)
+    lines.append("DETECTION SUMMARY:")
+    lines.append("─" * 80)
 
     if top_particles == 0:
-        report_lines.append("Status: NO BACTERIA DETECTED")
-        report_lines.append("Confidence: High")
-        report_lines.append("")
-        report_lines.append("⚪ All configurations detected 0 particles")
-        report_lines.append("   → Sample appears clean")
-
+        lines.append("Status: NO BACTERIA DETECTED")
+        lines.append("Confidence: High")
+        lines.append("")
+        lines.append("⚪ All configurations detected 0 particles")
+        lines.append("   → Sample appears clean")
     elif stat_ambiguous:
-        # Top two configs are statistically indistinguishable
-        runner_name = str(comparison_df.iloc[1]['Bacteria_Type'])
-        report_lines.append("Status: BACTERIA DETECTED — AMBIGUOUS IDENTIFICATION")
-        report_lines.append(
-            f"Confidence: Reduced ({top_confidence:.1f}% after convergence "
-            f"penalty, p={p_value_top2:.4f})")
-        report_lines.append("")
-        report_lines.append(
-            f"⚠ Top two configurations are NOT statistically distinguishable")
-        report_lines.append(
-            f"  Rank 1: {top_name}")
-        report_lines.append(
-            f"  Rank 2: {runner_name}")
-        report_lines.append(
-            f"  → Manual review or culture confirmation STRONGLY recommended")
-
+        runner = str(comparison_df.iloc[1]['Bacteria_Type'])
+        lines.append(
+            "Status: BACTERIA DETECTED — AMBIGUOUS IDENTIFICATION")
+        lines.append(
+            f"Confidence: Reduced ({top_confidence:.1f}% after "
+            f"convergence penalty, p={p_value_top2:.4f})")
+        lines.append("")
+        lines.append(
+            "⚠ Top two configurations are NOT statistically "
+            "distinguishable")
+        lines.append(f"  Rank 1: {top_name}")
+        lines.append(f"  Rank 2: {runner}")
+        lines.append(
+            "  → Manual review or culture confirmation "
+            "STRONGLY recommended")
     elif top_confidence >= 70:
-        report_lines.append("Status: BACTERIA DETECTED")
-        report_lines.append(f"Confidence: High ({top_confidence:.1f}%)")
-        report_lines.append("")
-        report_lines.append(f"✓ Strong match to: {top_name}")
-
+        lines.append("Status: BACTERIA DETECTED")
+        lines.append(f"Confidence: High ({top_confidence:.1f}%)")
+        lines.append("")
+        lines.append(f"✓ Strong match to: {top_name}")
     elif top_confidence >= 50:
-        report_lines.append("Status: BACTERIA DETECTED")
-        report_lines.append(f"Confidence: Moderate ({top_confidence:.1f}%)")
-        report_lines.append("")
-        report_lines.append(f"⚠ Possible match to: {top_name}")
-        report_lines.append("   → Manual review recommended")
-
+        lines.append("Status: BACTERIA DETECTED")
+        lines.append(f"Confidence: Moderate ({top_confidence:.1f}%)")
+        lines.append("")
+        lines.append(f"⚠ Possible match to: {top_name}")
+        lines.append("   → Manual review recommended")
     else:
-        report_lines.append("Status: AMBIGUOUS")
-        report_lines.append(f"Confidence: Low ({top_confidence:.1f}%)")
-        report_lines.append("")
-        report_lines.append("⚠ MANUAL REVIEW REQUIRED")
-        report_lines.append(
+        lines.append("Status: AMBIGUOUS")
+        lines.append(f"Confidence: Low ({top_confidence:.1f}%)")
+        lines.append("")
+        lines.append("⚠ MANUAL REVIEW REQUIRED")
+        lines.append(
             "   → Multiple configurations show similar results")
-        report_lines.append(
+        lines.append(
             "   → Consider culture-based confirmation")
+    lines.append("")
+    lines.append("")
 
-    report_lines.append("")
-    report_lines.append("")
 
-    # Top-3 matches
-    report_lines.append("TOP 3 CONFIGURATION MATCHES:")
-    report_lines.append("─" * 80)
+
+
+    disqualified_keys = [
+        k for k, v in all_results.items()
+        if v.get('_overcount_disqualified', False)
+    ]
+    if disqualified_keys:
+        lines.append("⛔ DISQUALIFIED CONFIGURATIONS (overcount + low fluorescence):")
+        lines.append("─" * 80)
+        for key in disqualified_keys:
+            ppi  = all_results[key].get('_mean_per_image_used', 0)
+            mf   = all_results[key].get('_pooled_fluor_mean',   0)
+            lines.append(
+                f"  ✗ {config_names.get(key, key)}: "
+                f"{ppi:.0f} particles/image, "
+                f"mean fluor = {mf:.3f} a.u./µm²  "
+                f"→ Non-specific detections (overcount artefact)"
+            )
+        lines.append("")
+
+    # ── Top-3 matches ─────────────────────────────────────────
+    lines.append("TOP 3 CONFIGURATION MATCHES:")
+    lines.append("─" * 80)
 
     for idx in range(min(3, len(comparison_df))):
-        row            = comparison_df.iloc[idx]
-        rank           = int(row['Rank'])
-        name           = str(row['Bacteria_Type'])
-        particles      = int(row['Particles_Detected'])
-        ppi            = float(row['Particles_Per_Image'])
-        p_std          = float(row['Particles_Std'])
-        fluor_mean     = float(row['Mean_Fluorescence'])
-        fluor_std      = float(row['Fluor_Std'])
-        fluor_sem      = float(row['Fluor_SEM'])
-        sb             = float(row['Signal_to_Background'])
-        conf           = float(row['Confidence_Percent'])
+        row  = comparison_df.iloc[idx]
+        rank = int(row['Rank'])
+        name = str(row['Bacteria_Type'])
 
-        fluor_display  = (
+        prefix = ("🥇" if rank == 1 else "🥈" if rank == 2 else "🥉")
+        conf   = float(row['Confidence_Percent'])
+        d_val  = float(row['Cohens_d'])
+        p_tvc  = row['P_Value_TvC']
+        p_tvc_display = (
+            f"{float(p_tvc):.4f}"
+            if not pd.isna(p_tvc) else "N/A"
+        )
+
+        fluor_mean = float(row['Mean_Fluorescence'])
+        fluor_std  = float(row['Fluor_Std'])
+        fluor_sem  = float(row['Fluor_SEM'])
+        sb         = float(row['Signal_to_Background'])
+        t_mean     = float(row['Test_Mean'])
+        c_mean     = float(row['Control_Mean'])
+        low_flag   = bool(row.get('Low_Fluor_Flag', False))
+
+        fluor_display = (
             f"{fluor_mean:.2f} ± {fluor_std:.2f} a.u./µm² "
             f"(SEM: ±{fluor_sem:.2f})"
             if fluor_mean > 0 else "N/A")
 
-        prefix = ("🥇" if rank == 1 else "🥈" if rank == 2 else "🥉")
-
-        report_lines.append(f"{prefix} Rank {rank}: {name}")
-        report_lines.append(f"   Confidence: {conf:.1f}%"
-                            + (" ← convergence-adjusted"
-                               if rank == 1 and convergence_applied else ""))
-        report_lines.append(f"   Total particles: {particles}")
-        report_lines.append(
-            f"   Particles/image: {ppi:.1f} ± {p_std:.1f}")
-        report_lines.append(
-            f"   Mean fluorescence: {fluor_display}")
-        report_lines.append(
+        lines.append(f"{prefix} Rank {rank}: {name}")
+        lines.append(
+            f"   Confidence: {conf:.1f}%"
+            + (f" (raw: {float(row.get('Raw_Score', conf)):.1f}%,"
+               f" pairwise penalty applied)"
+               if row.get('Penalty_Applied', False) else ""))
+        if low_flag:
+            lines.append(
+                f"   ⚠ Low fluorescence flag: mean < 1.0 a.u./µm² "
+                f"— detections may be non-specific")
+        lines.append(
+            f"   Total particles: {int(row['Particles_Detected'])}")
+        lines.append(
+            f"   Particles/image: "
+            f"{float(row['Particles_Per_Image']):.1f} "
+            f"± {float(row['Particles_Std']):.1f}")
+        lines.append(f"   Mean fluorescence: {fluor_display}")
+        lines.append(
             f"   Signal-to-background: {sb:.1f}×")
-        report_lines.append("")
+        lines.append(
+            f"   Test vs Control: {t_mean:.2f} vs {c_mean:.2f} "
+            f"(d={d_val:.3f}, p={p_tvc_display})")
+        lines.append("")
 
-    # Full comparison table
-    report_lines.append("")
-    report_lines.append("FULL CONFIGURATION COMPARISON WITH STATISTICS:")
-    report_lines.append("─" * 80)
+    # ── Full comparison table ─────────────────────────────────
+    lines.append("")
+    lines.append("FULL CONFIGURATION COMPARISON WITH STATISTICS:")
+    lines.append("─" * 80)
 
     display_df = comparison_df.copy()
-    display_df['Particles_Per_Image'] = display_df['Particles_Per_Image'].apply(
-        lambda x: f"{float(x):.1f}")
-    display_df['Particles_Std'] = display_df['Particles_Std'].apply(
-        lambda x: f"±{float(x):.1f}")
-    display_df['Mean_Fluorescence'] = display_df['Mean_Fluorescence'].apply(
-        lambda x: f"{float(x):.2f}")
-    display_df['Fluor_Std'] = display_df['Fluor_Std'].apply(
-        lambda x: f"±{float(x):.2f}")
-    display_df['Fluor_SEM'] = display_df['Fluor_SEM'].apply(
-        lambda x: f"±{float(x):.2f}")
-    display_df['Signal_to_Background'] = display_df['Signal_to_Background'].apply(
-        lambda x: f"{float(x):.1f}×")
-    display_df['Confidence_Score'] = display_df['Confidence_Score'].apply(
-        lambda x: f"{float(x):.1f}")
+
+    for col, fmt in [
+        ('Particles_Per_Image',  '{:.1f}'),
+        ('Particles_Std',        '±{:.1f}'),
+        ('Mean_Fluorescence',    '{:.2f}'),
+        ('Fluor_Std',            '±{:.2f}'),
+        ('Fluor_SEM',            '±{:.2f}'),
+        ('Signal_to_Background', '{:.1f}×'),
+        ('Confidence_Score',     '{:.1f}'),
+        ('Cohens_d',             '{:.3f}'),
+    ]:
+        if col in display_df.columns:
+            display_df[col] = display_df[col].apply(
+                lambda x, f=fmt: f.format(float(x)))  # type: ignore[arg-type]
+
+    # Format P_Value_TvC separately to handle NaN
+    if 'P_Value_TvC' in display_df.columns:
+        display_df['P_Value_TvC'] = display_df['P_Value_TvC'].apply(
+            lambda x: f"{float(x):.4f}" if not pd.isna(x) else "N/A"
+        )
 
     display_cols = [
         'Rank', 'Bacteria_Type', 'Particles_Detected',
         'Particles_Per_Image', 'Particles_Std',
         'Mean_Fluorescence', 'Fluor_Std', 'Fluor_SEM',
-        'Signal_to_Background',
-        'Confidence_Score', 'Images_Processed',
+        'Signal_to_Background', 'Cohens_d', 'P_Value_TvC',
+        'Confidence_Score', 'Images_Processed', 'Low_Fluor_Flag',
     ]
-    report_lines.append(display_df[display_cols].to_string(index=False))
-    report_lines.append("")
+    display_cols = [c for c in display_cols if c in display_df.columns]
+    lines.append(display_df[display_cols].to_string(index=False))
+    lines.append("")
 
-    # Statistical significance analysis
+    # ── Statistical significance analysis ─────────────────────
     if len(all_results) >= 2 and top2_key is not None:
-        report_lines.append("")
-        report_lines.append("STATISTICAL SIGNIFICANCE ANALYSIS:")
-        report_lines.append("─" * 80)
-        report_lines.append("")
+        lines.append("")
+        lines.append("STATISTICAL SIGNIFICANCE ANALYSIS:")
+        lines.append("─" * 80)
+        lines.append("")
 
-        top1_name = str(config_names[top1_key])
-        top2_name = str(config_names[top2_key])
+        top1_name_s = str(config_names[top1_key])
+        top2_name_s = str(config_names[top2_key])
 
-        top1_fluor_r = [float(x) for x in
-                        all_results[top1_key].get('per_image_fluorescence', [])
-                        if x is not None and not (isinstance(x, float)
-                                                   and np.isnan(x))]
-        top2_fluor_r = [float(x) for x in
-                        all_results[top2_key].get('per_image_fluorescence', [])
-                        if x is not None and not (isinstance(x, float)
-                                                   and np.isnan(x))]
+        if not np.isnan(t_stat_top2):
+            lines.append(
+                f"Comparison: {top1_name_s} vs {top2_name_s}")
+            lines.append("  Independent t-test (Welch's) on per-image fluorescence:")
+            lines.append(f"    t-statistic: {t_stat_top2:.4f}")
+            lines.append(f"    p-value: {p_value_top2:.6f}")
 
-        if len(top1_fluor_r) >= 3 and len(top2_fluor_r) >= 3:
-            try:
-                if not np.isnan(t_stat_top2):
-                    report_lines.append(
-                        f"Comparison: {top1_name} vs {top2_name}")
-                    report_lines.append(
-                        f"  Independent t-test (Welch's):")
-                    report_lines.append(
-                        f"    t-statistic: {t_stat_top2:.4f}")
-                    report_lines.append(
-                        f"    p-value: {p_value_top2:.6f}")
+            if   p_value_top2 < 0.001:
+                sig_label = "*** Highly significant (p < 0.001)"
+            elif p_value_top2 < 0.01:
+                sig_label = "** Very significant (p < 0.01)"
+            elif p_value_top2 < 0.05:
+                sig_label = "* Significant (p < 0.05)"
+            else:
+                sig_label = "Not significant (p ≥ 0.05)"
 
-                    if p_value_top2 < 0.001:
-                        sig_label = "*** Highly significant (p < 0.001)"
-                    elif p_value_top2 < 0.01:
-                        sig_label = "** Very significant (p < 0.01)"
-                    elif p_value_top2 < 0.05:
-                        sig_label = "* Significant (p < 0.05)"
-                    else:
-                        sig_label = "Not significant (p ≥ 0.05)"
+            lines.append(f"    Significance: {sig_label}")
+            lines.append("")
 
-                    report_lines.append(
-                        f"    Significance: {sig_label}")
-                    report_lines.append("")
+            # Per-config test-vs-control breakdown
+            lines.append("  Per-configuration test-vs-control statistics:")
+            for _, row in comparison_df.iterrows():
+                d   = float(row['Cohens_d'])
+                p_v = row['P_Value_TvC']
+                p_s = f"{float(p_v):.4f}" if not pd.isna(p_v) else "N/A"
+                lf  = "⚠ low-fluor" if row.get('Low_Fluor_Flag', False) else ""
+                lines.append(
+                    f"    {str(row['Bacteria_Type']):<35}"
+                    f"  d={d:+.3f}  p={p_s}  {lf}"
+                )
+            lines.append("")
 
-                    if p_value_top2 < 0.05:
-                        report_lines.append(
-                            f"  ✓ Top configuration ({top1_name}) is "
-                            f"statistically distinguishable")
-                    else:
-                        report_lines.append(
-                            f"  ⚠ Top configurations are NOT statistically "
-                            f"different")
-                        report_lines.append(
-                            f"    → Convergence penalty applied to rank-1 "
-                            f"score")
-                        report_lines.append(
-                            f"    → Consider both as viable candidates")
-
-            except Exception as e:
-                report_lines.append(f"  Could not perform t-test: {e}")
+            if p_value_top2 < 0.05:
+                lines.append(
+                    f"  ✓ Top configuration ({top1_name_s}) is "
+                    f"statistically distinguishable from rank 2")
+            else:
+                lines.append(
+                    "  ⚠ Top configurations are NOT statistically "
+                    "different")
+                lines.append(
+                    "    → Convergence penalty applied to rank-1 "
+                    "score")
+                lines.append(
+                    "    → Consider both as viable candidates")
         else:
-            report_lines.append(
-                "  Insufficient data for statistical testing (need ≥3 "
-                "images per config)")
-            report_lines.append(
-                f"    Top 1 has {len(top1_fluor_r)} images, "
-                f"Top 2 has {len(top2_fluor_r)} images")
+            lines.append(
+                "  Insufficient data for statistical testing")
+        lines.append("")
 
-        report_lines.append("")
-
-    # Clinical recommendations
-    report_lines.append("")
-    report_lines.append("CLINICAL RECOMMENDATIONS:")
-    report_lines.append("─" * 80)
+    # ── Clinical recommendations ──────────────────────────────
+    lines.append("")
+    lines.append("CLINICAL RECOMMENDATIONS:")
+    lines.append("─" * 80)
 
     if top_particles == 0:
-        report_lines.append(
+        lines.append(
             "✓ No bacteria detected across all configurations")
-        report_lines.append("  → Sample appears clean")
-        report_lines.append("  → No immediate action required")
-
+        lines.append("  → Sample appears clean")
+        lines.append("  → No immediate action required")
     elif stat_ambiguous:
-        runner_name_r = str(comparison_df.iloc[1]['Bacteria_Type'])
-        report_lines.append(
-            f"⚠ AMBIGUOUS — {top_name} vs {runner_name_r} "
+        runner_r = str(comparison_df.iloc[1]['Bacteria_Type'])
+
+        # Extra guidance when ambiguity is driven by low-fluor configs
+        top1_low  = bool(comparison_df.iloc[0].get('Low_Fluor_Flag', False))
+        top2_low  = bool(comparison_df.iloc[1].get('Low_Fluor_Flag', False))
+        both_low  = top1_low and top2_low
+        one_low   = top1_low or top2_low
+
+        lines.append(
+            f"⚠ AMBIGUOUS — {top_name} vs {runner_r} "
             f"not statistically separable")
-        report_lines.append(
-            "  → Culture-based identification REQUIRED before targeted "
-            "therapy")
-        report_lines.append(
-            "  → Consider empirical broad-spectrum coverage in the interim")
-        report_lines.append(
+        if both_low:
+            lines.append(
+                "  ⚠ Both top configs have low mean fluorescence "
+                "(<1.0 a.u./µm²) — likely non-specific detections")
+            lines.append(
+                "  → Re-tune the bacteria configuration parameters "
+                "or check segmentation debug images")
+        elif one_low:
+            lines.append(
+                "  ⚠ One of the top configs has low mean fluorescence "
+                "(<1.0 a.u./µm²) — it may be detecting background")
+        lines.append(
+            "  → Culture-based identification REQUIRED "
+            "before targeted therapy")
+        lines.append(
+            "  → Consider empirical broad-spectrum coverage")
+        lines.append(
             "  → Infectious disease consultation recommended")
-
     elif top_confidence >= 70:
-        report_lines.append(f"✓ High confidence match: {top_name}")
-        report_lines.append(
+        lines.append(f"✓ High confidence match: {top_name}")
+        lines.append(
             "  → Proceed with targeted antimicrobial therapy")
-        report_lines.append(
+        lines.append(
             "  → Consider culture confirmation if treatment fails")
-
     elif top_confidence >= 50:
-        report_lines.append(f"⚠ Moderate confidence match: {top_name}")
-        report_lines.append(
+        lines.append(f"⚠ Moderate confidence match: {top_name}")
+        lines.append(
             "  → Recommend culture-based confirmation")
-        report_lines.append(
+        lines.append(
             "  → Consider broad-spectrum coverage initially")
-
     else:
-        report_lines.append("⚠ LOW CONFIDENCE - MANUAL REVIEW REQUIRED")
-        report_lines.append(
+        lines.append("⚠ LOW CONFIDENCE - MANUAL REVIEW REQUIRED")
+        lines.append(
             "  → Multiple configurations show similar results")
-        report_lines.append(
+        lines.append(
             "  → STRONGLY recommend culture-based identification")
-        report_lines.append(
+        lines.append(
             "  → Consider infectious disease consultation")
 
-    report_lines.append("")
-    report_lines.append("=" * 80)
+    lines.append("")
+    lines.append("=" * 80)
 
-    return comparison_df, "\n".join(report_lines)
+    return comparison_df, "\n".join(lines)
 
 
 
@@ -2116,7 +2420,7 @@ def load_bacteria_config_from_json(bacteria_key: str) -> Optional['SegmentationC
             
             # Fluorescence parameters
             fluor_min_area_um2=safe_float(config_data.get('fluor_min_area_um2'), 3.0),
-            fluor_max_area_um2=safe_float(config_data.get('fluor_max_area_um2'), 3.0),
+            fluor_max_area_um2=safe_float(config_data.get('fluor_max_area_um2'), 2000.0),
             fluor_match_min_intersection_px=safe_float(config_data.get('fluor_match_min_intersection_px'), 5.0),
             
             # Image processing flags
@@ -3132,6 +3436,8 @@ def visualize_fluorescence_measurements(
 # ==================================================
 # Segmentation
 # ==================================================
+
+
 def segment_particles_brightfield(
     img8: np.ndarray, 
     pixel_size_um: float, 
@@ -3225,6 +3531,192 @@ def segment_particles_brightfield(
     
     print(f"  Mask white fraction (final): {float((bw > 0).mean()):.4f}")
     return bw
+
+
+
+def generate_rejection_analysis(output_root: Path) -> Optional[Path]:
+    """Generate comprehensive rejection analysis across all groups
+    
+    Args:
+        output_root: Root output directory
+        
+    Returns:
+        Path to analysis CSV, or None if no data
+    """
+    
+    print("\n" + "="*80)
+    print("REJECTION ANALYSIS")
+    print("="*80 + "\n")
+    
+    all_rejections = []
+    
+    # ✅ FIX: Use rglob with depth filter instead of fixed-depth glob.
+    #
+    # Old (broken in batch mode):
+    #   output_root.glob("*/*_master.xlsx")
+    #   → only matches depth-2 paths like  group/group_master.xlsx
+    #   → misses batch-mode paths like     Positive/group/group_master.xlsx
+    #
+    # New:
+    #   output_root.rglob("*_master.xlsx")  filtered to depth ≤ 3
+    #   → matches single mode:  group/group_master.xlsx            (depth 2)
+    #   → matches batch mode:   Positive/group/group_master.xlsx   (depth 3)
+    all_master_excels = sorted(
+        p for p in output_root.rglob("*_master.xlsx")
+        if len(p.relative_to(output_root).parts) <= 3
+    )
+    
+    if not all_master_excels:
+        print("  No master Excel files found\n")
+        return None
+    
+    # Collect rejection data from all groups
+    for excel_path in all_master_excels:
+        group_name = excel_path.parent.name
+        
+        # ✅ FIX: Build display-friendly group label that includes polarity
+        # in batch mode so groups from Positive/ and Negative/ don't collide.
+        rel_parts = excel_path.relative_to(output_root).parts
+        if len(rel_parts) >= 3:
+            # Batch mode: rel_parts = ("Positive", "1", "1_master.xlsx")
+            polarity = rel_parts[0]  # "Positive" or "Negative"
+            display_group = f"{polarity}/{group_name}"
+        else:
+            display_group = group_name
+        
+        try:
+            rejected_sheet = f"{group_name}_Rejected_Objects"
+            df = pd.read_excel(excel_path, sheet_name=rejected_sheet)
+            
+            if not df.empty:
+                df['Group'] = display_group
+                all_rejections.append(df)
+                
+        except Exception:
+            pass  # Sheet doesn't exist or couldn't be read
+    
+    if not all_rejections:
+        print("  No rejection data found\n")
+        return None
+    
+    merged = pd.concat(all_rejections, ignore_index=True)
+    
+    # ========== ANALYSIS 1: Rejection reasons by frequency ==========
+    print("📊 REJECTION REASONS BY FREQUENCY:\n")
+    
+    # Parse all reasons (semicolon-separated)
+    all_reasons = []
+    for reasons_str in merged['Rejection_Reasons']:
+        if pd.notna(reasons_str):
+            all_reasons.extend([r.strip() for r in str(reasons_str).split(';')])
+    
+    reason_counts = pd.Series(all_reasons).value_counts()
+    
+    for reason, count in reason_counts.head(10).items():
+        pct = count / len(merged) * 100
+        print(f"  • {reason}: {count} ({pct:.1f}%)")
+    
+    # ========== ANALYSIS 2: Rejection by group ==========
+    print(f"\n📊 REJECTIONS BY GROUP:\n")
+    
+    group_summary = merged.groupby('Group').agg({
+        'Object_ID': 'count',
+        'BF_Area_px': ['mean', 'std'],
+        'Circularity': ['mean', 'std'],
+    }).round(2)
+    
+    print(group_summary.to_string())
+    
+    # ========== ANALYSIS 3: Size distribution of rejected vs accepted ==========
+    print(f"\n📊 SIZE COMPARISON (Rejected vs Accepted):\n")
+    
+    # ✅ FIX: Re-use the same all_master_excels list (already depth-aware)
+    # instead of a second broken glob.
+    all_accepted = []
+    for excel_path in all_master_excels:
+        group_name = excel_path.parent.name
+        
+        try:
+            typical_sheet = f"{group_name}_Typical_Particles"
+            df = pd.read_excel(excel_path, sheet_name=typical_sheet)
+            
+            if 'BF_Area_um2' in df.columns:
+                rel_parts = excel_path.relative_to(output_root).parts
+                if len(rel_parts) >= 3:
+                    display_group = f"{rel_parts[0]}/{group_name}"
+                else:
+                    display_group = group_name
+                
+                df['Group'] = display_group
+                df['Status'] = 'Accepted'
+                all_accepted.append(df[['Group', 'Status', 'BF_Area_um2', 'Circularity', 'AspectRatio']])
+        except:
+            pass
+    
+    if all_accepted:
+        accepted_df = pd.concat(all_accepted, ignore_index=True)
+        rejected_df = merged.copy()
+        rejected_df['Status'] = 'Rejected'
+        
+        # Use BF_Area_um2 directly — rejected_objects.csv already has it
+        # (renaming BF_Area_px would create a duplicate column name)
+        rej_cols = ['Status']
+        if 'BF_Area_um2' in rejected_df.columns:
+            rej_cols.append('BF_Area_um2')
+        elif 'BF_Area_px' in rejected_df.columns:
+            rejected_df = rejected_df.rename(columns={'BF_Area_px': 'BF_Area_um2'})
+            rej_cols.append('BF_Area_um2')
+        if 'Circularity' in rejected_df.columns:
+            rej_cols.append('Circularity')
+        
+        comparison = pd.concat([
+            accepted_df[['Status', 'BF_Area_um2', 'Circularity']].reset_index(drop=True),
+            rejected_df[rej_cols].reset_index(drop=True)
+        ], ignore_index=True)
+    
+    # ========== Export full analysis ==========
+    analysis_path = output_root / "rejection_analysis_summary.csv"
+    
+    # Create comprehensive analysis dataframe
+    analysis_data = []
+    
+    for group in merged['Group'].unique():
+        group_data = merged[merged['Group'] == group]
+        
+        # Parse reasons for this group
+        group_reasons: list[str] = []
+
+        if 'Rejection_Reasons' in group_data.columns:
+            rejection_series = cast(pd.Series, group_data['Rejection_Reasons'])
+            rejection_values = rejection_series.dropna().astype(str).tolist()
+
+            for reasons_str in rejection_values:
+                group_reasons.extend(
+                    [r.strip() for r in reasons_str.split(';') if r.strip()]
+                )
+        
+        reason_counts_group = pd.Series(group_reasons).value_counts()
+        
+        analysis_data.append({
+            'Group': group,
+            'Total_Rejected': len(group_data),
+            'Mean_Area_px': group_data['BF_Area_px'].mean(),
+            'Mean_Circularity': group_data['Circularity'].mean(),
+            'Mean_AspectRatio': group_data['AspectRatio'].mean(),
+            'Mean_Solidity': group_data['Solidity'].mean(),
+            'Top_Rejection_Reason': reason_counts_group.index[0] if len(reason_counts_group) > 0 else 'N/A',
+            'Top_Reason_Count': reason_counts_group.iloc[0] if len(reason_counts_group) > 0 else 0,
+        })
+    
+    analysis_df = pd.DataFrame(analysis_data)
+    analysis_df.to_csv(analysis_path, index=False)
+    
+    print(f"\n✓ Rejection analysis saved: {analysis_path.name}\n")
+    print("="*80 + "\n")
+    
+    return analysis_path
+
+
 
 # ==================================================
 # Plotting and Analysis
@@ -3855,6 +4347,59 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
                 adjust_column_widths(ws_typ)
                 ws_typ.auto_filter.ref = ws_typ.dimensions
 
+
+            # ========== REJECTED OBJECTS SUMMARY (FIXED) ==========
+            # ✅ Explicitly initialize list
+            all_rejected_objects: list[pd.DataFrame] = []
+            
+            for csv_file in sorted(csv_files):
+                image_name = csv_file.parent.name
+                rejected_csv = csv_file.parent / "rejected_objects.csv"
+                
+                # ✅ Check if file exists before trying to read
+                if rejected_csv.exists():
+                    try:
+                        rej_df = pd.read_csv(rejected_csv)
+                        
+                        # ✅ Check if DataFrame is not empty
+                        if not rej_df.empty:
+                            rej_df['Source_Image'] = image_name
+                            all_rejected_objects.append(rej_df)
+                    except Exception as e:
+                        print(f"  ⚠ Could not read rejected objects from {image_name}: {e}")
+            
+            # ✅ Only create sheet if we actually have rejected data
+            if all_rejected_objects:  # Check the list, not undefined variables
+                try:
+                    merged_rejected = pd.concat(all_rejected_objects, ignore_index=True)
+                    
+                    # Sort by area (largest first)
+                    if 'BF_Area_px' in merged_rejected.columns:
+                        merged_rejected = merged_rejected.sort_values('BF_Area_px', ascending=False).reset_index(drop=True)
+                    
+                    rejected_sheet_name = f"{group_name}_Rejected_Objects"
+                    merged_rejected.to_excel(writer, sheet_name=rejected_sheet_name, index=False)
+                    ws_rej = writer.sheets[rejected_sheet_name]
+                    
+                    # Format header
+                    for cell in ws_rej[1]:
+                        cell.fill = header_fill
+                        cell.font = header_font
+                        cell.alignment = center_align
+                    
+                    # Highlight rows with red
+                    for row in ws_rej.iter_rows(min_row=2, max_row=ws_rej.max_row):
+                        for cell in row:
+                            cell.fill = red_fill
+                    
+                    format_numbers(ws_rej)
+                    adjust_column_widths(ws_rej)
+                    ws_rej.auto_filter.ref = ws_rej.dimensions
+                    
+                except Exception as e:
+                    print(f"  ⚠ Could not create Rejected_Objects sheet: {e}")
+
+
             # Update Excluded Objects
             if all_excluded_objects:
                 wb = writer.book
@@ -3931,7 +4476,7 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
             except Exception as e:
                 print(f"[WARN] Could not create Summary sheet: {e}")
 
-            # Ratios sheet
+            # Ratios sheet (unchanged - keeping existing code)
             try:
                 wb = writer.book
                 ratios_name = "Ratios"
@@ -4045,6 +4590,12 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
             f"{group_name}_All_Valid_Objects",
             "Excluded_Objects"
         ]
+        
+        # ✅ Add Rejected_Objects to desired order if it exists
+        rejected_sheet_name = f"{group_name}_Rejected_Objects"
+        if rejected_sheet_name in wb2.sheetnames:
+            desired_order.insert(5, rejected_sheet_name)
+        
         for idx, sheet_name in enumerate(desired_order):
             if sheet_name in wb2.sheetnames:
                 sheet = wb2[sheet_name]
@@ -4059,6 +4610,7 @@ def consolidate_to_excel(output_dir: Path, group_name: str, percentile: float) -
         print(f"[ERROR] Failed to create Excel file: {e}")
         import traceback
         traceback.print_exc()
+
 
 
 def export_group_statistics_to_csv(output_root: Path) -> None:
@@ -5534,6 +6086,7 @@ def select_source_directory(max_depth=2) -> Optional[Path]:
 # Image Processing
 # ==================================================
 
+
 def process_image(
     img_path: Path, 
     output_root: Path,
@@ -5560,8 +6113,10 @@ def process_image(
     mask = None
     vis_all = None
     vis_acc = None
+    vis_rej = None  # ✅ NEW: Visualization for rejected objects
     mask_all = None
     mask_acc = None
+    mask_rej = None  # ✅ NEW: Mask for rejected objects
     fluor_img8 = None
     fluor_bw = None
     vis_fluor = None
@@ -5624,7 +6179,7 @@ def process_image(
         cv2.drawContours(vis_all, contours, -1, (0, 0, 255), 1)
         save_debug(img_out, "10_contours_all.png", vis_all, um_per_px_avg)
 
-        # ========== FILTER PARTICLES ==========
+        # ========== FILTER PARTICLES (ENHANCED WITH REJECTION TRACKING) ==========
         min_area_px = bacteria_config.min_area_px
         max_area_px = bacteria_config.max_area_px
 
@@ -5632,18 +6187,37 @@ def process_image(
         img_area_px = float(H * W)
         max_big_area_px = bacteria_config.max_fraction_of_image * img_area_px
 
+        # ✅ FIX: Explicitly initialize lists with type hints
         accepted: list[np.ndarray] = []
         rejected: list[np.ndarray] = []
+        rejection_reasons: list[dict] = []  # Track why each object was rejected
+        
+        # ✅ FIX: Handle empty contours case
+        if len(contours) == 0:
+            print(f"  [WARN] No contours found in {img_path.name}")
+            # Continue with empty lists - the code will handle this gracefully
 
-        for c in contours:
+        for contour_idx, c in enumerate(contours, 1):
             area_px = float(cv2.contourArea(c))
+            
+            # ✅ NEW: Initialize rejection tracking for this contour
+            rejection_info: dict = {
+                'contour_index': contour_idx,
+                'area_px': area_px,
+                'reasons': []
+            }
+            
             if area_px <= 0:
+                rejection_info['reasons'].append('Zero area')
                 rejected.append(c)
+                rejection_reasons.append(rejection_info)
                 continue
 
             # Filter by absolute size
             if area_px >= max_big_area_px:
+                rejection_info['reasons'].append(f'Too large (>{max_big_area_px:.1f} px²)')
                 rejected.append(c)
+                rejection_reasons.append(rejection_info)
                 continue
 
             perim_px = float(cv2.arcLength(c, True))
@@ -5658,31 +6232,90 @@ def process_image(
             hull_area = float(cv2.contourArea(hull))
             solidity = area_px / hull_area if hull_area > 0 else 0.0
 
-            # Apply bacteria-specific filters
-            ok = (
-                min_area_px <= area_px <= max_area_px and
-                bacteria_config.min_circularity <= circ <= bacteria_config.max_circularity and
-                bacteria_config.min_aspect_ratio <= aspect_ratio <= bacteria_config.max_aspect_ratio and
-                solidity >= bacteria_config.min_solidity
-            )
+            # ✅ NEW: Track each filter criterion
+            rejection_info['perim_px'] = perim_px
+            rejection_info['circularity'] = circ
+            rejection_info['aspect_ratio'] = aspect_ratio
+            rejection_info['solidity'] = solidity
+            rejection_info['bbox'] = (x, y, w, h)
+            
+            # Apply bacteria-specific filters with detailed rejection tracking
+            passed = True
+            
+            if area_px < min_area_px:
+                rejection_info['reasons'].append(f'Area too small ({area_px:.1f} < {min_area_px:.1f} px²)')
+                passed = False
+            elif area_px > max_area_px:
+                rejection_info['reasons'].append(f'Area too large ({area_px:.1f} > {max_area_px:.1f} px²)')
+                passed = False
+            
+            if circ < bacteria_config.min_circularity:
+                rejection_info['reasons'].append(f'Circularity too low ({circ:.3f} < {bacteria_config.min_circularity:.3f})')
+                passed = False
+            elif circ > bacteria_config.max_circularity:
+                rejection_info['reasons'].append(f'Circularity too high ({circ:.3f} > {bacteria_config.max_circularity:.3f})')
+                passed = False
+            
+            if aspect_ratio < bacteria_config.min_aspect_ratio:
+                rejection_info['reasons'].append(f'Aspect ratio too low ({aspect_ratio:.3f} < {bacteria_config.min_aspect_ratio:.3f})')
+                passed = False
+            elif aspect_ratio > bacteria_config.max_aspect_ratio:
+                rejection_info['reasons'].append(f'Aspect ratio too high ({aspect_ratio:.3f} > {bacteria_config.max_aspect_ratio:.3f})')
+                passed = False
+            
+            if solidity < bacteria_config.min_solidity:
+                rejection_info['reasons'].append(f'Solidity too low ({solidity:.3f} < {bacteria_config.min_solidity:.3f})')
+                passed = False
 
-            (accepted if ok else rejected).append(c)
+            if passed:
+                accepted.append(c)
+            else:
+                rejected.append(c)
+                rejection_reasons.append(rejection_info)
 
-        # ========== VISUALIZE FILTERED PARTICLES ==========
+        # ========== VISUALIZE FILTERED PARTICLES (ENHANCED) ==========
+        # Generate object IDs for both accepted and rejected
+        accepted_ids = [f"{group_id}_{sequence_num}_{i}" for i in range(1, len(accepted) + 1)]
+        rejected_ids = [f"{group_id}_{sequence_num}_REJ{i}" for i in range(1, len(rejected) + 1)]
+        
+        # Visualization with rejected=orange, accepted=yellow
         vis_acc = cv2.cvtColor(img8, cv2.COLOR_GRAY2BGR)
         cv2.drawContours(vis_acc, rejected, -1, (0, 165, 255), 1)  # Orange
         cv2.drawContours(vis_acc, accepted, -1, (0, 255, 255), 1)  # Yellow
-        
-        # ✅ Generate object_ids here (after accepted list is ready)
-        object_ids = [f"{group_id}_{sequence_num}_{i}" for i in range(1, len(accepted) + 1)]
-        
-        vis_acc = draw_object_ids(vis_acc, accepted)
+        vis_acc = draw_object_ids(vis_acc, accepted, labels=accepted_ids)
         save_debug(
             img_out, 
             "11_contours_rejected_orange_accepted_yellow_ids_green.png", 
             vis_acc, 
             um_per_px_avg
         )
+
+        # ✅ NEW: Separate visualization for rejected objects with IDs and reasons
+        if len(rejected) > 0:
+            vis_rej = cv2.cvtColor(img8, cv2.COLOR_GRAY2BGR)
+            cv2.drawContours(vis_rej, rejected, -1, (0, 0, 255), 2)  # Bright red for rejected
+            
+            # Add labels showing rejection reasons
+            for i, (c, rej_id) in enumerate(zip(rejected, rejected_ids)):
+                M = cv2.moments(c)
+                if M["m00"] != 0:
+                    cx = int(M["m10"] / M["m00"])
+                    cy = int(M["m01"] / M["m00"])
+                    
+                    # Draw ID
+                    _put_text_outline(vis_rej, rej_id, (cx, cy - 10), 
+                                    font_scale=0.4, color=(0, 255, 255), thickness=1)
+                    
+                    # Draw first rejection reason (short version)
+                    if i < len(rejection_reasons) and rejection_reasons[i]['reasons']:
+                        first_reason = rejection_reasons[i]['reasons'][0]
+                        # Shorten reason for display
+                        if len(first_reason) > 30:
+                            first_reason = first_reason[:27] + "..."
+                        _put_text_outline(vis_rej, first_reason, (cx, cy + 10),
+                                        font_scale=0.3, color=(255, 255, 255), thickness=1)
+            
+            save_debug(img_out, "11b_rejected_objects_detailed.png", vis_rej, um_per_px_avg)
 
         # Save masks
         mask_all = np.zeros_like(mask)
@@ -5692,6 +6325,12 @@ def process_image(
         mask_acc = np.zeros_like(mask)
         cv2.drawContours(mask_acc, accepted, -1, 255, thickness=-1)
         save_debug(img_out, "13_mask_accepted.png", mask_acc)
+
+        # ✅ NEW: Save rejected mask
+        if len(rejected) > 0:
+            mask_rej = np.zeros_like(mask)
+            cv2.drawContours(mask_rej, rejected, -1, 255, thickness=-1)
+            save_debug(img_out, "13b_mask_rejected.png", mask_rej)
 
         # ========== FLUORESCENCE PROCESSING ==========
         fluor_path = img_path.parent / img_path.name.replace("_ch00", "_ch01")
@@ -5786,7 +6425,7 @@ def process_image(
             "13_mask_accepted.png", 
             mask_acc_bgr, 
             accepted, 
-            object_ids, 
+            accepted_ids, 
             um_per_px_avg
         )
 
@@ -5798,7 +6437,7 @@ def process_image(
                 "22_fluorescence_mask_global.png", 
                 fluor_bw_bgr, 
                 accepted, 
-                object_ids, 
+                accepted_ids, 
                 um_per_px_avg
             )
 
@@ -5808,7 +6447,7 @@ def process_image(
                 "23_fluorescence_contours_global.png", 
                 vis_fluor, 
                 accepted, 
-                object_ids, 
+                accepted_ids, 
                 um_per_px_avg
             )
 
@@ -5818,11 +6457,95 @@ def process_image(
                 "24_bf_fluor_matching_overlay.png", 
                 vis_match, 
                 accepted, 
-                object_ids, 
+                accepted_ids, 
                 um_per_px_avg
             )
 
-        # ========== EXPORT MEASUREMENTS TO CSV ==========
+        # ========== EXPORT REJECTED OBJECTS TO CSV (NEW) ==========
+        csv_rejected_path = img_out / "rejected_objects.csv"
+        
+        # ✅ FIX: Ensure rejection_reasons exists and matches rejected length
+        if len(rejected) > 0 and len(rejection_reasons) == len(rejected):
+            with open(csv_rejected_path, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                
+                # Write header
+                w.writerow([
+                    "Object_ID",
+                    "Rejection_Reasons",
+                    "BF_Area_px",
+                    "BF_Area_um2",
+                    "Perimeter_px",
+                    "Circularity",
+                    "AspectRatio",
+                    "Solidity",
+                    "BBoxX_px",
+                    "BBoxY_px",
+                    "BBoxW_px",
+                    "BBoxH_px",
+                    "CentroidX_px",
+                    "CentroidY_px",
+                ])
+                
+                # Write rejected objects
+                for i, (c, rej_info) in enumerate(zip(rejected, rejection_reasons)):
+                    rej_id = rejected_ids[i] if i < len(rejected_ids) else f"{group_id}_{sequence_num}_REJ{i+1}"
+                    reasons_str = "; ".join(rej_info['reasons'])
+                    
+                    area_px = rej_info['area_px']
+                    area_um2 = area_px * um2_per_px2
+                    perim_px = rej_info.get('perim_px', 0.0)
+                    circ = rej_info.get('circularity', 0.0)
+                    aspect = rej_info.get('aspect_ratio', 0.0)
+                    solidity = rej_info.get('solidity', 0.0)
+                    x, y, bw, bh = rej_info.get('bbox', (0, 0, 0, 0))
+                    
+                    # Calculate centroid
+                    M = cv2.moments(c)
+                    if M["m00"] != 0:
+                        cx = float(M["m10"] / M["m00"])
+                        cy = float(M["m01"] / M["m00"])
+                    else:
+                        cx, cy = 0.0, 0.0
+                    
+                    w.writerow([
+                        rej_id,
+                        reasons_str,
+                        f"{area_px:.2f}",
+                        f"{area_um2:.4f}",
+                        f"{perim_px:.2f}",
+                        f"{circ:.4f}",
+                        f"{aspect:.4f}",
+                        f"{solidity:.4f}",
+                        x,
+                        y,
+                        bw,
+                        bh,
+                        f"{cx:.2f}",
+                        f"{cy:.2f}",
+                    ])
+        else:
+            # No rejected objects or mismatch in data - write empty CSV with header only
+            with open(csv_rejected_path, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow([
+                    "Object_ID",
+                    "Rejection_Reasons",
+                    "BF_Area_px",
+                    "BF_Area_um2",
+                    "Perimeter_px",
+                    "Circularity",
+                    "AspectRatio",
+                    "Solidity",
+                    "BBoxX_px",
+                    "BBoxY_px",
+                    "BBoxW_px",
+                    "BBoxH_px",
+                    "CentroidX_px",
+                    "CentroidY_px",
+                ])
+
+        # ========== EXPORT ACCEPTED OBJECTS TO CSV ==========
         csv_path = img_out / "object_stats.csv"
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
@@ -5830,6 +6553,7 @@ def process_image(
             # Write header
             w.writerow([
                 "Object_ID",
+                "Status",  # ✅ NEW: "Accepted" for all rows
                 "BF_Area_px",
                 "BF_Area_um2",
                 "Perimeter_px",
@@ -5859,9 +6583,9 @@ def process_image(
                 "Fluor_IntegratedDensity",
             ])
 
-            # Write data for each particle
+            # Write data for each accepted particle
             for i, c in enumerate(accepted, 1):
-                compound_id = f"{group_id}_{sequence_num}_{i}"  # ✅ Now safe to use
+                compound_id = accepted_ids[i-1]
 
                 # Area measurements
                 area_px = float(cv2.contourArea(c))
@@ -5917,6 +6641,7 @@ def process_image(
                 # Write row
                 w.writerow([
                     compound_id,
+                    "Accepted",  # ✅ NEW: Status column
                     f"{area_px:.2f}",
                     f"{area_um2:.4f}",
                     f"{perim_px:.2f}",
@@ -5946,7 +6671,7 @@ def process_image(
                     f"{float(fm['fluor_integrated_density']):.2f}",
                 ])
 
-        print(f"  ✓ Processed: {img_path.name} ({len(accepted)} particles)")
+        print(f"  ✓ Processed: {img_path.name} ({len(accepted)} accepted, {len(rejected)} rejected)")
 
     except Exception as e:
         print(f"[ERROR] Failed to process {img_path.name}: {e}")
@@ -5961,7 +6686,7 @@ def process_image(
         
         # Delete all large image arrays
         for var_name in ['img', 'img8', 'fluor_img', 'fluor_img_aligned', 
-                         'mask', 'vis_all', 'vis_acc', 'mask_all', 'mask_acc',
+                         'mask', 'vis_all', 'vis_acc', 'vis_rej', 'mask_all', 'mask_acc', 'mask_rej',
                          'fluor_img8', 'fluor_bw', 'vis_fluor', 'vis_match']:
             var = locals().get(var_name)
             if var is not None:
@@ -5972,7 +6697,6 @@ def process_image(
         
         # Force garbage collection for large images (>10MB)
         gc.collect()
-
 
 def open_folder(folder_path: Path) -> None:
     """Open folder in file explorer (cross-platform, Unicode-safe)
@@ -6397,6 +7121,7 @@ def validate_batch_structure(config: dict) -> bool:
 # Main Function
 # ==================================================
 
+
 def main():
     """Main execution function with enhanced error handling and cleanup"""
 
@@ -6408,92 +7133,94 @@ def main():
     output_dir: Optional[Path] = None
     config: dict = {}
     output_root: Optional[Path] = None
-    
-    # ✅ FIX: Initialize these variables at the start
-    positive_results: Optional[dict] = None
-    negative_results: Optional[dict] = None
-    results: Optional[dict] = None
-    
+
+    # Results containers
+    positive_results: Optional[dict[str, Any]] = None
+    negative_results: Optional[dict[str, Any]] = None
+    results: Optional[dict[str, Any]] = None
+
     global _log_path, _log_file
-    
+
     try:
         # ==================== STEP 1: MODE & CONFIGURATION SELECTION ====================
         print("STEP 1: Select Processing Mode & Configuration")
         print("─" * 80 + "\n")
-        
+
         bacteria_config_info = select_bacteria_config()
         mode = bacteria_config_info['mode']
-        
+
         config['bacteria_config_info'] = bacteria_config_info
         config['processing_mode'] = mode
-        
+
         # ==================== STEP 2: DATASET CONFIGURATION ====================
         print("\nSTEP 2: Dataset Configuration")
         print("─" * 80 + "\n")
-        
+
         config.update(configure_dataset())
-        
+
         if not validate_config(config):
             print("\n❌ Configuration validation failed")
             return
-        
+
         if config.get('batch_mode') and not validate_batch_structure(config):
             print("❌ Batch structure validation failed - cannot proceed")
             return
-        
+
         # ==================== STEP 3: CREATE OUTPUT DIRECTORY ====================
         display_configuration_summary(config)
         config['timestamp'] = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_root = setup_output_directory(config)
-        output_dir  = output_root 
-        
+        output_dir = output_root
+
         # ==================== STEP 4: PROCESSING ====================
         print("=" * 80)
         print("PHASE 2: PROCESSING")
         print("=" * 80 + "\n")
-        
+
         if mode == "multi_scan":
             if config['batch_mode']:
                 print("Processing in BATCH mode...\n")
-                
-                # ✅ CRITICAL FIX: Set current_source BEFORE multi-scan
+
+                # ✅ G+ multi-scan
                 print("─" * 80)
                 print("Processing: G+ (positive)")
                 print("─" * 80 + "\n")
-                
-                # ✅ This is the key fix - set current_source to point to G+ folder
+
                 config['current_source'] = config['source_dir_positive']
                 config['output_dir'] = config['positive_output']
                 config['dataset_id_current'] = f"{config['dataset_id']} Positive"
-                
+
                 positive_results = run_multi_config_scan(config, bacteria_config_info)
-                
+
                 print("\n✓ G+ processing completed\n")
-                
-                # ✅ Now set current_source to G- folder
+
+                # ✅ G- multi-scan
                 print("─" * 80)
                 print("Processing: G- (negative)")
                 print("─" * 80 + "\n")
-                
+
                 config['current_source'] = config['source_dir_negative']
                 config['output_dir'] = config['negative_output']
                 config['dataset_id_current'] = f"{config['dataset_id']} Negative"
-                
+
                 negative_results = run_multi_config_scan(config, bacteria_config_info)
-                
+
                 print("\n✓ G- processing completed\n")
-                
+
                 # Auto clinical follow-up
                 print("=" * 80)
                 print("AUTO CLINICAL FOLLOW-UP (POST MULTI-SCAN)")
                 print("=" * 80)
-                
-                best_positive = positive_results['ranked_results'][0] if positive_results['ranked_results'] else None
-                best_negative = negative_results['ranked_results'][0] if negative_results['ranked_results'] else None
-                
+
+                positive_ranked = positive_results.get('ranked_results', []) if positive_results is not None else []
+                negative_ranked = negative_results.get('ranked_results', []) if negative_results is not None else []
+
+                best_positive = positive_ranked[0] if positive_ranked else None
+                best_negative = negative_ranked[0] if negative_ranked else None
+
                 chosen_config_key = None
                 selection_rule = None
-                
+
                 if best_positive and best_negative:
                     if best_positive['config_key'] == best_negative['config_key']:
                         chosen_config_key = best_positive['config_key']
@@ -6501,139 +7228,159 @@ def main():
                     else:
                         if best_positive['confidence'] > best_negative['confidence']:
                             chosen_config_key = best_positive['config_key']
-                            selection_rule = f"G+ has higher confidence ({best_positive['confidence']:.1f}% vs {best_negative['confidence']:.1f}%)"
+                            selection_rule = (
+                                f"G+ has higher confidence "
+                                f"({best_positive['confidence']:.1f}% vs {best_negative['confidence']:.1f}%)"
+                            )
                         else:
                             chosen_config_key = best_negative['config_key']
-                            selection_rule = f"G- has higher confidence ({best_negative['confidence']:.1f}% vs {best_positive['confidence']:.1f}%)"
+                            selection_rule = (
+                                f"G- has higher confidence "
+                                f"({best_negative['confidence']:.1f}% vs {best_positive['confidence']:.1f}%)"
+                            )
                 elif best_positive:
                     chosen_config_key = best_positive['config_key']
                     selection_rule = "Only G+ results available"
                 elif best_negative:
                     chosen_config_key = best_negative['config_key']
                     selection_rule = "Only G- results available"
-                
+
                 if chosen_config_key:
                     print(f"Chosen bacteria configuration: {chosen_config_key}")
                     print(f"Selection rule: {selection_rule}\n")
-                    
-                    chosen_bacteria_config = positive_results['configs'].get(chosen_config_key) or \
-                                           negative_results['configs'].get(chosen_config_key)
-                    
+
+                    chosen_bacteria_config = None
+                    if positive_results is not None:
+                        chosen_bacteria_config = positive_results.get('configs', {}).get(chosen_config_key)
+                    if chosen_bacteria_config is None and negative_results is not None:
+                        chosen_bacteria_config = negative_results.get('configs', {}).get(chosen_config_key)
                     if chosen_bacteria_config is None:
                         chosen_bacteria_config = load_bacteria_config_from_json(chosen_config_key)
-                    
-                    # ✅ G+ clinical run with correct source
+
+                    # ✅ G+ clinical run
                     print("─" * 80)
                     print(f"CLINICAL RUN: G+ using config '{chosen_config_key}'")
                     print("─" * 80 + "\n")
-                    
+
                     config['bacteria_config'] = chosen_bacteria_config
-                    config['current_source'] = config['source_dir_positive']  # ✅ Explicit
+                    config['current_source'] = config['source_dir_positive']
                     config['output_dir'] = config['positive_output']
                     config['dataset_id_current'] = f"{config['dataset_id']} Positive"
-                    
+
                     run_single_config_analysis(config)
-                    
-                    # ✅ G- clinical run with correct source
+
+                    # ✅ G- clinical run
                     print("\n─" * 80)
                     print(f"CLINICAL RUN: G- using config '{chosen_config_key}'")
                     print("─" * 80 + "\n")
-                    
-                    config['current_source'] = config['source_dir_negative']  # ✅ Explicit
+
+                    config['current_source'] = config['source_dir_negative']
                     config['output_dir'] = config['negative_output']
                     config['dataset_id_current'] = f"{config['dataset_id']} Negative"
-                    
+
                     run_single_config_analysis(config)
-                    
-                    # Generate final clinical matrix
-                    generate_final_clinical_matrix_wrapper(output_root, config)
+
+                    # Final combined outputs
+                    if output_root is not None:
+                        generate_final_clinical_matrix_wrapper(output_root, config)
+
+                        if config.get('batch_mode', False):
+                            generate_rejection_analysis(output_root)
+                        elif output_dir is not None:
+                            generate_rejection_analysis(output_dir)
+
                 else:
                     print("⚠ Could not determine best bacteria configuration")
                     print("  Manual review of multi-scan results recommended\n")
-            
+
             else:
-                # Single directory mode
+                # Single directory multi-scan
                 print("Processing single directory...\n")
-                
-                # ✅ Set current_source explicitly
+
                 config['current_source'] = config['source_dir']
                 config['output_dir'] = output_dir
                 config['dataset_id_current'] = config['dataset_id']
-                
+
                 results = run_multi_config_scan(config, bacteria_config_info)
-                
-                if results['ranked_results']:
-                    best_match = results['ranked_results'][0]
+
+                ranked_results = results.get('ranked_results', []) if results is not None else []
+
+                if ranked_results:
+                    best_match = ranked_results[0]
                     chosen_config_key = best_match['config_key']
-                    
+
                     print("\n" + "=" * 80)
                     print("AUTO CLINICAL FOLLOW-UP")
                     print("=" * 80)
                     print(f"Using best match: {chosen_config_key} ({best_match['confidence']:.1f}% confidence)\n")
-                    
+
                     config['bacteria_config'] = bacteria_config_info['configs'][chosen_config_key]
                     run_single_config_analysis(config)
-        
-        else:  # Single config mode
+
+        else:
+            # Single config mode
             config['bacteria_config'] = bacteria_config_info['selected_config']
-            
+
             if config['batch_mode']:
                 print("Processing in BATCH mode...\n")
-                
-                # ✅ G+ with explicit source
+
+                # ✅ G+
                 print("─" * 80)
                 print("Processing: G+ (positive)")
                 print("─" * 80 + "\n")
-                
+
                 config['current_source'] = config['source_dir_positive']
                 config['output_dir'] = config['positive_output']
                 config['dataset_id_current'] = f"{config['dataset_id']} Positive"
-                
+
                 run_single_config_analysis(config)
-                
+
                 print("\n✓ G+ processing completed\n")
-                
-                # ✅ G- with explicit source
+
+                # ✅ G-
                 print("─" * 80)
                 print("Processing: G- (negative)")
                 print("─" * 80 + "\n")
-                
+
                 config['current_source'] = config['source_dir_negative']
                 config['output_dir'] = config['negative_output']
                 config['dataset_id_current'] = f"{config['dataset_id']} Negative"
-                
+
                 run_single_config_analysis(config)
-                
+
                 print("\n✓ G- processing completed\n")
-                
-                generate_final_clinical_matrix_wrapper(output_root, config)
-            
+
+                if output_root is not None:
+                    generate_final_clinical_matrix_wrapper(output_root, config)
+
             else:
                 print("Processing single directory...\n")
-                
+
                 config['current_source'] = config['source_dir']
                 config['output_dir'] = output_dir
                 config['dataset_id_current'] = config['dataset_id']
-                
+
                 run_single_config_analysis(config)
-        
+
         # Cleanup multi-scan artifacts
-        if mode == "multi_scan" and config.get('batch_mode', False):
+        if mode == "multi_scan" and config.get('batch_mode', False) and output_root is not None:
             cleanup_and_reorganize_output(output_root, config)
-        
-        # ✅ FIX: Enhanced final summary with None checks
+
+        # ==================== FINAL SUMMARY ====================
         print("\n" + "=" * 80)
         if config.get('batch_mode', False):
             print("BATCH PROCESSING COMPLETE")
             print("=" * 80)
             print(f"  Output folder: {output_root}")
-            
+
             if mode == "multi_scan":
-                # ✅ Check if results exist before accessing
                 if positive_results is not None and negative_results is not None:
-                    pos_best = positive_results['ranked_results'][0] if positive_results['ranked_results'] else None
-                    neg_best = negative_results['ranked_results'][0] if negative_results['ranked_results'] else None
-                    
+                    positive_ranked = positive_results.get('ranked_results', [])
+                    negative_ranked = negative_results.get('ranked_results', [])
+
+                    pos_best = positive_ranked[0] if positive_ranked else None
+                    neg_best = negative_ranked[0] if negative_ranked else None
+
                     if pos_best:
                         print(f"  ✓ G+: Best match = {pos_best['bacteria_name']} ({pos_best['confidence']:.1f}%)")
                     if neg_best:
@@ -6642,54 +7389,57 @@ def main():
             print("PROCESSING COMPLETE")
             print("=" * 80)
             print(f"  Output folder: {output_dir}")
-            
-            # ✅ Check if results exist before accessing
+
             if mode == "multi_scan" and results is not None:
-                best = results['ranked_results'][0] if results['ranked_results'] else None
+                ranked_results = results.get('ranked_results', [])
+                best = ranked_results[0] if ranked_results else None
                 if best:
                     print(f"  ✓ Best match: {best['bacteria_name']} ({best['confidence']:.1f}%)")
-        
-        open_folder(output_root if output_root is not None else output_dir)
+
+        folder_to_open = output_root if output_root is not None else output_dir
+        if folder_to_open is not None:
+            open_folder(folder_to_open)
+
         print("\n")
-    
+
     except KeyboardInterrupt:
         print("\n\n⚠ Processing interrupted by user")
         print("  Partial results may be available in the output directory\n")
-    
+
     except Exception as e:
         print("\n" + "=" * 80)
         print("❌ ERROR OCCURRED")
         print("=" * 80)
         print(f"Error: {e}\n")
-        
+
         import traceback
         traceback.print_exc()
         print()
-    
+
     finally:
         # Log file handling
         try:
             if _log_file is not None:
                 _log_file.flush()
                 os.fsync(_log_file.fileno())
-        except:
+        except Exception:
             pass
-        
+
         # Copy log file to output directory
         try:
             if output_root is not None and _log_path and _log_path.exists():
                 print("\n📄 Saving log file...")
-                
+
                 log_destinations = []
-                
+
                 if config.get('batch_mode', False):
                     log_destinations.append(output_root)
-                    
+
                     if 'positive_output' in config:
                         pos_out = config['positive_output']
                         if isinstance(pos_out, Path) and pos_out.exists():
                             log_destinations.append(pos_out)
-                    
+
                     if 'negative_output' in config:
                         neg_out = config['negative_output']
                         if isinstance(neg_out, Path) and neg_out.exists():
@@ -6697,7 +7447,7 @@ def main():
                 else:
                     if output_dir is not None and output_dir.exists():
                         log_destinations.append(output_dir)
-                
+
                 copied_count = 0
                 for dest in log_destinations:
                     try:
@@ -6711,16 +7461,16 @@ def main():
                             copied_count += 1
                     except Exception as e:
                         print(f"  ✗ Failed to copy to {dest.name}: {e}")
-                
+
                 if copied_count == 0:
                     print(f"  ⚠ Log not copied (see original): {_log_path}")
                 else:
                     print(f"  ✓ Total copies: {copied_count}")
-                    
+
             elif _log_path and _log_path.exists():
                 print(f"\n📄 Log file: {_log_path}")
-                print(f"   (Not copied - no output directory)")
-            
+                print("   (Not copied - no output directory)")
+
         except NameError as e:
             print(f"\n⚠ Could not access log variables: {e}")
         except Exception as e:
@@ -6730,7 +7480,7 @@ def main():
 
 
 if __name__ == "__main__":
-    start_time = time.time()
+    start_time = pytime.time()
     main()
     print("="*80)
-    print(f"  • Total runtime: {time.time() - start_time:.1f} seconds")
+    print(f"  • Total runtime: {pytime.time() - start_time:.1f} seconds")

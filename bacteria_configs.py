@@ -9,8 +9,6 @@ from pathlib import Path
 from typing import Optional, Dict, List
 from datetime import datetime
 
-from cv2 import invert
-
 
 @dataclass
 class SegmentationConfig:
@@ -39,7 +37,6 @@ class SegmentationConfig:
     invert_image: bool = False
     threshold_mode: str = "otsu"
     manual_threshold: int = 127
-
     use_intensity_threshold: bool = False
     intensity_threshold: float = 80.0
     
@@ -284,7 +281,12 @@ class BacteriaConfigManager:
             'fluor_match_min_intersection_px': config.fluor_match_min_intersection_px,
             
             'invert_image': config.invert_image,
-            
+
+            'threshold_mode': config.threshold_mode,
+            'manual_threshold': config.manual_threshold,
+            'use_intensity_threshold': config.use_intensity_threshold,
+            'intensity_threshold': config.intensity_threshold,
+                    
             'pixel_size_um': config.pixel_size_um,
             'last_modified': config.last_modified,
             'tuned_by': config.tuned_by

@@ -7,7 +7,6 @@ from logging import config
 import os
 import sys
 import json
-import re
 from arrow import get
 import cv2
 import numpy as np
@@ -26,8 +25,6 @@ import astor
 from zmq import has
 
 from bacteria_configs import SegmentationConfig, _manager
-from bacteria_registry import registry as _bacteria_registry
-
 
 # ==================================================
 # SECTION 0.5: Responsive UI Configuration
@@ -40,8 +37,8 @@ class UIScaler:
         self.root = root
         self.base_width = 1920
         self.base_height = 1080
-        self.min_width = 1440
-        self.min_height = 900
+        self.min_width = 1280
+        self.min_height = 720
 
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
@@ -61,7 +58,7 @@ class UIScaler:
 
     def get_window_size(self) -> tuple[int, int]:
         width = int(self.base_width * 0.95)
-        height = int(self.base_height * 0.95)
+        height = int(self.base_height * 0.90)
         return width, height
 
 
@@ -637,6 +634,7 @@ class ParameterPanel(ttk.Frame):
             return
 
         self.tuner.apply_suggestions()
+
 
     def _reset_to_default(self):
         pathogen_name = getattr(self.tuner, 'current_pathogen', "preset")
@@ -1233,10 +1231,10 @@ class SegmentationTuner:
         self.current_suggestions: Dict[str, Any] = {}
 
         # ── Pick / Reject / Normalize state ──────────────────────────
-        self.selection_mode: Any = False
+        self.selection_mode: Any = False          # False | 'pick_reject' | 'done'
         self.accepted_indices: set = set()
         self.rejected_indices: set = set()
-        self._pre_broad_params: dict = {}
+        self._pre_broad_params: dict = {}         # snapshot before broad detect
 
         self.sliders: Dict[str, Slider] = {}
         self.param_labels: Dict[str, tk.Label] = {}
@@ -1311,6 +1309,7 @@ class SegmentationTuner:
                 invert_image=bool(self.invert_image),
                 threshold_mode=str(self.threshold_mode),
                 manual_threshold=int(self.manual_threshold),
+
                 use_intensity_threshold=bool(use_intensity_threshold),
                 intensity_threshold=float(intensity_threshold),
                 morph_kernel_size=int(self.morph_kernel_size),
@@ -1325,11 +1324,6 @@ class SegmentationTuner:
             success = _manager.update_config(bacteria_key, config)
 
             if success:
-                # Auto-mark as validated in the registry once a config is saved
-                if _bacteria_registry.key_exists(bacteria_key):
-                    _bacteria_registry.set_validated(bacteria_key, True)
-                    print(f"[Registry] '{bacteria_key}' marked as validated after tuning.")
-
                 config_file = _manager._get_config_path(bacteria_key)
 
                 if use_intensity_threshold:
@@ -1346,8 +1340,7 @@ class SegmentationTuner:
                     f"Morph: OPEN({self.morph_iterations}) → "
                     f"CLOSE({self.morph_iterations + 1})\n"
                     f"Dilate: {self.params['dilate_iterations']}  "
-                    f"Erode: {self.params['erode_iterations']}\n\n"
-                    f"✓ Marked as validated in registry."
+                    f"Erode: {self.params['erode_iterations']}"
                 )
 
                 print(f"\n{'=' * 80}")
@@ -1489,7 +1482,7 @@ class SegmentationTuner:
                         config_data['morph_kernel_size'] = kernel_size + 1
 
                 if 'pixel_size_um' in config_data and config_data['pixel_size_um'] is not None:
-                    if not self.has_metadata:
+                    if not self.has_metadata:          # only override if no XML metadata was found
                         self.pixel_size_um = float(config_data['pixel_size_um'])
                         print(f"   • Pixel size restored from JSON: {self.pixel_size_um:.6f} µm/px")
 
@@ -1500,9 +1493,11 @@ class SegmentationTuner:
                 self.morph_kernel_size = config_data.get('morph_kernel_size', 3)
                 self.morph_iterations = config_data.get('morph_iterations', 1)
 
+                # Load pipeline intensity threshold settings
                 self.use_intensity_threshold = bool(config_data.get('use_intensity_threshold', False))
                 self.intensity_threshold_value = float(config_data.get('intensity_threshold', 80.0))
 
+                # If use_intensity_threshold is True, override threshold_mode for UI
                 if self.use_intensity_threshold:
                     self.threshold_mode = "intensity"
                     self.manual_threshold = int(self.intensity_threshold_value)
@@ -1613,7 +1608,7 @@ class SegmentationTuner:
             except Exception as e:
                 print(f"⚠️ Error loading bacteria_configs.py: {e}")
 
-        # Priority 4: Use defaults
+        # Priority 4: Use defaults (nothing found)
         print(f"ℹ️ No saved config found for '{self.bacterium}' - using defaults")
         self.params = self.DEFAULT_PARAMS.copy()
         self.threshold_mode = self.DEFAULT_THRESHOLD_PARAMS['threshold_mode']
@@ -2001,6 +1996,10 @@ class SegmentationTuner:
         self.canvas_hist = FigureCanvasTkAgg(self.fig_hist, canvas_frame)
         self.canvas_hist.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
 
+    # ------------------------------------------------------------------
+    # Legacy matplotlib slider panel (kept for backwards compat, unused)
+    # ------------------------------------------------------------------
+
     def _create_control_panel(self, parent: ttk.Frame):
         panel = ttk.Frame(parent)
         panel.pack(fill=tk.X, pady=(5, 0))
@@ -2134,20 +2133,30 @@ class SegmentationTuner:
                                 color=self.COLORS['primary'], hovercolor='#5dade2')
         self.btn_apply.on_clicked(self.apply_suggestions)
 
+    # ------------------------------------------------------------------
+    # process_image — MATCHES PIPELINE (dual threshold path + OPEN/CLOSE)
+    # ------------------------------------------------------------------
+
     def process_image(self):
         """Process image - MATCHES pipeline segment_particles_brightfield exactly"""
         img = self.original_image.copy()
 
+        # NOTE: invert_image in the pipeline does NOT actually invert.
+        # We replicate that here so tuner matches pipeline output.
         if self.invert_image:
-            pass  # Pipeline no-op
+            pass  # Pipeline no-op; toggle this if pipeline is fixed
 
+        # Step 1: Gaussian blur (pipeline does this unconditionally)
         blur = cv2.GaussianBlur(
             img, (0, 0),
             sigmaX=self.params["gaussian_sigma"],
             sigmaY=self.params["gaussian_sigma"]
         )
 
+        # Step 2: Thresholding — TWO PATHS matching pipeline
         if self.use_intensity_threshold:
+            # PATH A: Direct intensity threshold (e.g., Klebsiella)
+            # Pipeline: cv2.THRESH_BINARY_INV on the blurred image
             _, binary = cv2.threshold(
                 blur,
                 float(self.manual_threshold),
@@ -2156,6 +2165,7 @@ class SegmentationTuner:
             )
             self.processed_image = blur
         else:
+            # PATH B: Background subtraction + Otsu/Manual/Adaptive
             bg = cv2.GaussianBlur(
                 img, (0, 0),
                 sigmaX=self.params["gaussian_sigma"],
@@ -2190,30 +2200,38 @@ class SegmentationTuner:
                     cv2.THRESH_BINARY + cv2.THRESH_OTSU
                 )
 
+        # Step 3: Morphological operations — MATCH PIPELINE EXACTLY
+        # Pipeline does: MORPH_OPEN(iter) then MORPH_CLOSE(iter+1)
         kernel_size = int(self.morph_kernel_size)
         if kernel_size % 2 == 0:
             kernel_size += 1
 
         kernel = np.ones((kernel_size, kernel_size), np.uint8)
+
         morph_iter = int(self.morph_iterations)
 
+        # OPEN: removes small noise (pipeline step 1)
         if morph_iter > 0:
             binary = cv2.morphologyEx(
                 binary, cv2.MORPH_OPEN, kernel,
                 iterations=morph_iter
             )
 
+        # CLOSE: fills holes and connects (pipeline step 2)
+        # Pipeline uses morph_iterations + 1 for CLOSE
         binary = cv2.morphologyEx(
             binary, cv2.MORPH_CLOSE, kernel,
             iterations=morph_iter + 1
         )
 
+        # Optional dilate (pipeline step 3)
         if int(self.params["dilate_iterations"]) > 0:
             binary = cv2.dilate(
                 binary, kernel,
                 iterations=int(self.params["dilate_iterations"])
             )
 
+        # Optional erode (pipeline step 4)
         if int(self.params["erode_iterations"]) > 0:
             binary = cv2.erode(
                 binary, kernel,
@@ -2222,6 +2240,7 @@ class SegmentationTuner:
 
         self.binary_mask = binary
 
+        # Step 4: Contour detection and filtering
         contours, _ = cv2.findContours(
             binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
@@ -2271,6 +2290,8 @@ class SegmentationTuner:
             self.contour_areas.append(area_px)
 
     def update_visualization(self):
+        # In pick/reject mode, re-run broad detection but keep
+        # accepted/rejected state and use the pick/reject display.
         if self.selection_mode == 'pick_reject':
             self._run_broad_detection()
             self._update_image_display_pick_reject()
@@ -2410,11 +2431,20 @@ class SegmentationTuner:
     # ==================================================================
 
     def _run_broad_detection(self):
+        """Run process_image with the currently stored (loose) params.
+
+        Called both when first entering pick/reject mode AND on every
+        update_visualization call while in that mode, so the contour
+        list stays consistent with any slider changes the user makes
+        while browsing.
+        """
         self.process_image()
 
     def enter_pick_reject_mode(self):
+        """Step 1 — broad detection with very loose params, enter pick/reject."""
         H, W = self.original_image.shape[:2]
 
+        # Snapshot current params so we can restore on cancel
         self._pre_broad_params = {
             'params': self.params.copy(),
             'min_circularity':  self.min_circularity,
@@ -2424,14 +2454,17 @@ class SegmentationTuner:
             'min_solidity':     self.min_solidity,
         }
 
+        # Very loose bounds — catch every dark object
         self.params['min_area']   = 5.0
-        self.params['max_area']   = float(H * W) * 0.15
+        self.params['max_area']   = float(H * W) * 0.15   # up to 15 % of image
         self.min_circularity      = 0.0
         self.max_circularity      = 1.0
         self.min_aspect_ratio     = 0.01
         self.max_aspect_ratio     = 50.0
         self.min_solidity         = 0.0
 
+        # Sync loose values into the parameter panel sliders so the
+        # user can see them (and tweak if needed without leaving mode)
         if hasattr(self, 'parameter_panel'):
             pp = self.parameter_panel
             for name, val in [
@@ -2448,6 +2481,7 @@ class SegmentationTuner:
 
         self._run_broad_detection()
 
+        # Reset selection state for a fresh session
         self.accepted_indices = set()
         self.rejected_indices = set()
         self.selection_mode   = 'pick_reject'
@@ -2460,6 +2494,7 @@ class SegmentationTuner:
             text=f"PICK/REJECT — {n} objects found"
         )
 
+        # Update instruction bar
         if hasattr(self, 'instruction_label'):
             self.instruction_label.config(
                 text="🖱 LEFT-click = ✅ Accept  |  RIGHT-click = ❌ Reject  "
@@ -2470,6 +2505,7 @@ class SegmentationTuner:
         self._show_pick_reject_status()
 
     def _update_image_display_pick_reject(self):
+        """Redraw image with colour-coded pick/reject contours."""
         self.ax_image.clear()
 
         if self.original_image.ndim == 2:
@@ -2479,14 +2515,15 @@ class SegmentationTuner:
 
         for i, cnt in enumerate(self.contours):
             if i in self.accepted_indices:
-                color, thickness = (0, 220, 0), 3
+                color, thickness = (0, 220, 0), 3       # green  = accepted
             elif i in self.rejected_indices:
-                color, thickness = (220, 40, 40), 2
+                color, thickness = (220, 40, 40), 2     # red    = rejected
             else:
-                color, thickness = (255, 200, 0), 1
+                color, thickness = (255, 200, 0), 1     # yellow = unclassified
 
             cv2.drawContours(display, [cnt], -1, color, thickness)
 
+            # Small index label near each centroid
             M = cv2.moments(cnt)
             if M['m00'] > 0:
                 cx = int(M['m10'] / M['m00'])
@@ -2511,6 +2548,7 @@ class SegmentationTuner:
         self.canvas_image.draw()
 
     def _update_pick_reject_buttons(self, active: bool):
+        """Enable/disable the Normalize and Cancel buttons."""
         state = tk.NORMAL if active else tk.DISABLED
         self.btn_normalize.config(state=state)
         self.btn_cancel_pr.config(state=state)
@@ -2520,6 +2558,7 @@ class SegmentationTuner:
         )
 
     def _show_pick_reject_status(self):
+        """Update the target-analysis text box with pick/reject counts."""
         n_acc = len(self.accepted_indices)
         n_rej = len(self.rejected_indices)
         n_tot = len(self.contours)
@@ -2540,6 +2579,7 @@ class SegmentationTuner:
         self.target_analysis_text.insert('1.0', msg)
 
     def normalize_from_selection(self):
+        """Step 3 — compute optimal parameter bounds from accepted / rejected objects."""
         if not self.accepted_indices:
             messagebox.showwarning(
                 "No selection",
@@ -2571,18 +2611,22 @@ class SegmentationTuner:
         new_min_asp,  new_max_asp  = bounds(acc_asps,  margin=0.10)
         new_min_sol,  _            = bounds(acc_sols,  hi_pct=100, margin=0)
 
+        # ── Refine against rejected objects ──────────────────────────
         if rej_props:
             rej_areas = np.array([p['area'] for p in rej_props])
             mean_acc  = float(np.mean(acc_areas))
 
+            # Push min_area up if small rejected objects sit below acc range
             rej_small = rej_areas[rej_areas < mean_acc]
             if len(rej_small):
                 new_min_area = max(new_min_area, float(np.max(rej_small)) * 1.05)
 
+            # Push max_area down if large rejected objects sit above acc range
             rej_large = rej_areas[rej_areas > mean_acc]
             if len(rej_large):
                 new_max_area = min(new_max_area, float(np.min(rej_large)) * 0.95)
 
+        # ── Clamp to sane ranges ─────────────────────────────────────
         H, W = self.original_image.shape[:2]
         new_min_area = max(1.0, new_min_area)
         new_max_area = min(float(H * W) * 0.25, new_max_area)
@@ -2592,6 +2636,7 @@ class SegmentationTuner:
         new_max_asp  = min(50.0, new_max_asp)
         new_min_sol  = max(0.0, new_min_sol)
 
+        # ── Apply ────────────────────────────────────────────────────
         self.params['min_area']  = new_min_area
         self.params['max_area']  = new_max_area
         self.min_circularity     = new_min_circ
@@ -2600,6 +2645,7 @@ class SegmentationTuner:
         self.max_aspect_ratio    = new_max_asp
         self.min_solidity        = new_min_sol
 
+        # Sync to parameter panel sliders
         if hasattr(self, 'parameter_panel'):
             pp = self.parameter_panel
             for name, val in [
@@ -2614,11 +2660,13 @@ class SegmentationTuner:
                 if name in pp.sliders:
                     pp.sliders[name].set(val)
 
+        # Exit pick/reject mode and run normal detection with new bounds
         self.selection_mode = False
         self.accepted_indices.clear()
         self.rejected_indices.clear()
         self._update_pick_reject_buttons(active=False)
 
+        # Restore instruction bar
         if hasattr(self, 'instruction_label'):
             self.instruction_label.config(
                 text="💡 Click on a particle to analyze and get parameter suggestions",
@@ -2630,7 +2678,8 @@ class SegmentationTuner:
         um2 = self.pixel_size_um ** 2
         messagebox.showinfo(
             "✨ Normalized",
-            f"Parameters set from {len(acc_props)} accepted  /  {len(rej_props)} rejected objects:\n\n"
+            f"Parameters set from {len(self.accepted_indices | {-1}) - 1 + len(acc_props)} "
+            f"accepted  /  {len(rej_props)} rejected objects:\n\n"
             f"Area:          {new_min_area:.0f} – {new_max_area:.0f} px\n"
             f"               ({new_min_area * um2:.2f} – {new_max_area * um2:.2f} µm²)\n"
             f"Circularity:   {new_min_circ:.2f} – {new_max_circ:.2f}\n"
@@ -2641,6 +2690,7 @@ class SegmentationTuner:
         )
 
     def cancel_pick_reject(self):
+        """Restore original params and exit pick/reject mode."""
         if self._pre_broad_params:
             self.params           = self._pre_broad_params['params'].copy()
             self.min_circularity  = self._pre_broad_params['min_circularity']
@@ -2649,6 +2699,7 @@ class SegmentationTuner:
             self.max_aspect_ratio = self._pre_broad_params['max_aspect_ratio']
             self.min_solidity     = self._pre_broad_params['min_solidity']
 
+            # Sync restored values back to parameter panel sliders
             if hasattr(self, 'parameter_panel'):
                 pp = self.parameter_panel
                 for name, val in [
@@ -2668,6 +2719,7 @@ class SegmentationTuner:
         self.rejected_indices.clear()
         self._update_pick_reject_buttons(active=False)
 
+        # Restore instruction bar
         if hasattr(self, 'instruction_label'):
             self.instruction_label.config(
                 text="💡 Click on a particle to analyze and get parameter suggestions",
@@ -2677,6 +2729,7 @@ class SegmentationTuner:
         self.update_visualization()
 
     def _compute_contour_properties(self, contours: list) -> list:
+        """Return a list of shape-property dicts for the given contours."""
         props = []
         for cnt in contours:
             area      = float(cv2.contourArea(cnt))
@@ -2706,21 +2759,26 @@ class SegmentationTuner:
 
         x, y = int(event.xdata), int(event.ydata)
 
+        # ── Pick / Reject mode ────────────────────────────────────────
         if self.selection_mode == 'pick_reject':
+            hit = False
             for i, cnt in enumerate(self.contours):
                 if cv2.pointPolygonTest(cnt, (float(x), float(y)), False) >= 0:
-                    if event.button == 1:
+                    if event.button == 1:           # left-click  → accept
                         if i in self.accepted_indices:
+                            # Toggle back to unclassified
                             self.accepted_indices.discard(i)
                         else:
                             self.accepted_indices.add(i)
                             self.rejected_indices.discard(i)
-                    elif event.button == 3:
+                    elif event.button == 3:         # right-click → reject
                         if i in self.rejected_indices:
+                            # Toggle back to unclassified
                             self.rejected_indices.discard(i)
                         else:
                             self.rejected_indices.add(i)
                             self.accepted_indices.discard(i)
+                    hit = True
                     break
 
             self._update_image_display_pick_reject()
@@ -2732,6 +2790,7 @@ class SegmentationTuner:
             )
             return
 
+        # ── Normal mode ───────────────────────────────────────────────
         clicked_contour = None
         for cnt in self.contours:
             if cv2.pointPolygonTest(cnt, (float(x), float(y)), False) >= 0:
@@ -2877,7 +2936,8 @@ class SegmentationTuner:
             suggestions['min_area'] = int(area_px * 0.7)
         if area_px > current_max:
             suggestions['max_area'] = int(area_px * 1.3)
-
+        
+        # ── Shape filters ─────────────────────────────────────────────
         if circularity < self.min_circularity:
             suggestions['min_circularity'] = max(0.0, circularity - 0.1)
         if aspect_ratio > self.max_aspect_ratio:
@@ -2889,9 +2949,14 @@ class SegmentationTuner:
         if circularity < 0.5:
             suggestions['dilate_iterations'] = min(5, self.params['dilate_iterations'] + 1)
 
+        # ── Gaussian — only when contrast is very low ─────────────────
         if std_intensity < 20:
             suggestions['gaussian_sigma'] = min(20.0, self.params['gaussian_sigma'] + 2.0)
 
+        # ── Threshold — only when NO filter issue was found ───────────
+        # If area/shape suggestions already exist, thresholding is fine;
+        # the particle is visible but being rejected by the filters.
+        # OTSU/adaptive adapt automatically — never suggest switching modes.
         has_filter_issue = any(k in suggestions for k in (
             'min_area', 'max_area', 'min_circularity',
             'max_aspect_ratio', 'min_aspect_ratio', 'min_solidity'
@@ -2899,11 +2964,16 @@ class SegmentationTuner:
 
         if not has_filter_issue:
             if self.use_intensity_threshold:
+                # Raise threshold to catch slightly darker objects
                 suggestions['manual_threshold'] = min(255, int(self.manual_threshold) + 15)
             elif self.threshold_mode == "manual":
+                # Lower manual threshold to increase sensitivity
                 suggestions['manual_threshold'] = max(0, self.manual_threshold - 20)
+            # OTSU / adaptive: trust the algorithm — it already adapts to the
+            # image histogram. Only the gaussian suggestion above applies here.
 
         return suggestions
+
 
     def _display_missed_particle_analysis(
         self,
@@ -3029,6 +3099,7 @@ class SegmentationTuner:
 
         return suggestions
 
+
     def apply_suggestions(self, event=None):
         if not self.current_suggestions:
             self.target_analysis_text.delete('1.0', tk.END)
@@ -3041,11 +3112,13 @@ class SegmentationTuner:
 
         for param, value in self.current_suggestions.items():
             if param == 'threshold_mode':
+                # ── Set internal state ────────────────────────────────────
                 self.threshold_mode = value
                 self.use_intensity_threshold = (value == "intensity")
                 if self.use_intensity_threshold:
                     self.intensity_threshold_value = float(self.manual_threshold)
 
+                # ── Update ParameterPanel tkinter widgets ─────────────────
                 if hasattr(self, 'parameter_panel'):
                     pp = self.parameter_panel
                     if hasattr(pp, 'thresh_mode_btn'):
@@ -3061,6 +3134,7 @@ class SegmentationTuner:
                         else:
                             pp.intensity_info_label.pack_forget()
 
+                # ── Update legacy matplotlib button if it exists ──────────
                 if hasattr(self, 'btn_thresh_mode'):
                     self.btn_thresh_mode.label.set_text(
                         f"THRESHOLD\n{value.upper()}"
@@ -3097,6 +3171,7 @@ class SegmentationTuner:
                                             font=("Segoe UI", 9, "bold"))
         self.update_visualization()
 
+
     def load_new_image(self):
         file_path = filedialog.askopenfilename(
             title="Select Image",
@@ -3123,6 +3198,7 @@ class SegmentationTuner:
             self.image_path      = new_path
             self.pixel_size_um, self.has_metadata = self._load_pixel_size()
 
+            # Reset pick/reject state when a new image is loaded
             if self.selection_mode == 'pick_reject':
                 self.cancel_pick_reject()
             else:
@@ -3146,9 +3222,23 @@ class SegmentationTuner:
 class PathogenConfigManager:
     """Unified pathogen configuration manager with integrated tuner setup"""
 
-    # NOTE: PATHOGENS hard-coded dict removed.
-    # The bacteria list is now loaded dynamically from the registry
-    # (bacteria_configs/registry.json) via _bacteria_registry.all().
+    PATHOGENS = {
+        "Proteus mirabilis": {
+            "config_key": "proteus_mirabilis",
+            "description": "Rod-shaped, flagellated bacterium",
+            "common_in": "Catheter-associated infections",
+        },
+        "Klebsiella pneumoniae": {
+            "config_key": "klebsiella_pneumoniae",
+            "description": "Gram-negative, encapsulated bacterium",
+            "common_in": "Healthcare-associated infections",
+        },
+        "Streptococcus mitis": {
+            "config_key": "streptococcus_mitis",
+            "description": "Gram-positive cocci in chains",
+            "common_in": "Touch contamination",
+        },
+    }
 
     COLORS = {
         "bg": "#1e1e1e",
@@ -3170,8 +3260,8 @@ class PathogenConfigManager:
         self.root = root
         self.root.title("🦠 Pathogen Segmentation Tuner Setup")
         self.root.geometry("980x760")
-        self.root.minsize(980, 800)
-        self.root.maxsize(1440, 900)
+        self.root.minsize(980, 760)
+        self.root.maxsize(980, 760)
         self.root.configure(**{"bg": self.COLORS["bg"]})
 
         self.selected_pathogen: "Optional[str]" = None
@@ -3184,10 +3274,6 @@ class PathogenConfigManager:
         self.card_contents:       "Dict[str, tk.Frame]" = {}
         self.card_left_frames:    "Dict[str, tk.Frame]" = {}
         self.card_right_frames:   "Dict[str, tk.Frame]" = {}
-
-        # Container widget for all pathogen cards; populated by
-        # _create_pathogen_section and rebuilt by _rebuild_pathogen_cards.
-        self._cards_outer: Optional[tk.Frame] = None
 
         self.FONT_TITLE = ("Segoe UI", 22, "bold")
         self.FONT_H2    = ("Segoe UI", 11, "bold")
@@ -3295,186 +3381,86 @@ class PathogenConfigManager:
         subtitle["bg"] = self.COLORS["bg"]
         subtitle["fg"] = self.COLORS["muted"]
 
-    # ------------------------------------------------------------------
-    # Pathogen section — driven entirely by the registry
-    # ------------------------------------------------------------------
-
-    def _create_pathogen_section(self, parent: tk.Frame) -> None:
-        """Build the scrollable bacteria card list from the registry.
-
-        Contains a  ➕ Register New  toolbar button that opens
-        RegisterBacteriaDialog, and each card has a  ✕  remove button.
-        """
+    def _create_pathogen_section(self, parent):
         parent["bg"] = self.COLORS["panel"]
         self._section_title(parent, "1", "Select pathogen")
 
-        # ── toolbar: hint + Register button ──────────────────────────
-        ctrl = tk.Frame(parent, bg=self.COLORS["panel"])
-        ctrl.pack(fill=tk.X, pady=(0, 10))
+        hint = tk.Label(parent, text="Click a card to choose the pathogen profile used for tuning.", font=self.FONT_SMALL)
+        hint.pack(anchor=tk.W, pady=(0, 12))
+        hint["bg"] = self.COLORS["panel"]
+        hint["fg"] = self.COLORS["muted"]
 
-        tk.Label(
-            ctrl,
-            text="Click a card to select  ·  use  ✕  to remove",
-            font=("Segoe UI", 9),
-            bg=self.COLORS["panel"], fg=self.COLORS["muted"],
-        ).pack(side=tk.LEFT)
+        cards_frame = tk.Frame(parent)
+        cards_frame.pack(fill=tk.BOTH, expand=True)
+        cards_frame["bg"] = self.COLORS["panel"]
 
-        tk.Button(
-            ctrl,
-            text="➕ Register New",
-            font=("Segoe UI", 9, "bold"),
-            bg=self.COLORS["success"], fg="white",
-            relief=tk.FLAT, cursor="hand2", padx=10, pady=4,
-            command=self._open_register_dialog,
-        ).pack(side=tk.RIGHT)
-
-        # ── scrollable card container ─────────────────────────────────
-        self._cards_outer = tk.Frame(parent, bg=self.COLORS["panel"])
-        self._cards_outer.pack(fill=tk.BOTH, expand=True)
-
-        self._rebuild_pathogen_cards()
-
-    def _rebuild_pathogen_cards(self) -> None:
-        """Destroy all existing cards and recreate them from the registry."""
-        if self._cards_outer is None:
-            return
-
-        # Clear every child widget
-        for widget in self._cards_outer.winfo_children():
-            widget.destroy()
-
-        # Reset all card-tracking dicts
-        self.pathogen_cards    = {}
-        self.card_indicators   = {}
-        self.card_contents     = {}
-        self.card_left_frames  = {}
-        self.card_right_frames = {}
-
-        bacteria = _bacteria_registry.all()
-
-        if not bacteria:
-            tk.Label(
-                self._cards_outer,
-                text="No bacteria registered.\nClick  ➕ Register New  to add one.",
-                font=("Segoe UI", 10, "italic"),
-                bg=self.COLORS["panel"], fg=self.COLORS["muted"],
-                justify=tk.CENTER,
-            ).pack(pady=24)
-            return
-
-        for config_key, meta in bacteria.items():
-            display_name = meta["display_name"]
-            card = self._create_pathogen_card(
-                self._cards_outer,
-                display_name,
-                {
-                    "config_key":  config_key,
-                    "description": meta.get("description", ""),
-                    "common_in":   meta.get("common_in", ""),
-                    "validated":   meta.get("validated", False),
-                },
-            )
+        for pathogen_name, info in self.PATHOGENS.items():
+            card = self._create_pathogen_card(cards_frame, pathogen_name, info)
             card.pack(fill=tk.X, pady=(0, 10))
 
-        # Re-apply selection highlight if the previously chosen name still exists
-        if self.selected_pathogen and self.selected_pathogen in self.pathogen_cards:
-            self._select_pathogen(self.selected_pathogen)
-
-    def _create_pathogen_card(self, parent: tk.Frame, pathogen_name: str, info: dict) -> tk.Frame:
-        """Build one bacteria card with a  ✕  remove button.
-
-        The  validated  flag in *info* controls the name-label colour and
-        whether an "⚠ Not yet validated" subtitle is shown.
-        """
-        C = self.COLORS
-        validated = bool(info.get("validated", False))
-
+    def _create_pathogen_card(self, parent, pathogen_name: str, info: dict):
         card = tk.Frame(parent, relief=tk.FLAT, borderwidth=0, cursor="hand2")
-        card["bg"] = C["button"]
+        card["bg"] = self.COLORS["button"]
         self.pathogen_cards[pathogen_name] = card
 
-        def select_this(event=None):
+        def select_pathogen(event=None):
             self._select_pathogen(pathogen_name)
 
         border = tk.Frame(card)
         border.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
-        border["bg"] = C["panel_border"]
-        border.bind("<Button-1>", select_this)
+        border["bg"] = self.COLORS["panel_border"]
+        border.bind("<Button-1>", select_pathogen)
 
         content = tk.Frame(border)
         content.pack(fill=tk.BOTH, expand=True, padx=12, pady=10)
-        content["bg"] = C["button"]
-        content.bind("<Button-1>", select_this)
+        content["bg"] = self.COLORS["button"]
+        content.bind("<Button-1>", select_pathogen)
 
-        for w in (card, border, content):
-            w.bind("<Enter>", lambda e, n=pathogen_name: self._hover_card(n, True))
-            w.bind("<Leave>", lambda e, n=pathogen_name: self._hover_card(n, False))
+        card.bind("<Enter>", lambda e: self._hover_card(pathogen_name, True))
+        card.bind("<Leave>", lambda e: self._hover_card(pathogen_name, False))
+        border.bind("<Enter>", lambda e: self._hover_card(pathogen_name, True))
+        border.bind("<Leave>", lambda e: self._hover_card(pathogen_name, False))
+        content.bind("<Enter>", lambda e: self._hover_card(pathogen_name, True))
+        content.bind("<Leave>", lambda e: self._hover_card(pathogen_name, False))
 
         self.card_contents[pathogen_name] = content
 
-        # ── Left side: name + description ────────────────────────────
-        left = tk.Frame(content, bg=C["button"])
+        left = tk.Frame(content)
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        left.bind("<Button-1>", select_this)
+        left["bg"] = self.COLORS["button"]
+        left.bind("<Button-1>", select_pathogen)
         self.card_left_frames[pathogen_name] = left
 
-        checkmark = "  ✓" if validated else ""
-        name_lbl = tk.Label(
-            left,
-            text=f"🔬 {pathogen_name}{checkmark}",
-            font=("Segoe UI", 12, "bold"),
-            anchor=tk.W,
-        )
-        name_lbl.pack(anchor=tk.W)
-        name_lbl["bg"] = C["button"]
-        name_lbl["fg"] = C["success"] if validated else C["fg"]
-        name_lbl.bind("<Button-1>", select_this)
+        name = tk.Label(left, text=f"🔬 {pathogen_name}", font=("Segoe UI", 12, "bold"), anchor=tk.W)
+        name.pack(anchor=tk.W)
+        name["bg"] = self.COLORS["button"]
+        name["fg"] = self.COLORS["success"]
+        name.bind("<Button-1>", select_pathogen)
 
-        for text, fg_color in [
-            (info.get("description", ""),           C["fg"]),
-            (f"📌 {info.get('common_in', '')}",     C["warning"]),
-        ]:
-            body = text.replace("📌 ", "").strip()
-            if body:
-                lbl = tk.Label(left, text=text, font=("Segoe UI", 9), anchor=tk.W)
-                lbl.pack(anchor=tk.W, pady=(3, 0))
-                lbl["bg"] = C["button"]
-                lbl["fg"] = fg_color
-                lbl.bind("<Button-1>", select_this)
+        desc = tk.Label(left, text=info["description"], font=self.FONT_SMALL, anchor=tk.W)
+        desc.pack(anchor=tk.W, pady=(4, 0))
+        desc["bg"] = self.COLORS["button"]
+        desc["fg"] = self.COLORS["fg"]
+        desc.bind("<Button-1>", select_pathogen)
 
-        if not validated:
-            tk.Label(
-                left,
-                text="⚠ Not yet validated for multi-scan",
-                font=("Segoe UI", 8, "italic"),
-                anchor=tk.W,
-                bg=C["button"], fg=C["error"],
-            ).pack(anchor=tk.W, pady=(2, 0))
+        common = tk.Label(left, text=f"📌 {info['common_in']}", font=self.FONT_TINY, anchor=tk.W)
+        common.pack(anchor=tk.W, pady=(3, 0))
+        common["bg"] = self.COLORS["button"]
+        common["fg"] = self.COLORS["warning"]
+        common.bind("<Button-1>", select_pathogen)
 
-        # ── Right side: selection indicator + remove button ───────────
-        right = tk.Frame(content, bg=C["button"])
+        right = tk.Frame(content)
         right.pack(side=tk.RIGHT, padx=(10, 0))
-        right.bind("<Button-1>", select_this)
+        right["bg"] = self.COLORS["button"]
+        right.bind("<Button-1>", select_pathogen)
         self.card_right_frames[pathogen_name] = right
 
         indicator = tk.Label(right, text="○", font=("Segoe UI", 18))
-        indicator.pack()
-        indicator["bg"] = C["button"]
-        indicator["fg"] = C["muted"]
-        indicator.bind("<Button-1>", select_this)
+        indicator.pack(padx=6)
+        indicator["bg"] = self.COLORS["button"]
+        indicator["fg"] = self.COLORS["muted"]
+        indicator.bind("<Button-1>", select_pathogen)
         self.card_indicators[pathogen_name] = indicator
-
-        tk.Button(
-            right,
-            text="✕",
-            font=("Segoe UI", 9, "bold"),
-            bg=C["button"], fg=C["error"],
-            relief=tk.FLAT, cursor="hand2",
-            padx=4, pady=2,
-            activebackground=C["button_hover"],
-            activeforeground=C["error"],
-            command=lambda n=pathogen_name: self._confirm_remove_bacteria(n),
-        ).pack(pady=(6, 0))
 
         return card
 
@@ -3538,124 +3524,6 @@ class PathogenConfigManager:
             except Exception:
                 pass
         print(f"✓ Selected pathogen: {pathogen_name}")
-
-    # ------------------------------------------------------------------
-    # Registration dialog
-    # ------------------------------------------------------------------
-
-    def _open_register_dialog(self) -> None:
-        """Open RegisterBacteriaDialog and handle its result."""
-
-        def on_registered(config_key: str, open_tuner: bool) -> None:
-            # Refresh the card list so the new entry appears immediately
-            self._rebuild_pathogen_cards()
-
-            # Auto-select the newly registered bacterium
-            entry = _bacteria_registry.get(config_key)
-            if entry:
-                display_name = entry["display_name"]
-                if display_name in self.pathogen_cards:
-                    self._select_pathogen(display_name)
-
-            # Optionally launch the tuner straight away
-            if open_tuner:
-                image_ok = (
-                    bool(self.image_path_var.get())
-                    and Path(self.image_path_var.get()).exists()
-                )
-                name = entry["display_name"] if entry else config_key
-
-                if image_ok:
-                    messagebox.showinfo(
-                        "Registered",
-                        f"'{name}' has been registered.\n\n"
-                        f"Launching tuner to configure segmentation parameters…",
-                        parent=self.root,
-                    )
-                    self._start_tuner()
-                else:
-                    messagebox.showinfo(
-                        "Registered",
-                        f"'{name}' has been registered.\n\n"
-                        f"Now select an image file, then click\n"
-                        f"✅ Start tuner  to configure segmentation parameters.",
-                        parent=self.root,
-                    )
-
-        RegisterBacteriaDialog(self.root, on_success=on_registered)
-
-    # ------------------------------------------------------------------
-    # Remove bacterium
-    # ------------------------------------------------------------------
-
-    def _confirm_remove_bacteria(self, pathogen_name: str) -> None:
-        """Two-step confirmation: remove from registry, optionally delete JSON."""
-
-        # Look up the registry key for this display name
-        config_key: Optional[str] = None
-        for key, meta in _bacteria_registry.all().items():
-            if meta["display_name"] == pathogen_name:
-                config_key = key
-                break
-
-        if config_key is None:
-            messagebox.showerror(
-                "Error",
-                f"Could not find a registry entry for '{pathogen_name}'.",
-                parent=self.root,
-            )
-            return
-
-        # Refuse to remove the last remaining entry
-        if len(_bacteria_registry.all()) <= 1:
-            messagebox.showwarning(
-                "Cannot Remove",
-                "At least one bacterium must remain in the registry.",
-                parent=self.root,
-            )
-            return
-
-        # Step 1 — confirm removal
-        confirmed = messagebox.askyesno(
-            "Remove Bacterium",
-            f"Remove  '{pathogen_name}'  from the bacteria registry?\n\n"
-            f"It will disappear from the Tuner list and the\n"
-            f"automated multi-scan whitelist.",
-            parent=self.root,
-        )
-        if not confirmed:
-            return
-
-        # Step 2 — optionally delete the JSON config file
-        delete_json = False
-        if _bacteria_registry.has_json_config(config_key):
-            delete_json = messagebox.askyesno(
-                "Delete Config File?",
-                f"Also delete the tuned parameter file?\n\n"
-                f"  bacteria_configs/{config_key}.json\n\n"
-                f"Click  YES  to permanently delete it.\n"
-                f"Click  NO   to keep it for future use.",
-                parent=self.root,
-            )
-
-        _bacteria_registry.remove(config_key, delete_json=delete_json)
-
-        # Clear selection state if the removed item was selected
-        if self.selected_pathogen == pathogen_name:
-            self.selected_pathogen = None
-
-        self._rebuild_pathogen_cards()
-
-        detail = " Config file also deleted." if delete_json else ""
-        messagebox.showinfo(
-            "Removed",
-            f"'{pathogen_name}' has been removed from the registry.{detail}",
-            parent=self.root,
-        )
-
-    # ------------------------------------------------------------------
-    # Image section, config section, action buttons — unchanged
-    # ------------------------------------------------------------------
 
     def _create_image_section(self, parent):
         parent["bg"] = self.COLORS["panel"]
@@ -3871,22 +3739,19 @@ class PathogenConfigManager:
     def _show_about(self):
         about_text = """
 Peritoneal Dialysis Pathogen Segmentation Tuner
-Version 2.1
+Version 2.0
 
 Interactive parameter tuning for image analysis of:
 
 • Proteus mirabilis
 • Klebsiella pneumoniae
 • Streptococcus mitis
-• Any newly registered bacterium
 
 Features:
 🎨 Real-time segmentation preview
 📊 Histogram analysis
 🎯 Click-to-analyze particles
 🎯 Pick / Reject / Normalize workflow
-➕ Register new bacteria on-the-fly
-🗑  Remove bacteria from the registry
 💾 Save configurations
 
 © 2026 Pathogen Analysis Suite
@@ -3898,251 +3763,6 @@ Features:
             print("\n👋 Exiting Pathogen Configuration Manager")
             self.root.quit()
             self.root.destroy()
-
-
-# ==================================================
-# Register Bacteria Dialog
-# Placed after PathogenConfigManager so it can reference
-# PathogenConfigManager.COLORS at instantiation time.
-# ==================================================
-
-class RegisterBacteriaDialog(tk.Toplevel):
-    """Modal dialog that registers a new bacterium into the persistent registry.
-
-    Workflow
-    --------
-    1. User fills in display name — config key is auto-derived and validated.
-    2. Optional description, "commonly associated with", and a validated checkbox.
-    3. Two action buttons:
-       • "Register + Open Tuner"   → registers entry, fires on_success(key, True)
-       • "Register Only"           → registers entry, fires on_success(key, False)
-    4. The on_success callback is responsible for refreshing the card list
-       and (optionally) launching the tuner.
-    """
-
-    def __init__(
-        self,
-        parent: tk.Misc,
-        on_success: Optional[object] = None,
-    ) -> None:
-        super().__init__(parent)
-        # Access colours at instantiation time — PathogenConfigManager is
-        # already defined by the time any dialog is opened.
-        self._C = PathogenConfigManager.COLORS
-        self.on_success = on_success
-        self.result_key: Optional[str] = None
-
-        self.title("➕ Register New Bacterium")
-        self.geometry("560x530")
-        self.resizable(False, False)
-        self.grab_set()
-        self.configure(bg=self._C["bg"])
-
-        self._build_ui()
-        self._center(parent)
-
-    # ── positioning ───────────────────────────────────────────────────────────
-
-    def _center(self, parent: tk.Misc) -> None:
-        self.update_idletasks()
-        x = parent.winfo_rootx() + (parent.winfo_width()  - 560) // 2
-        y = parent.winfo_rooty() + (parent.winfo_height() - 530) // 2
-        self.geometry(f"560x530+{x}+{y}")
-
-    # ── small helpers ─────────────────────────────────────────────────────────
-
-    def _lbl(self, parent: tk.Widget, text: str, bold: bool = False) -> tk.Label:
-        lbl = tk.Label(
-            parent, text=text,
-            font=("Segoe UI", 10, "bold" if bold else "normal"),
-            bg=parent["bg"], fg=self._C["fg"],
-        )
-        lbl.pack(anchor="w", pady=(8, 2))
-        return lbl
-
-    def _entry(self, parent: tk.Widget, var: tk.StringVar) -> tk.Entry:
-        e = tk.Entry(
-            parent, textvariable=var,
-            font=("Segoe UI", 10),
-            bg=self._C["button"], fg=self._C["fg"],
-            insertbackground=self._C["fg"],
-            relief=tk.FLAT, bd=6,
-        )
-        e.pack(fill=tk.X, pady=(0, 2))
-        return e
-
-    # ── UI construction ───────────────────────────────────────────────────────
-
-    def _build_ui(self) -> None:
-        C = self._C
-
-        # Outer padding frame
-        pad = tk.Frame(self, bg=C["bg"], padx=18, pady=14)
-        pad.pack(fill=tk.BOTH, expand=True)
-
-        tk.Label(
-            pad, text="➕  Register New Bacterium",
-            font=("Segoe UI", 14, "bold"),
-            bg=C["bg"], fg=C["success"],
-        ).pack(anchor="w", pady=(0, 10))
-
-        # Form panel
-        pnl   = tk.Frame(pad, bg=C["panel_border"], relief=tk.FLAT, bd=1)
-        pnl.pack(fill=tk.BOTH, expand=True)
-        inner = tk.Frame(pnl, bg=C["panel"], padx=14, pady=10)
-        inner.pack(fill=tk.BOTH, expand=True)
-
-        # Display name
-        self._lbl(inner, "Display Name  (e.g. Escherichia coli) *", bold=True)
-        self.name_var = tk.StringVar()
-        name_e = self._entry(inner, self.name_var)
-        name_e.bind("<KeyRelease>", self._auto_fill_key)
-        name_e.focus_set()
-
-        # Config key (auto-filled, editable)
-        self._lbl(inner, "Config Key  (auto-filled · must be unique) *")
-        self.key_var = tk.StringVar()
-        key_e = self._entry(inner, self.key_var)
-        key_e.bind("<KeyRelease>", lambda _e: self._check_key())
-
-        self.key_status_lbl = tk.Label(
-            inner, text="",
-            font=("Segoe UI", 8, "italic"),
-            bg=C["panel"], fg=C["warning"],
-        )
-        self.key_status_lbl.pack(anchor="w")
-
-        # Description
-        self._lbl(inner, "Short description")
-        self.desc_var = tk.StringVar()
-        self._entry(inner, self.desc_var)
-
-        # Commonly associated with
-        self._lbl(inner, "Commonly associated with")
-        self.common_var = tk.StringVar()
-        self._entry(inner, self.common_var)
-
-        # Validated checkbox
-        self.validated_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(
-            inner,
-            text="Include in automated multi-scan  (mark as validated)",
-            variable=self.validated_var,
-            font=("Segoe UI", 9),
-            bg=C["panel"], fg=C["fg"],
-            selectcolor=C["selected"],
-            activebackground=C["panel"],
-            cursor="hand2",
-        ).pack(anchor="w", pady=(12, 2))
-
-        tk.Label(
-            inner,
-            text="⚠  Only enable after segmentation parameters have been tuned and validated.",
-            font=("Segoe UI", 8, "italic"),
-            bg=C["panel"], fg=C["warning"],
-        ).pack(anchor="w")
-
-        # Action buttons
-        btn_row = tk.Frame(pad, bg=C["bg"])
-        btn_row.pack(fill=tk.X, pady=(14, 0))
-
-        for text, color, open_t in [
-            ("✅ Register + Open Tuner", C["success"], True),
-            ("✅ Register Only",          C["accent"],  False),
-        ]:
-            tk.Button(
-                btn_row, text=text,
-                font=("Segoe UI", 10, "bold"),
-                bg=color, fg="white",
-                relief=tk.FLAT, cursor="hand2", padx=12, pady=8,
-                command=lambda ot=open_t: self._submit(open_tuner=ot),
-            ).pack(side=tk.RIGHT, padx=(6, 0))
-
-        tk.Button(
-            btn_row, text="Cancel",
-            font=("Segoe UI", 10),
-            bg=C["button"], fg=C["fg"],
-            relief=tk.FLAT, cursor="hand2", padx=12, pady=8,
-            command=self.destroy,
-        ).pack(side=tk.RIGHT)
-
-    # ── validation ────────────────────────────────────────────────────────────
-
-    def _auto_fill_key(self, _event=None) -> None:
-        """Derive a config key from the display name as the user types."""
-        raw = self.name_var.get()
-        key = re.sub(r"[^a-z0-9]+", "_", raw.lower()).strip("_")
-        self.key_var.set(key)
-        self._check_key()
-
-    def _check_key(self) -> bool:
-        """Validate the current config key and update the status label.
-
-        Returns True if the key is syntactically valid and not already taken.
-        """
-        key = self.key_var.get().strip()
-        C   = self._C
-
-        if not key:
-            self.key_status_lbl.config(text="", fg=C["warning"])
-            return False
-
-        if not re.fullmatch(r"[a-z][a-z0-9_]*", key):
-            self.key_status_lbl.config(
-                text="✗  Must start with a letter; only  a-z  0-9  _  allowed.",
-                fg=C["error"],
-            )
-            return False
-
-        if _bacteria_registry.key_exists(key):
-            self.key_status_lbl.config(
-                text=f"✗  '{key}'  is already registered.",
-                fg=C["error"],
-            )
-            return False
-
-        self.key_status_lbl.config(
-            text=f"✓  '{key}'  is available.",
-            fg=C["success"],
-        )
-        return True
-
-    # ── submission ────────────────────────────────────────────────────────────
-
-    def _submit(self, *, open_tuner: bool = True) -> None:
-        name = self.name_var.get().strip()
-        key  = self.key_var.get().strip()
-
-        if not name:
-            messagebox.showerror("Missing field", "Display name is required.", parent=self)
-            return
-
-        if not self._check_key():
-            messagebox.showerror(
-                "Invalid key",
-                "The config key is invalid or already taken.\n"
-                "Edit it and try again.",
-                parent=self,
-            )
-            return
-
-        try:
-            _bacteria_registry.register(
-                display_name=name,
-                description=self.desc_var.get().strip(),
-                common_in=self.common_var.get().strip(),
-                validated=self.validated_var.get(),
-                config_key=key,
-            )
-            self.result_key = key
-
-            if callable(self.on_success):
-                self.on_success(key, open_tuner)
-
-            self.destroy()
-
-        except ValueError as exc:
-            messagebox.showerror("Registration error", str(exc), parent=self)
 
 
 # ==================================================

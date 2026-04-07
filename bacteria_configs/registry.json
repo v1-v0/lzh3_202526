@@ -1,0 +1,32 @@
+{
+  "proteus_mirabilis": {
+    "config_key": "proteus_mirabilis",
+    "display_name": "Proteus mirabilis",
+    "description": "Rod-shaped, flagellated bacterium",
+    "common_in": "Catheter-associated infections",
+    "validated": true,
+    "registered_at": "2026-01-01T00:00:00",
+    "registered_by": "System",
+    "builtin": true
+  },
+  "klebsiella_pneumoniae": {
+    "config_key": "klebsiella_pneumoniae",
+    "display_name": "Klebsiella pneumoniae",
+    "description": "Gram-negative, encapsulated bacterium",
+    "common_in": "Healthcare-associated infections",
+    "validated": true,
+    "registered_at": "2026-01-01T00:00:00",
+    "registered_by": "System",
+    "builtin": true
+  },
+  "streptococcus_mitis": {
+    "config_key": "streptococcus_mitis",
+    "display_name": "Streptococcus mitis",
+    "description": "Gram-positive cocci in chains",
+    "common_in": "Touch contamination",
+    "validated": false,
+    "registered_at": "2026-01-01T00:00:00",
+    "registered_by": "System",
+    "builtin": true
+  }
+}
