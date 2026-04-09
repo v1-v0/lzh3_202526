@@ -7277,7 +7277,6 @@ def validate_batch_structure(config: dict) -> bool:
 def main():
     """Main execution function with enhanced error handling and cleanup"""
 
-    # ==================== INITIALIZATION ====================
     print("\n" + "=" * 80)
     print("MICROGEL FLUORESCENCE ANALYSIS PIPELINE")
     print("=" * 80 + "\n")
@@ -7286,7 +7285,6 @@ def main():
     config: dict = {}
     output_root: Optional[Path] = None
 
-    # Results containers
     positive_results: Optional[dict[str, Any]] = None
     negative_results: Optional[dict[str, Any]] = None
     results: Optional[dict[str, Any]] = None
@@ -7294,7 +7292,7 @@ def main():
     global _log_path, _log_file
 
     try:
-        # ==================== STEP 1: MODE & CONFIGURATION SELECTION ====================
+        # ==================== STEP 1 ====================
         print("STEP 1: Select Processing Mode & Configuration")
         print("─" * 80 + "\n")
 
@@ -7304,7 +7302,7 @@ def main():
         config['bacteria_config_info'] = bacteria_config_info
         config['processing_mode'] = mode
 
-        # ==================== STEP 2: DATASET CONFIGURATION ====================
+        # ==================== STEP 2 ====================
         print("\nSTEP 2: Dataset Configuration")
         print("─" * 80 + "\n")
 
@@ -7318,7 +7316,7 @@ def main():
             print("❌ Batch structure validation failed - cannot proceed")
             return
 
-        # ==================== STEP 3: CREATE OUTPUT DIRECTORY ====================
+        # ==================== STEP 3 ====================
         display_configuration_summary(config)
         config['timestamp'] = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_root = setup_output_directory(config)
@@ -7333,7 +7331,6 @@ def main():
             if config['batch_mode']:
                 print("Processing in BATCH mode...\n")
 
-                # ✅ G+ multi-scan
                 print("─" * 80)
                 print("Processing: G+ (positive)")
                 print("─" * 80 + "\n")
@@ -7346,7 +7343,6 @@ def main():
 
                 print("\n✓ G+ processing completed\n")
 
-                # ✅ G- multi-scan
                 print("─" * 80)
                 print("Processing: G- (negative)")
                 print("─" * 80 + "\n")
@@ -7359,7 +7355,6 @@ def main():
 
                 print("\n✓ G- processing completed\n")
 
-                # Auto clinical follow-up
                 print("=" * 80)
                 print("AUTO CLINICAL FOLLOW-UP (POST MULTI-SCAN)")
                 print("=" * 80)
@@ -7409,7 +7404,6 @@ def main():
                     if chosen_bacteria_config is None:
                         chosen_bacteria_config = load_bacteria_config_from_json(chosen_config_key)
 
-                    # ✅ G+ clinical run
                     print("─" * 80)
                     print(f"CLINICAL RUN: G+ using config '{chosen_config_key}'")
                     print("─" * 80 + "\n")
@@ -7421,7 +7415,6 @@ def main():
 
                     run_single_config_analysis(config)
 
-                    # ✅ G- clinical run
                     print("\n─" * 80)
                     print(f"CLINICAL RUN: G- using config '{chosen_config_key}'")
                     print("─" * 80 + "\n")
@@ -7432,21 +7425,15 @@ def main():
 
                     run_single_config_analysis(config)
 
-                    # Final combined outputs
                     if output_root is not None:
                         generate_final_clinical_matrix_wrapper(output_root, config)
-
-                        if config.get('batch_mode', False):
-                            generate_rejection_analysis(output_root)
-                        elif output_dir is not None:
-                            generate_rejection_analysis(output_dir)
+                        generate_rejection_analysis(output_root)
 
                 else:
                     print("⚠ Could not determine best bacteria configuration")
                     print("  Manual review of multi-scan results recommended\n")
 
             else:
-                # Single directory multi-scan
                 print("Processing single directory...\n")
 
                 config['current_source'] = config['source_dir']
@@ -7470,13 +7457,12 @@ def main():
                     run_single_config_analysis(config)
 
         else:
-            # Single config mode
+            # ── SINGLE CONFIG MODE ──────────────────────────────────────────
             config['bacteria_config'] = bacteria_config_info['selected_config']
 
             if config['batch_mode']:
                 print("Processing in BATCH mode...\n")
 
-                # ✅ G+
                 print("─" * 80)
                 print("Processing: G+ (positive)")
                 print("─" * 80 + "\n")
@@ -7489,7 +7475,6 @@ def main():
 
                 print("\n✓ G+ processing completed\n")
 
-                # ✅ G-
                 print("─" * 80)
                 print("Processing: G- (negative)")
                 print("─" * 80 + "\n")
@@ -7504,6 +7489,8 @@ def main():
 
                 if output_root is not None:
                     generate_final_clinical_matrix_wrapper(output_root, config)
+                    # ✅ FIX 1: generate rejection analysis in single-config batch mode
+                    generate_rejection_analysis(output_root)
 
             else:
                 print("Processing single directory...\n")
@@ -7514,8 +7501,12 @@ def main():
 
                 run_single_config_analysis(config)
 
-        # Cleanup multi-scan artifacts
-        if mode == "multi_scan" and config.get('batch_mode', False) and output_root is not None:
+        # ── FIX 2: Run cleanup/copy-to-root for ALL batch modes, not only multi_scan ──
+        # cleanup_and_reorganize_output copies clinical_classification_*.xlsx,
+        # comparison_*.png, etc. from Positive/ and Negative/ up to output_root.
+        # Previously this was gated on `mode == "multi_scan"`, so single-config
+        # batch runs never had those files surfaced at the root level.
+        if config.get('batch_mode', False) and output_root is not None:
             cleanup_and_reorganize_output(output_root, config)
 
         # ==================== FINAL SUMMARY ====================
@@ -7569,7 +7560,6 @@ def main():
         print()
 
     finally:
-        # Log file handling
         try:
             if _log_file is not None:
                 _log_file.flush()
@@ -7577,7 +7567,6 @@ def main():
         except Exception:
             pass
 
-        # Copy log file to output directory
         try:
             if output_root is not None and _log_path and _log_path.exists():
                 print("\n📄 Saving log file...")
@@ -7629,6 +7618,7 @@ def main():
             print(f"\n⚠ Error in log copy section: {e}")
             import traceback
             traceback.print_exc()
+
 
 
 if __name__ == "__main__":
