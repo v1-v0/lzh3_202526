@@ -3076,202 +3076,297 @@ def save_debug_ids(
 # Fluorescence Registration / Alignment
 # ==================================================
 
-def align_fluorescence_channel(bf_img: np.ndarray, fluor_img: np.ndarray) -> tuple[np.ndarray, tuple[float, float], dict]:
-    """Aligns fluorescence to brightfield using phase correlation with validation
-    
-    Returns:
-        (aligned_image, (shift_y, shift_x), diagnostics)
+# ==================================================
+# Alignment helpers
+# ==================================================
+
+def _to_unit_float32(img: np.ndarray) -> np.ndarray:
+    """Normalise any grayscale or BGR image to float32 in [0, 1]."""
+    if img.ndim == 3:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    out = np.zeros(img.shape, dtype=np.uint8)
+    cv2.normalize(img, out, 0, 255, cv2.NORM_MINMAX)
+    return out.astype(np.float32) / 255.0
+
+
+def _dog_filter(
+    img_f32: np.ndarray,
+    sigma_fine: float = 1.5,
+    sigma_coarse: float = 4.0,
+) -> np.ndarray:
+    """Difference-of-Gaussians: extracts structural edges visible in both
+    brightfield and fluorescence channels, making cross-modal correlation
+    substantially more reliable.
+
+    The fine Gaussian captures particle boundaries and internal texture;
+    subtracting the coarse Gaussian suppresses the slowly-varying intensity
+    offset that differs completely between modalities.
     """
-    
-    # Convert to grayscale
-    if bf_img.ndim == 3:
-        bf_gray = cv2.cvtColor(bf_img, cv2.COLOR_BGR2GRAY)
-    else:
-        bf_gray = bf_img.copy()
+    fine   = cv2.GaussianBlur(img_f32, (0, 0), sigma_fine)
+    coarse = cv2.GaussianBlur(img_f32, (0, 0), sigma_coarse)
+    dog    = np.abs(fine - coarse)
+    mx     = float(dog.max())
+    return (dog / mx).astype(np.float32) if mx > 0 else dog
 
-    if fluor_img.ndim == 3:
-        fluor_gray = cv2.cvtColor(fluor_img, cv2.COLOR_BGR2GRAY)
-    else:
-        fluor_gray = fluor_img.copy()
 
-    # Normalize for better correlation
-    bf_norm = np.zeros_like(bf_gray, dtype=np.uint8)
-    cv2.normalize(bf_gray, bf_norm, 0, 255, cv2.NORM_MINMAX)
-    
-    fluor_norm = np.zeros_like(fluor_gray, dtype=np.uint8)
-    cv2.normalize(fluor_gray, fluor_norm, 0, 255, cv2.NORM_MINMAX)
-    
-    # Prepare for correlation
-    bf_for_corr = bf_norm.astype(np.float32) / 255.0
-    fluor_for_corr = fluor_norm.astype(np.float32) / 255.0
-    
-    # Test 1: Direct correlation
-    try:
-        shift1, error1, _ = phase_cross_correlation(
-            bf_for_corr, 
-            fluor_for_corr, 
-            upsample_factor=10
-        )
-    except Exception as e:
-        print(f"  ⚠ Direct correlation failed: {e}")
-        shift1, error1 = (0.0, 0.0), 1.0
-    
-    # Test 2: Inverted BF correlation
-    bf_inverted = 255 - bf_norm
-    bf_inv_for_corr = bf_inverted.astype(np.float32) / 255.0
-    
-    try:
-        shift2, error2, _ = phase_cross_correlation(
-            bf_inv_for_corr, 
-            fluor_for_corr, 
-            upsample_factor=10
-        )
-    except Exception as e:
-        print(f"  ⚠ Inverted correlation failed: {e}")
-        shift2, error2 = (0.0, 0.0), 1.0
-    
-    shift_y1, shift_x1 = shift1
-    shift_y2, shift_x2 = shift2
-    
-    print(f"  Alignment test:")
-    print(f"    Direct BF:   shift=({shift_x1:.2f}, {shift_y1:.2f}), error={error1:.6f}")
-    print(f"    Inverted BF: shift=({shift_x2:.2f}, {shift_y2:.2f}), error={error2:.6f}")
-    
-    # ========== DECISION LOGIC ==========
-    # If both errors are very high (> 0.5), correlation failed
-    CORRELATION_FAILURE_THRESHOLD = 0.5
-    
-    if error1 > CORRELATION_FAILURE_THRESHOLD and error2 > CORRELATION_FAILURE_THRESHOLD:
-        print(f"  ⚠️ Correlation failed (both errors > {CORRELATION_FAILURE_THRESHOLD})")
-        print(f"     Images may already be aligned or have no overlap")
-        print(f"     Using NO alignment (original fluorescence)")
-        
-        # Create diagnostics with no shift
-        diagnostics = create_alignment_diagnostics(
-            bf_norm, fluor_img, fluor_img, fluor_img,
-            (0.0, 0.0), (0.0, 0.0), error1, error2
-        )
-        
-        return fluor_img.copy(), (0.0, 0.0), diagnostics
-    
-    # If shifts are unreasonably large (> 50px), suspect failure
-    MAX_REASONABLE_SHIFT_PX = 50
-    shift1_magnitude = np.sqrt(shift_x1**2 + shift_y1**2)
-    shift2_magnitude = np.sqrt(shift_x2**2 + shift_y2**2)
-    
-    if shift1_magnitude > MAX_REASONABLE_SHIFT_PX and shift2_magnitude > MAX_REASONABLE_SHIFT_PX:
-        print(f"  ⚠️ Both shifts unreasonably large (>{MAX_REASONABLE_SHIFT_PX}px)")
-        print(f"     Using NO alignment")
-        
-        diagnostics = create_alignment_diagnostics(
-            bf_norm, fluor_img, fluor_img, fluor_img,
-            (0.0, 0.0), (0.0, 0.0), error1, error2
-        )
-        
-        return fluor_img.copy(), (0.0, 0.0), diagnostics
-    
-    # Choose the better correlation
-    if error1 < error2:
-        chosen_shift = shift1
-        chosen_error = error1
-        method = "Direct BF"
-        shift_y, shift_x = shift_y1, shift_x1
-    else:
-        chosen_shift = shift2
-        chosen_error = error2
-        method = "Inverted BF"
-        shift_y, shift_x = shift_y2, shift_x2
-    
-    print(f"    Using: {method}, shift=({shift_x:.2f}, {shift_y:.2f})px, error={chosen_error:.6f}")
-    
-    # Apply shift if it's reasonable
-    if np.sqrt(shift_x**2 + shift_y**2) > MAX_REASONABLE_SHIFT_PX:
-        print(f"  ⚠️ Chosen shift too large (>{MAX_REASONABLE_SHIFT_PX}px) - using NO alignment")
-        
-        diagnostics = create_alignment_diagnostics(
-            bf_norm, fluor_img, fluor_img, fluor_img,
-            (0.0, 0.0), (0.0, 0.0), error1, error2
-        )
-        
-        return fluor_img.copy(), (0.0, 0.0), diagnostics
-    
-    # Apply the shift
-    rows, cols = fluor_img.shape[:2]
-    
-    # Create shifted versions
-    no_shift = fluor_img.copy()
-    
-    M_pos = np.array([[1, 0, shift_x], [0, 1, shift_y]], dtype=np.float32)
-    aligned_pos = cv2.warpAffine(
-        fluor_img, M_pos, (cols, rows),
-        flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=0
+def _phase_correlate_windowed(
+    src: np.ndarray,
+    dst: np.ndarray,
+) -> tuple[tuple[float, float], float]:
+    """cv2.phaseCorrelate with a Hanning window to suppress edge-wrap artefacts.
+
+    Why cv2.phaseCorrelate instead of skimage.phase_cross_correlation:
+        skimage's error metric (1 − peak / norms) approaches 1.0 for cross-modal
+        images because their Fourier spectra are largely orthogonal.  OpenCV's
+        response metric (the normalised peak height of the cross-power spectrum)
+        instead approaches 0.0 when no shift is detectable, making the failure
+        mode distinguishable from a low-magnitude valid shift.
+
+    Args:
+        src, dst: float32 arrays in [0, 1], same shape, single-channel.
+
+    Returns:
+        (shift_y, shift_x) in pixels, response score in [0, 1].
+    """
+    h, w = src.shape
+    win  = np.outer(
+        np.hanning(h).astype(np.float32),
+        np.hanning(w).astype(np.float32),
     )
-    
-    M_neg = np.array([[1, 0, -shift_x], [0, 1, -shift_y]], dtype=np.float32)
-    aligned_neg = cv2.warpAffine(
-        fluor_img, M_neg, (cols, rows),
-        flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=0
-    )
-    
-    # Create diagnostics
-    diagnostics = create_alignment_diagnostics(
-        bf_norm, no_shift, aligned_pos, aligned_neg,
-        (shift_y, shift_x), (-shift_y, -shift_x),
-        error1, error2
-    )
-    
-    # Return the version that matches the chosen shift direction
-    if method == "Direct BF":
-        return aligned_pos, (shift_y, shift_x), diagnostics
-    else:
-        return aligned_neg, (-shift_y, -shift_x), diagnostics
+    # cv2.phaseCorrelate returns (shift_x, shift_y) — note OpenCV axis order
+    shift_xy, response = cv2.phaseCorrelate(src * win, dst * win)
+    return (float(shift_xy[1]), float(shift_xy[0])), float(response)
 
 
-def create_alignment_diagnostics(
-    bf_norm: np.ndarray,
-    fluor_none: np.ndarray,
-    fluor_pos: np.ndarray,
-    fluor_neg: np.ndarray,
-    shift_pos: tuple[float, float],
-    shift_neg: tuple[float, float],
-    error_direct: float,
-    error_inverted: float
+def _build_alignment_diagnostics(
+    bf_f32: np.ndarray,
+    fluor_original: np.ndarray,
+    fluor_aligned: np.ndarray,
+    resp_raw: float,
+    resp_dog: float,
 ) -> dict:
-    """Create diagnostic overlay images for alignment verification"""
-    
-    def make_overlay(fluor_version: np.ndarray) -> np.ndarray:
-        overlay = np.zeros((bf_norm.shape[0], bf_norm.shape[1], 3), dtype=np.uint8)
-        overlay[:, :, 1] = bf_norm  # Green = BF
-        
-        if fluor_version.ndim == 3:
-            fluor_disp = cv2.cvtColor(fluor_version, cv2.COLOR_BGR2GRAY)
-        else:
-            fluor_disp = fluor_version.copy()
-        
-        fluor_disp_norm = np.zeros_like(fluor_disp, dtype=np.uint8)
-        cv2.normalize(fluor_disp, fluor_disp_norm, 0, 255, cv2.NORM_MINMAX)
-        overlay[:, :, 0] = fluor_disp_norm  # Red = Fluorescence
-        
-        return overlay
-    
+    """Build the BGR overlay images used by process_image for alignment QC.
+
+    Returns a dict with the same keys as the old create_alignment_diagnostics
+    so no changes are needed in process_image:
+        overlay_none  → BF + unshifted fluorescence  (pre-alignment reference)
+        overlay_pos   → BF + aligned fluorescence    (result to inspect)
+        overlay_neg   → BF only in BGR (kept for compatibility; not meaningful
+                         in the new two-method scheme)
+        resp_raw, resp_dog → numeric scores for logging
+    """
+    def _bgr_overlay(bf: np.ndarray, fluor: np.ndarray) -> np.ndarray:
+        """Green channel = brightfield, red channel = fluorescence."""
+        h, w   = bf.shape
+        canvas = np.zeros((h, w, 3), dtype=np.uint8)
+        canvas[:, :, 1] = (bf * 255).clip(0, 255).astype(np.uint8)  # green
+
+        fl = fluor
+        if fl.ndim == 3:
+            fl = cv2.cvtColor(fl, cv2.COLOR_BGR2GRAY)
+        fl_norm = np.zeros_like(fl, dtype=np.uint8)
+        cv2.normalize(fl, fl_norm, 0, 255, cv2.NORM_MINMAX)
+        canvas[:, :, 2] = fl_norm  # red
+        return canvas
+
+    bf_bgr = cv2.cvtColor(
+        (bf_f32 * 255).clip(0, 255).astype(np.uint8), cv2.COLOR_GRAY2BGR
+    )
     return {
-        'overlay_none': make_overlay(fluor_none),
-        'overlay_pos': make_overlay(fluor_pos),
-        'overlay_neg': make_overlay(fluor_neg),
-        'shift_pos': shift_pos,
-        'shift_neg': shift_neg,
-        'error_direct': error_direct,
-        'error_inverted': error_inverted,
+        'overlay_none': _bgr_overlay(bf_f32, fluor_original),
+        'overlay_pos':  _bgr_overlay(bf_f32, fluor_aligned),
+        'overlay_neg':  bf_bgr,          # BF reference for manual comparison
+        'resp_raw':     resp_raw,
+        'resp_dog':     resp_dog,
+        # Legacy keys kept so any downstream code that reads them doesn't break
+        'shift_pos': (0.0, 0.0),
+        'shift_neg': (0.0, 0.0),
+        'error_direct':   resp_raw,
+        'error_inverted': resp_dog,
     }
+
+
+# ==================================================
+# Main alignment function  (drop-in replacement)
+# ==================================================
+
+def align_fluorescence_channel(
+    bf_img: np.ndarray,
+    fluor_img: np.ndarray,
+) -> tuple[np.ndarray, tuple[float, float], dict]:
+    """Align fluorescence channel to brightfield using dual-method phase correlation.
+
+    Why the original implementation always returned shift=(0, 0)
+    ─────────────────────────────────────────────────────────────
+    skimage.phase_cross_correlation computes::
+
+        error = 1 − |cross-power spectrum peak| / (‖BF‖ · ‖Fluor‖)
+
+    BF and fluorescence are different imaging modalities — the BF channel shows
+    particle shadows/edges while fluorescence shows emitted photons from inside
+    the particles.  Their Fourier spectra are largely orthogonal, so the
+    cross-power spectrum peak approaches zero and error → 1.000000 for every
+    image.  The existing gate (error > 0.5 → no shift) then fires unconditionally
+    and the fluorescence is never aligned.
+
+    Inverted-BF was not a meaningful second test: image inversion only changes
+    the DC component of the Fourier transform, leaving higher-frequency phases
+    unchanged, so both tests always produced identical error values.
+
+    Fix: two independent methods, both using cv2.phaseCorrelate
+    ────────────────────────────────────────────────────────────
+    Method 1 — Raw images with Hanning window.
+        Detects coarse channel-to-channel offset.
+
+    Method 2 — DoG-filtered images with Hanning window.
+        Difference-of-Gaussians extracts structural edges (microgel boundaries,
+        particle outlines) that appear in both modalities, substantially improving
+        the cross-correlation SNR for small shifts.
+
+    Acceptance criteria (no error threshold):
+        A shift is accepted when ``response ≥ MIN_RESPONSE`` AND
+        ``|shift| ≤ MAX_SHIFT_PX``.  When both methods produce an accepted shift,
+        they must also agree within ``AGREEMENT_PX`` before being averaged;
+        otherwise the DoG result is preferred (more discriminative).
+
+    Tuning guidance
+    ───────────────
+    MAX_SHIFT_PX   Increase if the stage can drift > 30 px between channels.
+    MIN_RESPONSE   Lower if images are very sparse (few particles); raise if
+                   debris is causing false positives.
+    AGREEMENT_PX   Tighten for high-magnification objectives.
+
+    Args:
+        bf_img:    Brightfield image (uint8 or uint16, grayscale or BGR).
+        fluor_img: Fluorescence image (same spatial dimensions).
+
+    Returns:
+        aligned_image  : fluor_img warped by the detected shift.
+        (shift_y, shift_x) : applied shift in pixels; (0.0, 0.0) if none.
+        diagnostics    : dict of BGR overlay images for QC.
+    """
+    # ── Tunable thresholds ───────────────────────────────────────────────
+    MAX_SHIFT_PX = 30.0   # pixels — discard physically implausible shifts
+    MIN_RESPONSE = 0.02   # cv2.phaseCorrelate response floor
+    AGREEMENT_PX = 2.0    # max distance between Method-1 and Method-2 shifts
+
+    # ── Preprocessing ────────────────────────────────────────────────────
+    bf_f      = _to_unit_float32(bf_img)
+    fluor_f   = _to_unit_float32(fluor_img)
+    bf_dog    = _dog_filter(bf_f)
+    fluor_dog = _dog_filter(fluor_f)
+
+    # ── Method 1: raw images ─────────────────────────────────────────────
+    try:
+        shift_raw, resp_raw = _phase_correlate_windowed(bf_f, fluor_f)
+        mag_raw  = float(np.hypot(shift_raw[0], shift_raw[1]))
+        raw_ok   = resp_raw >= MIN_RESPONSE and mag_raw <= MAX_SHIFT_PX
+    except Exception as exc:
+        print(f"  ⚠ Raw correlation error: {exc}")
+        shift_raw, resp_raw, mag_raw, raw_ok = (0.0, 0.0), 0.0, 0.0, False
+
+    # ── Method 2: DoG-filtered images ────────────────────────────────────
+    try:
+        shift_dog, resp_dog = _phase_correlate_windowed(bf_dog, fluor_dog)
+        mag_dog  = float(np.hypot(shift_dog[0], shift_dog[1]))
+        dog_ok   = resp_dog >= MIN_RESPONSE and mag_dog <= MAX_SHIFT_PX
+    except Exception as exc:
+        print(f"  ⚠ DoG correlation error: {exc}")
+        shift_dog, resp_dog, mag_dog, dog_ok = (0.0, 0.0), 0.0, 0.0, False
+
+    # ── Log both results ──────────────────────────────────────────────────
+    def _status(ok: bool) -> str:
+        return "✓ accepted" if ok else "✗ rejected"
+
+    print(f"  Alignment test:")
+    print(
+        f"    Raw:  shift=({shift_raw[1]:+.2f}, {shift_raw[0]:+.2f}) px  "
+        f"response={resp_raw:.4f}  {_status(raw_ok)}"
+    )
+    print(
+        f"    DoG:  shift=({shift_dog[1]:+.2f}, {shift_dog[0]:+.2f}) px  "
+        f"response={resp_dog:.4f}  {_status(dog_ok)}"
+    )
+
+    # ── Consistency check (only when both accepted) ───────────────────────
+    if raw_ok and dog_ok:
+        agreement = float(np.hypot(
+            shift_raw[0] - shift_dog[0],
+            shift_raw[1] - shift_dog[1],
+        ))
+        methods_agree = agreement <= AGREEMENT_PX
+    else:
+        agreement     = float('inf')
+        methods_agree = False
+
+    # ── Select best shift ─────────────────────────────────────────────────
+    if raw_ok and dog_ok and methods_agree:
+        # Average the two estimates for sub-pixel accuracy
+        shift_y = (shift_raw[0] + shift_dog[0]) / 2.0
+        shift_x = (shift_raw[1] + shift_dog[1]) / 2.0
+        method  = f"Raw+DoG averaged  agreement={agreement:.2f}px"
+
+    elif dog_ok:
+        # DoG is preferred when methods disagree: it is more discriminative
+        # for cross-modal images
+        shift_y, shift_x = shift_dog
+        method = f"DoG only  response={resp_dog:.4f}"
+        if raw_ok:
+            print(
+                f"  ⚠ Methods disagree ({agreement:.1f}px > {AGREEMENT_PX}px) "
+                f"— DoG preferred"
+            )
+
+    elif raw_ok:
+        shift_y, shift_x = shift_raw
+        method = f"Raw only  response={resp_raw:.4f}"
+
+    else:
+        # Neither method found a reliable shift — return original image.
+        # This is the correct outcome for pre-registered acquisitions.
+        print(
+            f"  ⚠ No reliable shift detected "
+            f"(raw={resp_raw:.4f}, DoG={resp_dog:.4f}, "
+            f"threshold={MIN_RESPONSE})\n"
+            f"     Possible causes:\n"
+            f"       • Images are already co-registered by the microscope\n"
+            f"       • Very few particles in frame (low SNR for correlation)\n"
+            f"       • Fluorescence channel absent or saturated\n"
+            f"     Using original (unshifted) fluorescence."
+        )
+        diag = _build_alignment_diagnostics(
+            bf_f, fluor_img, fluor_img, resp_raw, resp_dog
+        )
+        return fluor_img.copy(), (0.0, 0.0), diag
+
+    # ── Apply warp ────────────────────────────────────────────────────────
+    rows, cols = fluor_img.shape[:2]
+    M = np.array([[1.0, 0.0, shift_x],
+                  [0.0, 1.0, shift_y]], dtype=np.float32)
+    aligned = cv2.warpAffine(
+        fluor_img, M, (cols, rows),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    )
+
+    print(
+        f"  📊 Alignment shift: ({shift_x:+.2f}, {shift_y:+.2f}) px  [{method}]\n"
+        f"     Check DIAG_*.png files to verify alignment quality"
+    )
+
+    diag = _build_alignment_diagnostics(
+        bf_f, fluor_img, aligned, resp_raw, resp_dog
+    )
+    return aligned, (float(shift_y), float(shift_x)), diag
+
 
 
 # ==================================================
 # Fluorescence segmentation + matching
 # ==================================================
+
+
 def segment_fluorescence_global(
     fluor_img8: np.ndarray,
     bacteria_config: 'SegmentationConfig'  # NEW parameter
