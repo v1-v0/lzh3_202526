@@ -3076,202 +3076,297 @@ def save_debug_ids(
 # Fluorescence Registration / Alignment
 # ==================================================
 
-def align_fluorescence_channel(bf_img: np.ndarray, fluor_img: np.ndarray) -> tuple[np.ndarray, tuple[float, float], dict]:
-    """Aligns fluorescence to brightfield using phase correlation with validation
-    
-    Returns:
-        (aligned_image, (shift_y, shift_x), diagnostics)
+# ==================================================
+# Alignment helpers
+# ==================================================
+
+def _to_unit_float32(img: np.ndarray) -> np.ndarray:
+    """Normalise any grayscale or BGR image to float32 in [0, 1]."""
+    if img.ndim == 3:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    out = np.zeros(img.shape, dtype=np.uint8)
+    cv2.normalize(img, out, 0, 255, cv2.NORM_MINMAX)
+    return out.astype(np.float32) / 255.0
+
+
+def _dog_filter(
+    img_f32: np.ndarray,
+    sigma_fine: float = 1.5,
+    sigma_coarse: float = 4.0,
+) -> np.ndarray:
+    """Difference-of-Gaussians: extracts structural edges visible in both
+    brightfield and fluorescence channels, making cross-modal correlation
+    substantially more reliable.
+
+    The fine Gaussian captures particle boundaries and internal texture;
+    subtracting the coarse Gaussian suppresses the slowly-varying intensity
+    offset that differs completely between modalities.
     """
-    
-    # Convert to grayscale
-    if bf_img.ndim == 3:
-        bf_gray = cv2.cvtColor(bf_img, cv2.COLOR_BGR2GRAY)
-    else:
-        bf_gray = bf_img.copy()
+    fine   = cv2.GaussianBlur(img_f32, (0, 0), sigma_fine)
+    coarse = cv2.GaussianBlur(img_f32, (0, 0), sigma_coarse)
+    dog    = np.abs(fine - coarse)
+    mx     = float(dog.max())
+    return (dog / mx).astype(np.float32) if mx > 0 else dog
 
-    if fluor_img.ndim == 3:
-        fluor_gray = cv2.cvtColor(fluor_img, cv2.COLOR_BGR2GRAY)
-    else:
-        fluor_gray = fluor_img.copy()
 
-    # Normalize for better correlation
-    bf_norm = np.zeros_like(bf_gray, dtype=np.uint8)
-    cv2.normalize(bf_gray, bf_norm, 0, 255, cv2.NORM_MINMAX)
-    
-    fluor_norm = np.zeros_like(fluor_gray, dtype=np.uint8)
-    cv2.normalize(fluor_gray, fluor_norm, 0, 255, cv2.NORM_MINMAX)
-    
-    # Prepare for correlation
-    bf_for_corr = bf_norm.astype(np.float32) / 255.0
-    fluor_for_corr = fluor_norm.astype(np.float32) / 255.0
-    
-    # Test 1: Direct correlation
-    try:
-        shift1, error1, _ = phase_cross_correlation(
-            bf_for_corr, 
-            fluor_for_corr, 
-            upsample_factor=10
-        )
-    except Exception as e:
-        print(f"  ⚠ Direct correlation failed: {e}")
-        shift1, error1 = (0.0, 0.0), 1.0
-    
-    # Test 2: Inverted BF correlation
-    bf_inverted = 255 - bf_norm
-    bf_inv_for_corr = bf_inverted.astype(np.float32) / 255.0
-    
-    try:
-        shift2, error2, _ = phase_cross_correlation(
-            bf_inv_for_corr, 
-            fluor_for_corr, 
-            upsample_factor=10
-        )
-    except Exception as e:
-        print(f"  ⚠ Inverted correlation failed: {e}")
-        shift2, error2 = (0.0, 0.0), 1.0
-    
-    shift_y1, shift_x1 = shift1
-    shift_y2, shift_x2 = shift2
-    
-    print(f"  Alignment test:")
-    print(f"    Direct BF:   shift=({shift_x1:.2f}, {shift_y1:.2f}), error={error1:.6f}")
-    print(f"    Inverted BF: shift=({shift_x2:.2f}, {shift_y2:.2f}), error={error2:.6f}")
-    
-    # ========== DECISION LOGIC ==========
-    # If both errors are very high (> 0.5), correlation failed
-    CORRELATION_FAILURE_THRESHOLD = 0.5
-    
-    if error1 > CORRELATION_FAILURE_THRESHOLD and error2 > CORRELATION_FAILURE_THRESHOLD:
-        print(f"  ⚠️ Correlation failed (both errors > {CORRELATION_FAILURE_THRESHOLD})")
-        print(f"     Images may already be aligned or have no overlap")
-        print(f"     Using NO alignment (original fluorescence)")
-        
-        # Create diagnostics with no shift
-        diagnostics = create_alignment_diagnostics(
-            bf_norm, fluor_img, fluor_img, fluor_img,
-            (0.0, 0.0), (0.0, 0.0), error1, error2
-        )
-        
-        return fluor_img.copy(), (0.0, 0.0), diagnostics
-    
-    # If shifts are unreasonably large (> 50px), suspect failure
-    MAX_REASONABLE_SHIFT_PX = 50
-    shift1_magnitude = np.sqrt(shift_x1**2 + shift_y1**2)
-    shift2_magnitude = np.sqrt(shift_x2**2 + shift_y2**2)
-    
-    if shift1_magnitude > MAX_REASONABLE_SHIFT_PX and shift2_magnitude > MAX_REASONABLE_SHIFT_PX:
-        print(f"  ⚠️ Both shifts unreasonably large (>{MAX_REASONABLE_SHIFT_PX}px)")
-        print(f"     Using NO alignment")
-        
-        diagnostics = create_alignment_diagnostics(
-            bf_norm, fluor_img, fluor_img, fluor_img,
-            (0.0, 0.0), (0.0, 0.0), error1, error2
-        )
-        
-        return fluor_img.copy(), (0.0, 0.0), diagnostics
-    
-    # Choose the better correlation
-    if error1 < error2:
-        chosen_shift = shift1
-        chosen_error = error1
-        method = "Direct BF"
-        shift_y, shift_x = shift_y1, shift_x1
-    else:
-        chosen_shift = shift2
-        chosen_error = error2
-        method = "Inverted BF"
-        shift_y, shift_x = shift_y2, shift_x2
-    
-    print(f"    Using: {method}, shift=({shift_x:.2f}, {shift_y:.2f})px, error={chosen_error:.6f}")
-    
-    # Apply shift if it's reasonable
-    if np.sqrt(shift_x**2 + shift_y**2) > MAX_REASONABLE_SHIFT_PX:
-        print(f"  ⚠️ Chosen shift too large (>{MAX_REASONABLE_SHIFT_PX}px) - using NO alignment")
-        
-        diagnostics = create_alignment_diagnostics(
-            bf_norm, fluor_img, fluor_img, fluor_img,
-            (0.0, 0.0), (0.0, 0.0), error1, error2
-        )
-        
-        return fluor_img.copy(), (0.0, 0.0), diagnostics
-    
-    # Apply the shift
-    rows, cols = fluor_img.shape[:2]
-    
-    # Create shifted versions
-    no_shift = fluor_img.copy()
-    
-    M_pos = np.array([[1, 0, shift_x], [0, 1, shift_y]], dtype=np.float32)
-    aligned_pos = cv2.warpAffine(
-        fluor_img, M_pos, (cols, rows),
-        flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=0
+def _phase_correlate_windowed(
+    src: np.ndarray,
+    dst: np.ndarray,
+) -> tuple[tuple[float, float], float]:
+    """cv2.phaseCorrelate with a Hanning window to suppress edge-wrap artefacts.
+
+    Why cv2.phaseCorrelate instead of skimage.phase_cross_correlation:
+        skimage's error metric (1 − peak / norms) approaches 1.0 for cross-modal
+        images because their Fourier spectra are largely orthogonal.  OpenCV's
+        response metric (the normalised peak height of the cross-power spectrum)
+        instead approaches 0.0 when no shift is detectable, making the failure
+        mode distinguishable from a low-magnitude valid shift.
+
+    Args:
+        src, dst: float32 arrays in [0, 1], same shape, single-channel.
+
+    Returns:
+        (shift_y, shift_x) in pixels, response score in [0, 1].
+    """
+    h, w = src.shape
+    win  = np.outer(
+        np.hanning(h).astype(np.float32),
+        np.hanning(w).astype(np.float32),
     )
-    
-    M_neg = np.array([[1, 0, -shift_x], [0, 1, -shift_y]], dtype=np.float32)
-    aligned_neg = cv2.warpAffine(
-        fluor_img, M_neg, (cols, rows),
-        flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=0
-    )
-    
-    # Create diagnostics
-    diagnostics = create_alignment_diagnostics(
-        bf_norm, no_shift, aligned_pos, aligned_neg,
-        (shift_y, shift_x), (-shift_y, -shift_x),
-        error1, error2
-    )
-    
-    # Return the version that matches the chosen shift direction
-    if method == "Direct BF":
-        return aligned_pos, (shift_y, shift_x), diagnostics
-    else:
-        return aligned_neg, (-shift_y, -shift_x), diagnostics
+    # cv2.phaseCorrelate returns (shift_x, shift_y) — note OpenCV axis order
+    shift_xy, response = cv2.phaseCorrelate(src * win, dst * win)
+    return (float(shift_xy[1]), float(shift_xy[0])), float(response)
 
 
-def create_alignment_diagnostics(
-    bf_norm: np.ndarray,
-    fluor_none: np.ndarray,
-    fluor_pos: np.ndarray,
-    fluor_neg: np.ndarray,
-    shift_pos: tuple[float, float],
-    shift_neg: tuple[float, float],
-    error_direct: float,
-    error_inverted: float
+def _build_alignment_diagnostics(
+    bf_f32: np.ndarray,
+    fluor_original: np.ndarray,
+    fluor_aligned: np.ndarray,
+    resp_raw: float,
+    resp_dog: float,
 ) -> dict:
-    """Create diagnostic overlay images for alignment verification"""
-    
-    def make_overlay(fluor_version: np.ndarray) -> np.ndarray:
-        overlay = np.zeros((bf_norm.shape[0], bf_norm.shape[1], 3), dtype=np.uint8)
-        overlay[:, :, 1] = bf_norm  # Green = BF
-        
-        if fluor_version.ndim == 3:
-            fluor_disp = cv2.cvtColor(fluor_version, cv2.COLOR_BGR2GRAY)
-        else:
-            fluor_disp = fluor_version.copy()
-        
-        fluor_disp_norm = np.zeros_like(fluor_disp, dtype=np.uint8)
-        cv2.normalize(fluor_disp, fluor_disp_norm, 0, 255, cv2.NORM_MINMAX)
-        overlay[:, :, 0] = fluor_disp_norm  # Red = Fluorescence
-        
-        return overlay
-    
+    """Build the BGR overlay images used by process_image for alignment QC.
+
+    Returns a dict with the same keys as the old create_alignment_diagnostics
+    so no changes are needed in process_image:
+        overlay_none  → BF + unshifted fluorescence  (pre-alignment reference)
+        overlay_pos   → BF + aligned fluorescence    (result to inspect)
+        overlay_neg   → BF only in BGR (kept for compatibility; not meaningful
+                         in the new two-method scheme)
+        resp_raw, resp_dog → numeric scores for logging
+    """
+    def _bgr_overlay(bf: np.ndarray, fluor: np.ndarray) -> np.ndarray:
+        """Green channel = brightfield, red channel = fluorescence."""
+        h, w   = bf.shape
+        canvas = np.zeros((h, w, 3), dtype=np.uint8)
+        canvas[:, :, 1] = (bf * 255).clip(0, 255).astype(np.uint8)  # green
+
+        fl = fluor
+        if fl.ndim == 3:
+            fl = cv2.cvtColor(fl, cv2.COLOR_BGR2GRAY)
+        fl_norm = np.zeros_like(fl, dtype=np.uint8)
+        cv2.normalize(fl, fl_norm, 0, 255, cv2.NORM_MINMAX)
+        canvas[:, :, 2] = fl_norm  # red
+        return canvas
+
+    bf_bgr = cv2.cvtColor(
+        (bf_f32 * 255).clip(0, 255).astype(np.uint8), cv2.COLOR_GRAY2BGR
+    )
     return {
-        'overlay_none': make_overlay(fluor_none),
-        'overlay_pos': make_overlay(fluor_pos),
-        'overlay_neg': make_overlay(fluor_neg),
-        'shift_pos': shift_pos,
-        'shift_neg': shift_neg,
-        'error_direct': error_direct,
-        'error_inverted': error_inverted,
+        'overlay_none': _bgr_overlay(bf_f32, fluor_original),
+        'overlay_pos':  _bgr_overlay(bf_f32, fluor_aligned),
+        'overlay_neg':  bf_bgr,          # BF reference for manual comparison
+        'resp_raw':     resp_raw,
+        'resp_dog':     resp_dog,
+        # Legacy keys kept so any downstream code that reads them doesn't break
+        'shift_pos': (0.0, 0.0),
+        'shift_neg': (0.0, 0.0),
+        'error_direct':   resp_raw,
+        'error_inverted': resp_dog,
     }
+
+
+# ==================================================
+# Main alignment function  (drop-in replacement)
+# ==================================================
+
+def align_fluorescence_channel(
+    bf_img: np.ndarray,
+    fluor_img: np.ndarray,
+) -> tuple[np.ndarray, tuple[float, float], dict]:
+    """Align fluorescence channel to brightfield using dual-method phase correlation.
+
+    Why the original implementation always returned shift=(0, 0)
+    ─────────────────────────────────────────────────────────────
+    skimage.phase_cross_correlation computes::
+
+        error = 1 − |cross-power spectrum peak| / (‖BF‖ · ‖Fluor‖)
+
+    BF and fluorescence are different imaging modalities — the BF channel shows
+    particle shadows/edges while fluorescence shows emitted photons from inside
+    the particles.  Their Fourier spectra are largely orthogonal, so the
+    cross-power spectrum peak approaches zero and error → 1.000000 for every
+    image.  The existing gate (error > 0.5 → no shift) then fires unconditionally
+    and the fluorescence is never aligned.
+
+    Inverted-BF was not a meaningful second test: image inversion only changes
+    the DC component of the Fourier transform, leaving higher-frequency phases
+    unchanged, so both tests always produced identical error values.
+
+    Fix: two independent methods, both using cv2.phaseCorrelate
+    ────────────────────────────────────────────────────────────
+    Method 1 — Raw images with Hanning window.
+        Detects coarse channel-to-channel offset.
+
+    Method 2 — DoG-filtered images with Hanning window.
+        Difference-of-Gaussians extracts structural edges (microgel boundaries,
+        particle outlines) that appear in both modalities, substantially improving
+        the cross-correlation SNR for small shifts.
+
+    Acceptance criteria (no error threshold):
+        A shift is accepted when ``response ≥ MIN_RESPONSE`` AND
+        ``|shift| ≤ MAX_SHIFT_PX``.  When both methods produce an accepted shift,
+        they must also agree within ``AGREEMENT_PX`` before being averaged;
+        otherwise the DoG result is preferred (more discriminative).
+
+    Tuning guidance
+    ───────────────
+    MAX_SHIFT_PX   Increase if the stage can drift > 30 px between channels.
+    MIN_RESPONSE   Lower if images are very sparse (few particles); raise if
+                   debris is causing false positives.
+    AGREEMENT_PX   Tighten for high-magnification objectives.
+
+    Args:
+        bf_img:    Brightfield image (uint8 or uint16, grayscale or BGR).
+        fluor_img: Fluorescence image (same spatial dimensions).
+
+    Returns:
+        aligned_image  : fluor_img warped by the detected shift.
+        (shift_y, shift_x) : applied shift in pixels; (0.0, 0.0) if none.
+        diagnostics    : dict of BGR overlay images for QC.
+    """
+    # ── Tunable thresholds ───────────────────────────────────────────────
+    MAX_SHIFT_PX = 30.0   # pixels — discard physically implausible shifts
+    MIN_RESPONSE = 0.02   # cv2.phaseCorrelate response floor
+    AGREEMENT_PX = 2.0    # max distance between Method-1 and Method-2 shifts
+
+    # ── Preprocessing ────────────────────────────────────────────────────
+    bf_f      = _to_unit_float32(bf_img)
+    fluor_f   = _to_unit_float32(fluor_img)
+    bf_dog    = _dog_filter(bf_f)
+    fluor_dog = _dog_filter(fluor_f)
+
+    # ── Method 1: raw images ─────────────────────────────────────────────
+    try:
+        shift_raw, resp_raw = _phase_correlate_windowed(bf_f, fluor_f)
+        mag_raw  = float(np.hypot(shift_raw[0], shift_raw[1]))
+        raw_ok   = resp_raw >= MIN_RESPONSE and mag_raw <= MAX_SHIFT_PX
+    except Exception as exc:
+        print(f"  ⚠ Raw correlation error: {exc}")
+        shift_raw, resp_raw, mag_raw, raw_ok = (0.0, 0.0), 0.0, 0.0, False
+
+    # ── Method 2: DoG-filtered images ────────────────────────────────────
+    try:
+        shift_dog, resp_dog = _phase_correlate_windowed(bf_dog, fluor_dog)
+        mag_dog  = float(np.hypot(shift_dog[0], shift_dog[1]))
+        dog_ok   = resp_dog >= MIN_RESPONSE and mag_dog <= MAX_SHIFT_PX
+    except Exception as exc:
+        print(f"  ⚠ DoG correlation error: {exc}")
+        shift_dog, resp_dog, mag_dog, dog_ok = (0.0, 0.0), 0.0, 0.0, False
+
+    # ── Log both results ──────────────────────────────────────────────────
+    def _status(ok: bool) -> str:
+        return "✓ accepted" if ok else "✗ rejected"
+
+    print(f"  Alignment test:")
+    print(
+        f"    Raw:  shift=({shift_raw[1]:+.2f}, {shift_raw[0]:+.2f}) px  "
+        f"response={resp_raw:.4f}  {_status(raw_ok)}"
+    )
+    print(
+        f"    DoG:  shift=({shift_dog[1]:+.2f}, {shift_dog[0]:+.2f}) px  "
+        f"response={resp_dog:.4f}  {_status(dog_ok)}"
+    )
+
+    # ── Consistency check (only when both accepted) ───────────────────────
+    if raw_ok and dog_ok:
+        agreement = float(np.hypot(
+            shift_raw[0] - shift_dog[0],
+            shift_raw[1] - shift_dog[1],
+        ))
+        methods_agree = agreement <= AGREEMENT_PX
+    else:
+        agreement     = float('inf')
+        methods_agree = False
+
+    # ── Select best shift ─────────────────────────────────────────────────
+    if raw_ok and dog_ok and methods_agree:
+        # Average the two estimates for sub-pixel accuracy
+        shift_y = (shift_raw[0] + shift_dog[0]) / 2.0
+        shift_x = (shift_raw[1] + shift_dog[1]) / 2.0
+        method  = f"Raw+DoG averaged  agreement={agreement:.2f}px"
+
+    elif dog_ok:
+        # DoG is preferred when methods disagree: it is more discriminative
+        # for cross-modal images
+        shift_y, shift_x = shift_dog
+        method = f"DoG only  response={resp_dog:.4f}"
+        if raw_ok:
+            print(
+                f"  ⚠ Methods disagree ({agreement:.1f}px > {AGREEMENT_PX}px) "
+                f"— DoG preferred"
+            )
+
+    elif raw_ok:
+        shift_y, shift_x = shift_raw
+        method = f"Raw only  response={resp_raw:.4f}"
+
+    else:
+        # Neither method found a reliable shift — return original image.
+        # This is the correct outcome for pre-registered acquisitions.
+        print(
+            f"  ⚠ No reliable shift detected "
+            f"(raw={resp_raw:.4f}, DoG={resp_dog:.4f}, "
+            f"threshold={MIN_RESPONSE})\n"
+            f"     Possible causes:\n"
+            f"       • Images are already co-registered by the microscope\n"
+            f"       • Very few particles in frame (low SNR for correlation)\n"
+            f"       • Fluorescence channel absent or saturated\n"
+            f"     Using original (unshifted) fluorescence."
+        )
+        diag = _build_alignment_diagnostics(
+            bf_f, fluor_img, fluor_img, resp_raw, resp_dog
+        )
+        return fluor_img.copy(), (0.0, 0.0), diag
+
+    # ── Apply warp ────────────────────────────────────────────────────────
+    rows, cols = fluor_img.shape[:2]
+    M = np.array([[1.0, 0.0, shift_x],
+                  [0.0, 1.0, shift_y]], dtype=np.float32)
+    aligned = cv2.warpAffine(
+        fluor_img, M, (cols, rows),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0,
+    )
+
+    print(
+        f"  📊 Alignment shift: ({shift_x:+.2f}, {shift_y:+.2f}) px  [{method}]\n"
+        f"     Check DIAG_*.png files to verify alignment quality"
+    )
+
+    diag = _build_alignment_diagnostics(
+        bf_f, fluor_img, aligned, resp_raw, resp_dog
+    )
+    return aligned, (float(shift_y), float(shift_x)), diag
+
 
 
 # ==================================================
 # Fluorescence segmentation + matching
 # ==================================================
+
+
 def segment_fluorescence_global(
     fluor_img8: np.ndarray,
     bacteria_config: 'SegmentationConfig'  # NEW parameter
@@ -5408,38 +5503,58 @@ def generate_laboratory_report_pdf(
             box_y = y_top - (len(final_df)+2)*row_h
             ax.text(0.05, box_y, "INTERPRETATION", fontsize=11, fontweight='bold', color=HEADER_BG)
             ax.plot([0.05, 0.95], [box_y-0.01, box_y-0.01], color=ACCENT, lw=1)
+
+            FOOTER_GUARD = 0.10  # stop drawing before footer zone
             interp_y = box_y - 0.04
+            remaining_groups = []
             for _, row in final_df.iterrows():
                 grp = row.get('Group', ''); fc = row.get('Final_Classification', '')
                 if grp == 'Control':
                     continue
                 symbol_map = {'NEGATIVE': ("●","#006100"), 'POSITIVE': ("●","#9C0006"),
-                              'NO OBVIOUS BACTERIA': ("○","#9C6500"), 'MIXED/CONTRADICTORY': ("◆","#974706")}
+                            'NO OBVIOUS BACTERIA': ("○","#9C6500"), 'MIXED/CONTRADICTORY': ("◆","#974706")}
                 sym, clr = symbol_map.get(fc, ("?","#666666"))
                 interp_text = str(row.get('Interpretation', fc))
-                # Split interpretation into main text and p-value annotations
                 main_part = interp_text.split('[')[0].strip()
                 pval_parts = re.findall(r'\[.*?\]', interp_text)
                 pval_note = "  ".join(pval_parts)
+
+                # Calculate how much vertical space this entry needs
+                entry_height = 0.045 if pval_note else 0.030
+
+                # Guard: if this entry would cross the footer, stop and note overflow
+                if interp_y - entry_height < FOOTER_GUARD:
+                    remaining_groups.append(f"Group {grp}")
+                    continue  # collect remaining but don't draw
 
                 ax.text(0.07, interp_y, sym, fontsize=10, color=clr, va='center', ha='center')
                 ax.text(0.09, interp_y, f"Group {grp}: {main_part}", fontsize=8.5,
                         color='#333333', va='center', fontweight='bold')
                 if pval_note:
-                    ax.text(0.09, interp_y-0.018, pval_note, fontsize=7, color='#666666', va='center')
+                    ax.text(0.09, interp_y - 0.018, pval_note, fontsize=7, color='#666666', va='center')
                     interp_y -= 0.045
                 else:
                     interp_y -= 0.030
+
+            # If any groups were clipped, add a continuation note just above the footer guard
+            if remaining_groups:
+                note_y = max(interp_y, FOOTER_GUARD - 0.005)
+                ax.text(0.07, note_y, "⋯", fontsize=11, color='#999999', va='center')
+                ax.text(0.09, note_y,
+                        f"{', '.join(remaining_groups)} — continued on pages 2–3",
+                        fontsize=7, color='#999999', va='center', fontstyle='italic')
+
+
 
             pdf.savefig(fig1); plt.close(fig1)
 
             # ============ PAGE 2 — Charts ============
             fig2 = plt.figure(figsize=(A4_W, A4_H))
             tpct = config.get('threshold_pct', 0.05)
-            ax_gp = fig2.add_axes((0.10, 0.53, 0.82, 0.35))
+            ax_gp = fig2.add_axes((0.10, 0.55, 0.82, 0.33))
             _draw_chart_on_axis(ax_gp, gplus_classification, "G+ Microgel (Positive)", ACCENT,
                                 output_dir=config.get('positive_output'), threshold_pct=tpct)
-            ax_gm = fig2.add_axes((0.10, 0.08, 0.82, 0.35))
+            ax_gm = fig2.add_axes((0.10, 0.10, 0.82, 0.33))
             _draw_chart_on_axis(ax_gm, gminus_classification, "G− Microgel (Negative)", "#C0504D",
                                 output_dir=config.get('negative_output'), threshold_pct=tpct)
             ax_o = _make_ax(fig2); _draw_header(ax_o, "Comparison Charts"); _draw_footer(ax_o, 2, total_pages)
@@ -5707,26 +5822,21 @@ def _draw_chart_on_axis(
                 color='#333333'
             )
 
-    # ── N labels beneath bars ──
-    for i, (_, row_data) in enumerate(df.iterrows()):
-        n_val = row_data.get('N', '')
-        ax.text(
-            float(x[i]),  # ✅ Convert to float
-            -y_max * 0.04, 
-            f"n={n_val}", 
-            ha='center',
-            va='top', 
-            fontsize=7, 
-            color='#666666'
-        )
+    # Build combined tick labels: group name on line 1, n= on line 2
+    combined_labels = []
+    for g in groups:
+        row_match = df[df['Group'] == g]
+        if not row_match.empty:
+            n_val = row_match.iloc[0].get('N', '')
+            combined_labels.append(f"{g}\nn={n_val}")
+        else:
+            combined_labels.append(g)
 
     ax.set_xticks(x)
-    ax.set_xticklabels(groups, fontsize=8, fontweight='bold')
+    ax.set_xticklabels(combined_labels, fontsize=7.5, fontweight='bold',
+                    multialignment='center', linespacing=1.4)
+    ax.tick_params(axis='x', pad=6)   # small extra gap between bars and labels
     ax.set_ylabel("Fluor Density (a.u./µm²)", fontsize=8)
-    ax.set_title(title, fontsize=10, fontweight='bold', pad=8)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.grid(axis='y', alpha=0.2, ls='--')
 
 
 def _draw_forest_plot_on_axis(
@@ -5864,12 +5974,26 @@ def _draw_decision_heatmap_on_axis(
 
     # Draw grid
     cell_h = 0.8 / max(n_rows, 1)
-    cell_w = 0.85 / n_cols
     x0, y0 = 0.05, 0.15
+    total_w = 0.85
+
+    # Variable column widths: Detection cols narrow, Final Classification wide, Strength cols medium
+    # col order: G+ Detection | G- Detection | Final Classification | G+ Strength | G- Strength
+    _col_fractions = [0.13, 0.13, 0.30, 0.12, 0.12]   # must sum to ≤ 0.85 / total_w
+    assert len(_col_fractions) >= n_cols, "Add more fractions if col_labels grows"
+    raw_col_widths = [total_w * f for f in _col_fractions[:n_cols]]
+    # Normalise so they fill exactly total_w
+    _scale = total_w / sum(raw_col_widths)
+    col_widths = [w * _scale for w in raw_col_widths]
+
+    # Compute left-edge x position for each column
+    col_x_pos = [x0]
+    for w in col_widths[:-1]:
+        col_x_pos.append(col_x_pos[-1] + w)
 
     # Column headers
     for j, label in enumerate(col_labels):
-        cx = x0 + j * cell_w + cell_w / 2
+        cx = col_x_pos[j] + col_widths[j] / 2
         cy = y0 + n_rows * cell_h + cell_h * 0.4
         ax.text(cx, cy, label, fontsize=7.5, fontweight='bold', ha='center', va='center',
                 color='white',
@@ -5884,15 +6008,22 @@ def _draw_decision_heatmap_on_axis(
     # Cells
     for i in range(n_rows):
         for j in range(n_cols):
-            cx = x0 + j * cell_w
+            cx = col_x_pos[j]
             cy = y0 + (n_rows - 1 - i) * cell_h
-            rect = mpatches.Rectangle((cx, cy), cell_w, cell_h,
-                                  facecolor=grid_colour[i][j],
-                                  edgecolor='#CCCCCC', linewidth=0.5)
+            rect = mpatches.Rectangle((cx, cy), col_widths[j], cell_h,
+                                facecolor=grid_colour[i][j],
+                                edgecolor='#CCCCCC', linewidth=0.5)
             ax.add_patch(rect)
-            ax.text(cx + cell_w / 2, cy + cell_h / 2,
-                    grid_text[i][j], fontsize=7, ha='center', va='center',
-                    color='#333333', fontweight='bold' if j == 2 else 'normal')
+            # Wrap long text for the Final Classification column (j==2)
+            cell_text = grid_text[i][j]
+            if j == 2 and len(cell_text) > 16:
+                # Break at '/' or space for two-line display
+                cell_text = cell_text.replace('/', '/\n').replace('NO OBVIOUS', 'NO\nOBVIOUS')
+            ax.text(cx + col_widths[j] / 2, cy + cell_h / 2,
+                    cell_text, fontsize=6.5, ha='center', va='center',
+                    color='#333333',
+                    fontweight='bold' if j == 2 else 'normal',
+                    linespacing=1.3)
 
     ax.set_xlim(-0.05, 1.05)
     ax.set_ylim(0, y0 + (n_rows + 1) * cell_h + 0.05)
@@ -6774,6 +6905,33 @@ def collect_images_from_directory(source_dir: Path) -> Dict[str, Dict]:
     return image_groups
 
 
+# Configurations included in the "Unknown Sample" multi-scan.
+# Streptococcus mitis is excluded (insufficient validation samples).
+# Default (General Purpose) is excluded (uninformative for identification).
+
+
+def _load_multi_scan_whitelist() -> list[str]:
+    """Return validated bacteria keys from the registry.
+
+    Falls back to the original hardcoded list if the registry module is
+    unavailable (e.g. frozen executable without the file).
+    """
+    try:
+        from bacteria_registry import registry as _reg
+        wl = _reg.get_whitelist()
+        if wl:
+            print(f"[Whitelist] {len(wl)} validated bacteria: {wl}")
+            return wl
+        print("[Whitelist] Registry returned empty whitelist; using fallback.")
+    except Exception as exc:
+        print(f"[Whitelist] Could not load from registry ({exc}); using fallback.")
+
+    return ['klebsiella_pneumoniae', 'proteus_mirabilis']   # fallback
+
+
+MULTI_SCAN_WHITELIST: list[str] = _load_multi_scan_whitelist()
+
+
 def select_bacteria_configuration() -> dict:
     """Interactive bacteria configuration selector with multi-scan support
     
@@ -6860,8 +7018,8 @@ def select_bacteria_configuration() -> dict:
     print("PROCESSING MODE SELECTION")
     print("─" * 80)
     print("\nSelect processing mode:")
-    print("  [1] UNKNOWN SAMPLE - Scan all configurations (Recommended)")
-    print("      → Tests all bacteria types and provides confidence report")
+    print("  [1] UNKNOWN SAMPLE - Scan validated configurations (Recommended)")
+    print("      → Tests clinically validated bacteria types and provides confidence report")
     print("      → Best for clinical samples with unknown bacteria")
     print()
     print("  [2] KNOWN BACTERIA - Select specific configuration")
@@ -6898,40 +7056,68 @@ def select_bacteria_configuration() -> dict:
         # ========================================
         if choice == "1":
             print("\n✓ Selected: UNKNOWN SAMPLE (Multi-Configuration Scan)")
-            print(f"\n  Will test {len(available_configs)} configurations:")
-            for bacteria_key in available_configs:
-                print(f"    • {config_names[bacteria_key]}")
-            
+
+            # ── Filter to whitelisted configs only ──────────────────────────
+            configs_to_scan = [k for k in available_configs if k in MULTI_SCAN_WHITELIST]
+            skipped = [k for k in available_configs if k not in MULTI_SCAN_WHITELIST]
+
+            if not configs_to_scan:
+                print("\n  ❌ No whitelisted configurations found in bacteria_configs/")
+                print(f"     Required files: "
+                      f"{', '.join(f'{k}.json' for k in MULTI_SCAN_WHITELIST)}")
+                print("     Please run tuner.py to create these configurations first.")
+                continue  # Back to mode selection
+
+            # Warn about excluded configs so the user knows this is intentional
+            print(f"\n  Will test {len(configs_to_scan)} validated configurations:")
+            for bacteria_key in configs_to_scan:
+                print(f"    ✓ {config_names[bacteria_key]}")
+
+            if skipped:
+                print(f"\n  Excluded from scan ({len(skipped)} config(s)):")
+                for k in skipped:
+                    if 'streptococcus' in k:
+                        reason = "under testing"
+                    elif k == 'default':
+                        reason = "baseline configuration only"
+                    else:
+                        reason = "not in multi-scan whitelist"
+                    print(f"    ✗ {config_names.get(k, k)}  ({reason})")
+
             confirm = logged_input("\n  Proceed with multi-scan? (y/n, Enter=yes): ").strip().lower()
             if confirm not in ['', 'y', 'yes']:
                 continue  # Go back to mode selection
-            
+
             # Save selection for next time
             try:
                 last_selection_file.write_text('1')
             except:
                 pass
-            
-            # Load ALL configs for multi-scan
+
+            # Load whitelisted configs
             print("\n  Loading configurations...")
             configs_dict = {}
             loaded_count = 0
-            
-            for bacteria_key in available_configs:
+
+            for bacteria_key in configs_to_scan:
                 loaded_config = load_bacteria_config_from_json(bacteria_key)
                 if loaded_config:
                     configs_dict[bacteria_key] = loaded_config
                     loaded_count += 1
                 else:
                     print(f"  ⚠ Failed to load: {bacteria_key}")
-            
-            print(f"  ✓ Loaded {loaded_count}/{len(available_configs)} configurations")
-            
+
+            if loaded_count == 0:
+                print("  ❌ Could not load any configurations. Aborting.")
+                continue
+
+            print(f"  ✓ Loaded {loaded_count}/{len(configs_to_scan)} configurations")
+
             return {
                 'mode': 'multi_scan',
                 'bacteria_type': None,
                 'selected_config': None,
-                'configs_to_scan': available_configs,
+                'configs_to_scan': configs_to_scan,   # ← whitelisted subset only
                 'config_names': config_names,
                 'configs': configs_dict
             }
@@ -6999,7 +7185,7 @@ def select_bacteria_configuration() -> dict:
             if selected_config is None:
                 print(f"  ✗ Failed to load configuration: {selected_key}")
                 print(f"  Please try a different configuration.")
-                continue  # Go back to bacteria selection
+                continue  # Go back to mode selection
             
             print(f"  ✓ Configuration loaded successfully")
             
@@ -7013,15 +7199,17 @@ def select_bacteria_configuration() -> dict:
             return {
                 'mode': 'single',
                 'bacteria_type': selected_key,
-                'selected_config': selected_config,  # ✅ Loaded config object
+                'selected_config': selected_config,
                 'configs_to_scan': [selected_key],
                 'config_names': config_names,
-                'configs': {selected_key: selected_config}  # ✅ Dict for consistency
+                'configs': {selected_key: selected_config}
             }
         
         # Invalid choice
         else:
             print("  ✗ Invalid choice. Enter 1 or 2 (or 'q' to quit)")
+
+
 
 
 def validate_batch_structure(config: dict) -> bool:
@@ -7125,7 +7313,6 @@ def validate_batch_structure(config: dict) -> bool:
 def main():
     """Main execution function with enhanced error handling and cleanup"""
 
-    # ==================== INITIALIZATION ====================
     print("\n" + "=" * 80)
     print("MICROGEL FLUORESCENCE ANALYSIS PIPELINE")
     print("=" * 80 + "\n")
@@ -7134,7 +7321,6 @@ def main():
     config: dict = {}
     output_root: Optional[Path] = None
 
-    # Results containers
     positive_results: Optional[dict[str, Any]] = None
     negative_results: Optional[dict[str, Any]] = None
     results: Optional[dict[str, Any]] = None
@@ -7142,7 +7328,7 @@ def main():
     global _log_path, _log_file
 
     try:
-        # ==================== STEP 1: MODE & CONFIGURATION SELECTION ====================
+        # ==================== STEP 1 ====================
         print("STEP 1: Select Processing Mode & Configuration")
         print("─" * 80 + "\n")
 
@@ -7152,7 +7338,7 @@ def main():
         config['bacteria_config_info'] = bacteria_config_info
         config['processing_mode'] = mode
 
-        # ==================== STEP 2: DATASET CONFIGURATION ====================
+        # ==================== STEP 2 ====================
         print("\nSTEP 2: Dataset Configuration")
         print("─" * 80 + "\n")
 
@@ -7166,7 +7352,7 @@ def main():
             print("❌ Batch structure validation failed - cannot proceed")
             return
 
-        # ==================== STEP 3: CREATE OUTPUT DIRECTORY ====================
+        # ==================== STEP 3 ====================
         display_configuration_summary(config)
         config['timestamp'] = datetime.now().strftime("%Y%m%d_%H%M%S")
         output_root = setup_output_directory(config)
@@ -7181,7 +7367,6 @@ def main():
             if config['batch_mode']:
                 print("Processing in BATCH mode...\n")
 
-                # ✅ G+ multi-scan
                 print("─" * 80)
                 print("Processing: G+ (positive)")
                 print("─" * 80 + "\n")
@@ -7194,7 +7379,6 @@ def main():
 
                 print("\n✓ G+ processing completed\n")
 
-                # ✅ G- multi-scan
                 print("─" * 80)
                 print("Processing: G- (negative)")
                 print("─" * 80 + "\n")
@@ -7207,7 +7391,6 @@ def main():
 
                 print("\n✓ G- processing completed\n")
 
-                # Auto clinical follow-up
                 print("=" * 80)
                 print("AUTO CLINICAL FOLLOW-UP (POST MULTI-SCAN)")
                 print("=" * 80)
@@ -7257,7 +7440,6 @@ def main():
                     if chosen_bacteria_config is None:
                         chosen_bacteria_config = load_bacteria_config_from_json(chosen_config_key)
 
-                    # ✅ G+ clinical run
                     print("─" * 80)
                     print(f"CLINICAL RUN: G+ using config '{chosen_config_key}'")
                     print("─" * 80 + "\n")
@@ -7269,7 +7451,6 @@ def main():
 
                     run_single_config_analysis(config)
 
-                    # ✅ G- clinical run
                     print("\n─" * 80)
                     print(f"CLINICAL RUN: G- using config '{chosen_config_key}'")
                     print("─" * 80 + "\n")
@@ -7280,21 +7461,15 @@ def main():
 
                     run_single_config_analysis(config)
 
-                    # Final combined outputs
                     if output_root is not None:
                         generate_final_clinical_matrix_wrapper(output_root, config)
-
-                        if config.get('batch_mode', False):
-                            generate_rejection_analysis(output_root)
-                        elif output_dir is not None:
-                            generate_rejection_analysis(output_dir)
+                        generate_rejection_analysis(output_root)
 
                 else:
                     print("⚠ Could not determine best bacteria configuration")
                     print("  Manual review of multi-scan results recommended\n")
 
             else:
-                # Single directory multi-scan
                 print("Processing single directory...\n")
 
                 config['current_source'] = config['source_dir']
@@ -7318,13 +7493,12 @@ def main():
                     run_single_config_analysis(config)
 
         else:
-            # Single config mode
+            # ── SINGLE CONFIG MODE ──────────────────────────────────────────
             config['bacteria_config'] = bacteria_config_info['selected_config']
 
             if config['batch_mode']:
                 print("Processing in BATCH mode...\n")
 
-                # ✅ G+
                 print("─" * 80)
                 print("Processing: G+ (positive)")
                 print("─" * 80 + "\n")
@@ -7337,7 +7511,6 @@ def main():
 
                 print("\n✓ G+ processing completed\n")
 
-                # ✅ G-
                 print("─" * 80)
                 print("Processing: G- (negative)")
                 print("─" * 80 + "\n")
@@ -7352,6 +7525,8 @@ def main():
 
                 if output_root is not None:
                     generate_final_clinical_matrix_wrapper(output_root, config)
+                    # ✅ FIX 1: generate rejection analysis in single-config batch mode
+                    generate_rejection_analysis(output_root)
 
             else:
                 print("Processing single directory...\n")
@@ -7362,8 +7537,12 @@ def main():
 
                 run_single_config_analysis(config)
 
-        # Cleanup multi-scan artifacts
-        if mode == "multi_scan" and config.get('batch_mode', False) and output_root is not None:
+        # ── FIX 2: Run cleanup/copy-to-root for ALL batch modes, not only multi_scan ──
+        # cleanup_and_reorganize_output copies clinical_classification_*.xlsx,
+        # comparison_*.png, etc. from Positive/ and Negative/ up to output_root.
+        # Previously this was gated on `mode == "multi_scan"`, so single-config
+        # batch runs never had those files surfaced at the root level.
+        if config.get('batch_mode', False) and output_root is not None:
             cleanup_and_reorganize_output(output_root, config)
 
         # ==================== FINAL SUMMARY ====================
@@ -7417,7 +7596,6 @@ def main():
         print()
 
     finally:
-        # Log file handling
         try:
             if _log_file is not None:
                 _log_file.flush()
@@ -7425,7 +7603,6 @@ def main():
         except Exception:
             pass
 
-        # Copy log file to output directory
         try:
             if output_root is not None and _log_path and _log_path.exists():
                 print("\n📄 Saving log file...")
@@ -7477,6 +7654,7 @@ def main():
             print(f"\n⚠ Error in log copy section: {e}")
             import traceback
             traceback.print_exc()
+
 
 
 if __name__ == "__main__":
