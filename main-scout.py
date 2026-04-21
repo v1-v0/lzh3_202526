@@ -7096,7 +7096,13 @@ def select_bacteria_configuration() -> dict:
             'configs': {}
         }
     
-    json_files = list(config_dir.glob("*.json"))
+    _EXCLUDED_CONFIG_STEMS = {'registry'} 
+    
+    json_files = [
+        f for f in config_dir.glob("*.json")
+        if f.stem not in _EXCLUDED_CONFIG_STEMS
+    ]
+
     
     if not json_files:
         print("\n⚠ No JSON configuration files found!")
@@ -7113,28 +7119,45 @@ def select_bacteria_configuration() -> dict:
     # Extract bacteria keys from filenames and load names
     available_configs = []
     config_names = {}
+    _seen_names: dict[str, str] = {}
+    _seen_modified: dict[str, str] = {}
     
     for json_file in sorted(json_files):
         bacteria_key = json_file.stem
-        
+
         try:
             with open(json_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            
-            # Extract display name
-            if "config" in data:
-                name = data["config"].get("name", bacteria_key)
-            else:
-                name = data.get("name", bacteria_key)
-            
-            available_configs.append(bacteria_key)
-            config_names[bacteria_key] = name
-            
+            config_data = data.get("config", data)
+            name          = config_data.get("name", bacteria_key)
+            last_modified = config_data.get("last_modified", "")
         except Exception as e:
             print(f"  ⚠ Could not read {json_file.name}: {e}")
-            available_configs.append(bacteria_key)
-            config_names[bacteria_key] = bacteria_key
-    
+            name          = bacteria_key
+            last_modified = ""
+
+        if name in _seen_names:
+            existing_key      = _seen_names[name]
+            existing_modified = _seen_modified.get(name, "")
+
+            if last_modified > existing_modified:   # ISO strings sort lexicographically
+                # Replace older entry with this newer tuned config
+                idx = available_configs.index(existing_key)
+                available_configs[idx] = bacteria_key
+                config_names.pop(existing_key)
+                config_names[bacteria_key] = name
+                _seen_names[name]    = bacteria_key
+                _seen_modified[name] = last_modified
+                print(f"  ℹ Replaced '{existing_key}' with newer '{bacteria_key}' (both: '{name}')")
+            else:
+                print(f"  ⚠ Skipping '{bacteria_key}' — '{existing_key}' is newer or equal")
+            continue
+
+        _seen_names[name]    = bacteria_key
+        _seen_modified[name] = last_modified
+        available_configs.append(bacteria_key)
+        config_names[bacteria_key] = name
+   
     if not available_configs:
         print("\n⚠ No valid configuration files found!")
         return {

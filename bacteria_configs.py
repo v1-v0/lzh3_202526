@@ -284,13 +284,10 @@ class BacteriaConfigManager:
         config_dict = asdict(config)
 
         data = {
-            'bacteria_key': bacteria_key,
+            'bacteria_type': bacteria_key,
             'config': config_dict,
-            'metadata': {
-                'version': '2.0',
-                'file_created': datetime.now().isoformat(),
-                'compatible_with': ['dev2a.py', 'tuner.py']
-            }
+            'updated': datetime.now().isoformat(),
+            
         }
 
         with open(config_path, 'w', encoding='utf-8') as f:

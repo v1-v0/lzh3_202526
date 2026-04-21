@@ -1,21 +1,22 @@
 {
-  "bacteria_key": "default",
+  "bacteria_type": "default",
   "config": {
     "name": "Default (General Purpose)",
-    "description": "Generic bacteria detection profile",
-    "gaussian_sigma": 15.0,
-    "min_area_um2": 0.3,
-    "max_area_um2": 2000.0,
-    "dilate_iterations": 1,
+    "description": "bacteria segmentation - Tuned 2026-04-22 01:12:05",
+    "gaussian_sigma": 10.0,
+    "min_area_um2": 10.0,
+    "max_area_um2": 99.99999999999999,
+    "dilate_iterations": 4,
     "erode_iterations": 1,
     "morph_kernel_size": 3,
     "morph_iterations": 1,
-    "min_circularity": 0.0,
+    "min_circularity": 0.1,
     "max_circularity": 1.0,
     "min_aspect_ratio": 0.2,
     "max_aspect_ratio": 10.0,
-    "min_mean_intensity": 0,
-    "max_mean_intensity": 255,
+    "min_mean_intensity_bf": 0,
+    "max_mean_intensity_bf": 115.0,
+    "object_mean_intensity_bf": null,
     "max_edge_gradient": 200,
     "min_solidity": 0.3,
     "max_fraction_of_image": 0.25,
@@ -26,14 +27,12 @@
     "threshold_mode": "otsu",
     "manual_threshold": 127,
     "use_intensity_threshold": false,
-    "intensity_threshold": 80.0,
-    "last_modified": "2026-03-03T10:53:10.841347",
-    "pixel_size_um": 0.109492,
-    "tuned_by": null
+    "intensity_threshold": 127.0,
+    "pixel_size_um": 0.10949166666666665,
+    "last_modified": "2026-04-22T01:12:05.645567",
+    "tuned_by": "Interactive Tuner",
+    "expected_particles_per_image": null,
+    "expected_test_vs_control_reduction_pct": null
   },
-  "metadata": {
-    "version": "2.0",
-    "file_created": "2026-03-03T10:53:10.841581",
-    "compatible_with": ["dev2a.py", "tuner.py"]
-  }
+  "updated": "2026-04-22T01:12:05.645567"
 }

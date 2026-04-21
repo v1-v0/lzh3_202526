@@ -2,7 +2,7 @@
   "bacteria_type": "proteus_mirabilis",
   "config": {
     "name": "Proteus mirabilis",
-    "description": "bacteria segmentation - Tuned 2026-04-21 19:29:34",
+    "description": "bacteria segmentation - Tuned 2026-04-22 01:20:49",
     "gaussian_sigma": 12.0,
     "min_area_um2": 5.994212534722221,
     "max_area_um2": 160.76850138888884,
@@ -23,16 +23,16 @@
     "fluor_min_area_um2": 3.0,
     "fluor_max_area_um2": 2000.0,
     "fluor_match_min_intersection_px": 5.0,
-    "invert_image": true,
+    "invert_image": false,
     "threshold_mode": "otsu",
     "manual_threshold": 127,
     "use_intensity_threshold": false,
     "intensity_threshold": 127.0,
     "pixel_size_um": 0.10949166666666665,
-    "last_modified": "2026-04-21T19:29:34.090673",
+    "last_modified": "2026-04-22T01:20:49.510900",
     "tuned_by": "Interactive Tuner",
     "expected_particles_per_image": null,
     "expected_test_vs_control_reduction_pct": null
   },
-  "updated": "2026-04-21T19:29:34.090673"
+  "updated": "2026-04-22T01:20:49.510900"
 }

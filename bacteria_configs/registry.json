@@ -19,13 +19,13 @@
     "registered_by": "System",
     "builtin": true
   },
-  "streptococcus_mitis": {
-    "config_key": "streptococcus_mitis",
-    "display_name": "Streptococcus mitis",
-    "description": "Gram-positive cocci in chains",
-    "common_in": "Touch contamination",
-    "validated": false,
-    "registered_at": "2026-01-01T00:00:00",
+  "default": {
+    "config_key": "default",
+    "display_name": "Default (General Purpose)",
+    "description": "Generic bacteria detection profile",
+    "common_in": "General use",
+    "validated": true,
+    "registered_at": "2026-03-03T10:53:10",
     "registered_by": "System",
     "builtin": true
   }
