@@ -2410,10 +2410,18 @@ def load_bacteria_config_from_json(bacteria_key: str) -> Optional['SegmentationC
             max_aspect_ratio=safe_float(config_data.get('max_aspect_ratio'), 10.0),
             
             # Intensity filters
-            min_mean_intensity=safe_int(config_data.get('min_mean_intensity'), 0),
-            max_mean_intensity=safe_int(config_data.get('max_mean_intensity'), 255),
-            max_edge_gradient=safe_int(config_data.get('max_edge_gradient'), 200),
-            
+            min_mean_intensity_bf=safe_float(
+                config_data.get('min_mean_intensity_bf',          # new JSON key
+                config_data.get('min_mean_intensity', 0.0)),      # old JSON key fallback
+                0.0
+            ),
+            max_mean_intensity_bf=safe_float(
+                config_data.get('max_mean_intensity_bf',          # new JSON key
+                config_data.get('max_mean_intensity', 255.0)),    # old JSON key fallback
+                255.0
+            ),
+            object_mean_intensity_bf=config_data.get('object_mean_intensity_bf', None),
+                        
             # Advanced filters
             min_solidity=safe_float(config_data.get('min_solidity'), 0.3),
             max_fraction_of_image=safe_float(config_data.get('max_fraction_of_image'), 0.25),
@@ -6218,57 +6226,110 @@ def select_source_directory(max_depth=2) -> Optional[Path]:
 # ==================================================
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SegmentationConfig additions (show the relevant new / renamed fields):
+#
+#   min_mean_intensity_bf: float = 0.0    # renamed from min_mean_intensity
+#   max_mean_intensity_bf: float = 255.0  # renamed from max_mean_intensity
+#
+# All other fields remain as before.
+# ─────────────────────────────────────────────────────────────────────────────
+
 def process_image(
-    img_path: Path, 
+    img_path: Path,
     output_root: Path,
     bacteria_config: 'SegmentationConfig'
 ) -> None:
-    """Process a single image - Unicode-safe version with bacteria-specific parameters
-    
-    Args:
-        img_path: Path to input image
-        output_root: Root output directory
-        bacteria_config: Bacteria-specific segmentation configuration
-    
-    Raises:
-        FileNotFoundError: If image cannot be read
-        ValueError: If pixel size cannot be determined
+    """Process a single image — patched (Fixes 1–9).
+
+    Fixes vs original
+    -----------------
+    Fix 1  Area thresholds now derived from per-image pixel size read
+           from XML metadata, not the JSON-stored default.
+    Fix 2  max_edge_gradient filter is now applied; Sobel gradient is
+           pre-computed once before the loop.
+    Fix 3  Aspect ratio is rotation-invariant: max(w,h)/min(w,h) so a
+           rod-shaped bacterium classifies identically regardless of
+           orientation.
+    Fix 4  Image-fraction guard and physical upper-bound are semantically
+           separated with distinct rejection messages and comments.
+    Fix 5  All morphological and intensity metrics are computed before any
+           early-exit filter check so rejected_objects.csv always has
+           complete diagnostic data.
+    Fix 6  All failing criteria are rendered on the rejected-objects debug
+           overlay (up to 3 lines + overflow count), not just the first one.
+    Fix 7  Every rejection message includes both px² and µm² values.
+    Fix 8  Config parameter ordering is validated at entry; a warning is
+           printed for any min > max inversion so silent all-reject bugs
+           are caught immediately.
+    Fix 9  BF mean-intensity filter params renamed from min/max_mean_intensity
+           to min/max_mean_intensity_bf for clarity.  Full BF intensity stats
+           (mean, median, std, min, max, integrated_density) are measured
+           inside each contour mask — mirroring the fluorescence approach —
+           and written to both accepted and rejected CSVs.
     """
-    
-    # ========== VARIABLE INITIALIZATION ==========
-    # Initialize all variables that need cleanup
-    img = None
-    img8 = None
-    fluor_img = None
+
+    # ========== VARIABLE INITIALISATION ==========
+    img               = None
+    img8              = None
+    gradient_mag      = None
+    fluor_img         = None
     fluor_img_aligned = None
-    mask = None
-    vis_all = None
-    vis_acc = None
-    vis_rej = None  # ✅ NEW: Visualization for rejected objects
-    mask_all = None
-    mask_acc = None
-    mask_rej = None  # ✅ NEW: Mask for rejected objects
-    fluor_img8 = None
-    fluor_bw = None
-    vis_fluor = None
-    vis_match = None
-    
+    mask              = None
+    vis_all           = None
+    vis_acc           = None
+    vis_rej           = None
+    mask_all          = None
+    mask_acc          = None
+    mask_rej          = None
+    fluor_img8        = None
+    fluor_bw          = None
+    vis_fluor         = None
+    vis_match         = None
+
     try:
+        # ===== FIX 8 + FIX 9: Validate config parameter ordering ================
+        _cfg_issues: list[str] = []
+        if bacteria_config.min_area_um2 >= bacteria_config.max_area_um2:
+            _cfg_issues.append(
+                f"min_area_um2 ({bacteria_config.min_area_um2}) ≥ "
+                f"max_area_um2 ({bacteria_config.max_area_um2})"
+            )
+        if bacteria_config.min_circularity > bacteria_config.max_circularity:
+            _cfg_issues.append(
+                f"min_circularity ({bacteria_config.min_circularity}) > "
+                f"max_circularity ({bacteria_config.max_circularity})"
+            )
+        if bacteria_config.min_aspect_ratio > bacteria_config.max_aspect_ratio:
+            _cfg_issues.append(
+                f"min_aspect_ratio ({bacteria_config.min_aspect_ratio}) > "
+                f"max_aspect_ratio ({bacteria_config.max_aspect_ratio})"
+            )
+        # Fix 9: validate renamed BF intensity params
+        if bacteria_config.min_mean_intensity_bf > bacteria_config.max_mean_intensity_bf:
+            _cfg_issues.append(
+                f"min_mean_intensity_bf ({bacteria_config.min_mean_intensity_bf}) > "
+                f"max_mean_intensity_bf ({bacteria_config.max_mean_intensity_bf})"
+            )
+        if _cfg_issues:
+            print(f"  [WARN] Config '{bacteria_config.name}' has inconsistent parameters:")
+            for _issue in _cfg_issues:
+                print(f"    • {_issue}")
+            print("    → These inversions will cause all matching particles to be rejected.")
+
         # ========== VALIDATION ==========
-        # Validate path encoding
         if not validate_path_encoding(img_path):
             print(f"[ERROR] Cannot process image with problematic path: {img_path}")
             return
-        
-        # ✅ FIX: MOVE OBJECT ID GENERATION TO THE TOP
-        # Generate object IDs early so they're available throughout
-        parts = img_path.stem.split()
-        group_id = parts[0] if parts else "unk"
+
+        # ========== OBJECT IDs ==========
+        parts        = img_path.stem.split()
+        group_id     = parts[0] if parts else "unk"
         sequence_num = parts[-1].split("_")[0] if parts else "0"
-        
+
         # ========== METADATA EXTRACTION ==========
         xml_props, xml_main = find_metadata_paths(img_path)
-        
+
         try:
             um_per_px_x, um_per_px_y = get_pixel_size_um(xml_props, xml_main)
             um_per_px_x = float(um_per_px_x)
@@ -6280,9 +6341,9 @@ def process_image(
             um_per_px_x = um_per_px_y = float(FALLBACK_UM_PER_PX)
 
         um_per_px_avg = (um_per_px_x + um_per_px_y) / 2.0
-        um2_per_px2 = float(um_per_px_x) * float(um_per_px_y)
+        um2_per_px2   = float(um_per_px_x) * float(um_per_px_y)
 
-        # ========== OUTPUT DIRECTORY SETUP ==========
+        # ========== OUTPUT DIRECTORY ==========
         img_out = output_root / img_path.stem
         ensure_dir(img_out)
 
@@ -6290,112 +6351,225 @@ def process_image(
         img = safe_imread(img_path, cv2.IMREAD_UNCHANGED)
         if img is None:
             raise FileNotFoundError(f"Could not read image: {img_path}")
-        
-        # Convert to grayscale if needed
+
         if img.ndim == 3:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
         img8 = normalize_to_8bit(img)
         save_debug(img_out, "01_gray_8bit.png", img8, um_per_px_avg)
 
+        # ===== FIX 2: Pre-compute Sobel gradient once, before the filter loop =====
+        # Gradient magnitude is sampled per-contour to enforce max_edge_gradient.
+        # Note: mean gradient over the contour interior is used as a proxy for
+        # edge sharpness. High mean gradient indicates crystal/debris artefacts.
+        _sobel_x     = cv2.Sobel(img8, cv2.CV_32F, 1, 0, ksize=3)
+        _sobel_y     = cv2.Sobel(img8, cv2.CV_32F, 0, 1, ksize=3)
+        gradient_mag = np.sqrt(_sobel_x ** 2 + _sobel_y ** 2)
+        del _sobel_x, _sobel_y
+
         # ========== SEGMENT PARTICLES ==========
         mask = segment_particles_brightfield(img8, float(um_per_px_avg), img_out, bacteria_config)
 
-        # Find contours
-        _fc = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        _fc      = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         contours = cast(list[np.ndarray], _fc[-2])
 
-        # Visualize all contours
         vis_all = cv2.cvtColor(img8, cv2.COLOR_GRAY2BGR)
         cv2.drawContours(vis_all, contours, -1, (0, 0, 255), 1)
         save_debug(img_out, "10_contours_all.png", vis_all, um_per_px_avg)
 
-        # ========== FILTER PARTICLES (ENHANCED WITH REJECTION TRACKING) ==========
-        min_area_px = bacteria_config.min_area_px
-        max_area_px = bacteria_config.max_area_px
-
-        H, W = img8.shape[:2]
+        # ========== FILTER PARTICLES ==========
+        H, W        = img8.shape[:2]
         img_area_px = float(H * W)
-        max_big_area_px = bacteria_config.max_fraction_of_image * img_area_px
 
-        # ✅ FIX: Explicitly initialize lists with type hints
-        accepted: list[np.ndarray] = []
-        rejected: list[np.ndarray] = []
-        rejection_reasons: list[dict] = []  # Track why each object was rejected
-        
-        # ✅ FIX: Handle empty contours case
-        if len(contours) == 0:
+        # FIX 1: Derive pixel-space thresholds from THIS image's measured pixel
+        # size, not the JSON-stored default (bacteria_config.pixel_size_um).
+        min_area_px = bacteria_config.min_area_um2 / um2_per_px2
+        max_area_px = bacteria_config.max_area_um2 / um2_per_px2
+
+        # FIX 4: Image-fraction guard (relative) is kept separate from the
+        # physical size limit (absolute) to preserve distinct semantic intent.
+        max_big_area_px  = bacteria_config.max_fraction_of_image * img_area_px
+        max_big_area_um2 = max_big_area_px * um2_per_px2
+
+        accepted:          list[np.ndarray] = []
+        rejected:          list[np.ndarray] = []
+        rejection_reasons: list[dict]       = []
+
+        if not contours:
             print(f"  [WARN] No contours found in {img_path.name}")
-            # Continue with empty lists - the code will handle this gracefully
+
+        # FIX 2 + FIX 9: single pre-allocated mask reused every iteration.
+        # Used for both Sobel gradient sampling and BF intensity sampling.
+        _contour_mask = np.zeros(img8.shape[:2], dtype=np.uint8)
 
         for contour_idx, c in enumerate(contours, 1):
-            area_px = float(cv2.contourArea(c))
-            
-            # ✅ NEW: Initialize rejection tracking for this contour
+            area_px  = float(cv2.contourArea(c))
+            area_um2 = area_px * um2_per_px2
+
             rejection_info: dict = {
                 'contour_index': contour_idx,
-                'area_px': area_px,
-                'reasons': []
+                'area_px':       area_px,
+                'reasons':       [],
             }
-            
+
+            # ── Zero-area guard: metrics cannot be computed, exit immediately ──
             if area_px <= 0:
                 rejection_info['reasons'].append('Zero area')
                 rejected.append(c)
                 rejection_reasons.append(rejection_info)
                 continue
 
-            # Filter by absolute size
+            # ── FIX 5 + FIX 9: Compute ALL metrics before any filter check ──────
+            # Morphological
+            perim_px = float(cv2.arcLength(c, True))
+            circ     = (4.0 * np.pi * area_px / (perim_px ** 2)) if perim_px > 0 else 0.0
+
+            x_bb, y_bb, w_bb, h_bb = cv2.boundingRect(c)
+
+            # FIX 3: rotation-invariant aspect ratio — always ≥ 1
+            _long  = max(float(w_bb), float(h_bb))
+            _short = min(float(w_bb), float(h_bb))
+            aspect_ratio = _long / _short if _short > 0 else 1.0
+
+            hull      = cv2.convexHull(c)
+            hull_area = float(cv2.contourArea(hull))
+            solidity  = area_px / hull_area if hull_area > 0 else 0.0
+
+            # FIX 9: BF intensity measured inside the contour mask,
+            # mirroring the fluorescence measurement approach.
+            # In brightfield, bacteria are darker than the background,
+            # so lower mean intensity = more strongly absorbing object.
+            _contour_mask[:] = 0
+            cv2.drawContours(_contour_mask, [c], -1, 255, thickness=-1)
+            _bf_pixels = img8[_contour_mask > 0]
+
+            if _bf_pixels.size > 0:
+                bf_mean              = float(np.mean(_bf_pixels))
+                bf_median            = float(np.median(_bf_pixels))
+                bf_std               = float(np.std(_bf_pixels))
+                bf_min_val           = float(np.min(_bf_pixels))
+                bf_max_val           = float(np.max(_bf_pixels))
+                bf_integrated        = float(np.sum(_bf_pixels.astype(np.float64)))
+                mean_gradient        = float(np.mean(gradient_mag[_contour_mask > 0]))
+            else:
+                bf_mean              = 0.0
+                bf_median            = 0.0
+                bf_std               = 0.0
+                bf_min_val           = 0.0
+                bf_max_val           = 0.0
+                bf_integrated        = 0.0
+                mean_gradient        = 0.0
+
+            # Store every metric so both CSVs have complete diagnostic data
+            rejection_info.update({
+                'perim_px':        perim_px,
+                'circularity':     circ,
+                'aspect_ratio':    aspect_ratio,
+                'solidity':        solidity,
+                'bbox':            (x_bb, y_bb, w_bb, h_bb),
+                # BF intensity stats (Fix 9)
+                'bf_mean':         bf_mean,
+                'bf_median':       bf_median,
+                'bf_std':          bf_std,
+                'bf_min_val':      bf_min_val,
+                'bf_max_val':      bf_max_val,
+                'bf_integrated':   bf_integrated,
+                # Gradient (Fix 2)
+                'mean_gradient':   mean_gradient,
+            })
+
+            # ── FIX 4: Image-fraction guard (hard early exit) ─────────────────
             if area_px >= max_big_area_px:
-                rejection_info['reasons'].append(f'Too large (>{max_big_area_px:.1f} px²)')
+                rejection_info['reasons'].append(
+                    f'Exceeds image-fraction limit '
+                    f'({area_px:.0f} px² = {area_um2:.1f} µm²; '
+                    f'limit = {max_big_area_px:.0f} px² = {max_big_area_um2:.1f} µm²)'
+                )
                 rejected.append(c)
                 rejection_reasons.append(rejection_info)
                 continue
 
-            perim_px = float(cv2.arcLength(c, True))
-            circ = (4 * np.pi * area_px / (perim_px ** 2)) if perim_px > 0 else 0.0
-
-            # Get bounding box for aspect ratio
-            x, y, w, h = cv2.boundingRect(c)
-            aspect_ratio = float(w) / h if h > 0 else 0.0
-
-            # Calculate solidity (convex hull ratio)
-            hull = cv2.convexHull(c)
-            hull_area = float(cv2.contourArea(hull))
-            solidity = area_px / hull_area if hull_area > 0 else 0.0
-
-            # ✅ NEW: Track each filter criterion
-            rejection_info['perim_px'] = perim_px
-            rejection_info['circularity'] = circ
-            rejection_info['aspect_ratio'] = aspect_ratio
-            rejection_info['solidity'] = solidity
-            rejection_info['bbox'] = (x, y, w, h)
-            
-            # Apply bacteria-specific filters with detailed rejection tracking
+            # ── Accumulating filter checks — no early exit from here on ──────
             passed = True
-            
+
+            # Physical size (FIX 7: both px² and µm² in messages)
             if area_px < min_area_px:
-                rejection_info['reasons'].append(f'Area too small ({area_px:.1f} < {min_area_px:.1f} px²)')
+                rejection_info['reasons'].append(
+                    f'Area too small '
+                    f'({area_px:.1f} px² = {area_um2:.3f} µm²; '
+                    f'min = {min_area_px:.1f} px² = {bacteria_config.min_area_um2:.1f} µm²)'
+                )
                 passed = False
             elif area_px > max_area_px:
-                rejection_info['reasons'].append(f'Area too large ({area_px:.1f} > {max_area_px:.1f} px²)')
+                rejection_info['reasons'].append(
+                    f'Area too large '
+                    f'({area_px:.1f} px² = {area_um2:.1f} µm²; '
+                    f'max = {max_area_px:.1f} px² = {bacteria_config.max_area_um2:.1f} µm²)'
+                )
                 passed = False
-            
+
+            # Circularity
             if circ < bacteria_config.min_circularity:
-                rejection_info['reasons'].append(f'Circularity too low ({circ:.3f} < {bacteria_config.min_circularity:.3f})')
+                rejection_info['reasons'].append(
+                    f'Circularity too low '
+                    f'({circ:.3f} < {bacteria_config.min_circularity:.3f})'
+                )
                 passed = False
             elif circ > bacteria_config.max_circularity:
-                rejection_info['reasons'].append(f'Circularity too high ({circ:.3f} > {bacteria_config.max_circularity:.3f})')
+                rejection_info['reasons'].append(
+                    f'Circularity too high '
+                    f'({circ:.3f} > {bacteria_config.max_circularity:.3f})'
+                )
                 passed = False
-            
-            if aspect_ratio < bacteria_config.min_aspect_ratio:
-                rejection_info['reasons'].append(f'Aspect ratio too low ({aspect_ratio:.3f} < {bacteria_config.min_aspect_ratio:.3f})')
+
+            # FIX 3: rotation-invariant aspect ratio
+            if aspect_ratio > bacteria_config.max_aspect_ratio:
+                rejection_info['reasons'].append(
+                    f'Aspect ratio too high '
+                    f'({aspect_ratio:.3f} > {bacteria_config.max_aspect_ratio:.3f}; '
+                    f'rotation-invariant max(w,h)/min(w,h))'
+                )
                 passed = False
-            elif aspect_ratio > bacteria_config.max_aspect_ratio:
-                rejection_info['reasons'].append(f'Aspect ratio too high ({aspect_ratio:.3f} > {bacteria_config.max_aspect_ratio:.3f})')
+            if bacteria_config.min_aspect_ratio > 1.0 and aspect_ratio < bacteria_config.min_aspect_ratio:
+                rejection_info['reasons'].append(
+                    f'Aspect ratio below configured minimum '
+                    f'({aspect_ratio:.3f} < {bacteria_config.min_aspect_ratio:.3f}; '
+                    f'rotation-invariant max(w,h)/min(w,h))'
+                )
                 passed = False
-            
+
+            # Solidity
             if solidity < bacteria_config.min_solidity:
-                rejection_info['reasons'].append(f'Solidity too low ({solidity:.3f} < {bacteria_config.min_solidity:.3f})')
+                rejection_info['reasons'].append(
+                    f'Solidity too low '
+                    f'({solidity:.3f} < {bacteria_config.min_solidity:.3f})'
+                )
+                passed = False
+
+            # FIX 9: BF mean intensity filter (renamed from min/max_mean_intensity).
+            # In brightfield, bacteria are dark objects: a low mean intensity
+            # confirms the object absorbs light as expected; a very high mean
+            # intensity suggests it is a bright artefact (reflection, debris).
+            if bf_mean < bacteria_config.min_mean_intensity_bf:
+                rejection_info['reasons'].append(
+                    f'BF mean intensity too low '
+                    f'({bf_mean:.1f} < {bacteria_config.min_mean_intensity_bf})'
+                )
+                passed = False
+            elif bf_mean > bacteria_config.max_mean_intensity_bf:
+                rejection_info['reasons'].append(
+                    f'BF mean intensity too high '
+                    f'({bf_mean:.1f} > {bacteria_config.max_mean_intensity_bf})'
+                )
+                passed = False
+
+            # FIX 2: edge-gradient filter — high mean gradient indicates
+            # crystal/debris artefacts with very sharp internal edges.
+            if mean_gradient > bacteria_config.max_edge_gradient:
+                rejection_info['reasons'].append(
+                    f'Mean edge gradient too high '
+                    f'({mean_gradient:.1f} > {bacteria_config.max_edge_gradient})'
+                )
                 passed = False
 
             if passed:
@@ -6404,51 +6578,60 @@ def process_image(
                 rejected.append(c)
                 rejection_reasons.append(rejection_info)
 
-        # ========== VISUALIZE FILTERED PARTICLES (ENHANCED) ==========
-        # Generate object IDs for both accepted and rejected
-        accepted_ids = [f"{group_id}_{sequence_num}_{i}" for i in range(1, len(accepted) + 1)]
-        rejected_ids = [f"{group_id}_{sequence_num}_REJ{i}" for i in range(1, len(rejected) + 1)]
-        
-        # Visualization with rejected=orange, accepted=yellow
+        # ========== VISUALISE FILTERED PARTICLES ==========
+        accepted_ids = [f"{group_id}_{sequence_num}_{i}"    for i in range(1, len(accepted) + 1)]
+        rejected_ids = [f"{group_id}_{sequence_num}_REJ{i}" for i in range(1, len(rejected)  + 1)]
+
         vis_acc = cv2.cvtColor(img8, cv2.COLOR_GRAY2BGR)
-        cv2.drawContours(vis_acc, rejected, -1, (0, 165, 255), 1)  # Orange
-        cv2.drawContours(vis_acc, accepted, -1, (0, 255, 255), 1)  # Yellow
+        cv2.drawContours(vis_acc, rejected, -1, (0, 165, 255), 1)  # orange
+        cv2.drawContours(vis_acc, accepted, -1, (0, 255, 255), 1)  # yellow
         vis_acc = draw_object_ids(vis_acc, accepted, labels=accepted_ids)
         save_debug(
-            img_out, 
-            "11_contours_rejected_orange_accepted_yellow_ids_green.png", 
-            vis_acc, 
-            um_per_px_avg
+            img_out,
+            "11_contours_rejected_orange_accepted_yellow_ids_green.png",
+            vis_acc,
+            um_per_px_avg,
         )
 
-        # ✅ NEW: Separate visualization for rejected objects with IDs and reasons
-        if len(rejected) > 0:
+        # FIX 6: Rejected overlay shows ALL failing criteria per object
+        if rejected:
             vis_rej = cv2.cvtColor(img8, cv2.COLOR_GRAY2BGR)
-            cv2.drawContours(vis_rej, rejected, -1, (0, 0, 255), 2)  # Bright red for rejected
-            
-            # Add labels showing rejection reasons
-            for i, (c, rej_id) in enumerate(zip(rejected, rejected_ids)):
-                M = cv2.moments(c)
-                if M["m00"] != 0:
-                    cx = int(M["m10"] / M["m00"])
-                    cy = int(M["m01"] / M["m00"])
-                    
-                    # Draw ID
-                    _put_text_outline(vis_rej, rej_id, (cx, cy - 10), 
-                                    font_scale=0.4, color=(0, 255, 255), thickness=1)
-                    
-                    # Draw first rejection reason (short version)
-                    if i < len(rejection_reasons) and rejection_reasons[i]['reasons']:
-                        first_reason = rejection_reasons[i]['reasons'][0]
-                        # Shorten reason for display
-                        if len(first_reason) > 30:
-                            first_reason = first_reason[:27] + "..."
-                        _put_text_outline(vis_rej, first_reason, (cx, cy + 10),
-                                        font_scale=0.3, color=(255, 255, 255), thickness=1)
-            
+            cv2.drawContours(vis_rej, rejected, -1, (0, 0, 255), 2)
+
+            for i_r, (c_rej, rej_id) in enumerate(zip(rejected, rejected_ids)):
+                M_r = cv2.moments(c_rej)
+                if M_r["m00"] == 0:
+                    continue
+                cx_r = int(M_r["m10"] / M_r["m00"])
+                cy_r = int(M_r["m01"] / M_r["m00"])
+
+                _put_text_outline(
+                    vis_rej, rej_id,
+                    (cx_r, cy_r - 10),
+                    font_scale=0.4, color=(0, 255, 255), thickness=1,
+                )
+
+                short_reasons: list[str] = []
+                if i_r < len(rejection_reasons):
+                    for _r in rejection_reasons[i_r]['reasons'][:3]:
+                        _label = _r.split('(')[0].strip()
+                        if len(_label) > 26:
+                            _label = _label[:23] + "…"
+                        short_reasons.append(_label)
+                    _overflow = len(rejection_reasons[i_r]['reasons']) - 3
+                    if _overflow > 0:
+                        short_reasons.append(f"+{_overflow} more")
+
+                for _line_idx, _line_text in enumerate(short_reasons):
+                    _put_text_outline(
+                        vis_rej, _line_text,
+                        (cx_r, cy_r + 10 + _line_idx * 12),
+                        font_scale=0.3, color=(255, 200, 0), thickness=1,
+                    )
+
             save_debug(img_out, "11b_rejected_objects_detailed.png", vis_rej, um_per_px_avg)
 
-        # Save masks
+        # Masks
         mask_all = np.zeros_like(mask)
         cv2.drawContours(mask_all, contours, -1, 255, thickness=-1)
         save_debug(img_out, "12_mask_all.png", mask_all)
@@ -6457,341 +6640,287 @@ def process_image(
         cv2.drawContours(mask_acc, accepted, -1, 255, thickness=-1)
         save_debug(img_out, "13_mask_accepted.png", mask_acc)
 
-        # ✅ NEW: Save rejected mask
-        if len(rejected) > 0:
+        if rejected:
             mask_rej = np.zeros_like(mask)
             cv2.drawContours(mask_rej, rejected, -1, 255, thickness=-1)
             save_debug(img_out, "13b_mask_rejected.png", mask_rej)
 
         # ========== FLUORESCENCE PROCESSING ==========
-        fluor_path = img_path.parent / img_path.name.replace("_ch00", "_ch01")
+        fluor_path            = img_path.parent / img_path.name.replace("_ch00", "_ch01")
         fluor_measurements: Optional[list[dict]] = None
 
         if fluor_path.exists():
-            # Load fluorescence image
             fluor_img = safe_imread(fluor_path, cv2.IMREAD_UNCHANGED)
-            
+
             if fluor_img is not None:
-                # ========== ALIGN FLUORESCENCE CHANNEL ==========
-                fluor_img_aligned, (sy, sx), diagnostics = align_fluorescence_channel(img, fluor_img)
-                
-                # Save alignment diagnostics
-                safe_imwrite(img_out / "DIAG_A_no_shift.png", diagnostics['overlay_none'])
+                fluor_img_aligned, (sy, sx), diagnostics = align_fluorescence_channel(
+                    img, fluor_img)
+
+                safe_imwrite(img_out / "DIAG_A_no_shift.png",       diagnostics['overlay_none'])
                 safe_imwrite(img_out / "DIAG_B_positive_shift.png", diagnostics['overlay_pos'])
                 safe_imwrite(img_out / "DIAG_C_negative_shift.png", diagnostics['overlay_neg'])
-                
+
                 print(f"  📊 Alignment shift: ({sx:.2f}, {sy:.2f}) px")
                 print(f"     Check DIAG_*.png files to verify alignment quality")
 
                 save_debug(
-                    img_out, 
-                    "20_fluorescence_aligned_raw.png", 
-                    normalize_to_8bit(fluor_img_aligned), 
-                    um_per_px_avg
+                    img_out,
+                    "20_fluorescence_aligned_raw.png",
+                    normalize_to_8bit(fluor_img_aligned),
+                    um_per_px_avg,
                 )
 
-                # Convert to grayscale if needed
                 if fluor_img_aligned.ndim == 3:
-                    fluor_img_aligned = cv2.cvtColor(fluor_img_aligned, cv2.COLOR_BGR2GRAY)
+                    fluor_img_aligned = cv2.cvtColor(
+                        fluor_img_aligned, cv2.COLOR_BGR2GRAY)
 
                 fluor_img8 = normalize_to_8bit(fluor_img_aligned)
                 save_debug(img_out, "20_fluorescence_8bit.png", fluor_img8, um_per_px_avg)
 
-                # ========== SEGMENT FLUORESCENCE ==========
                 fluor_bw = segment_fluorescence_global(fluor_img8, bacteria_config)
                 save_debug(img_out, "22_fluorescence_mask_global.png", fluor_bw, um_per_px_avg)
 
-                # Find fluorescence contours
-                _fc2 = cv2.findContours(fluor_bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                _fc2               = cv2.findContours(
+                    fluor_bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 fluor_contours_all = cast(list[np.ndarray], _fc2[-2])
 
-                # Filter fluorescence contours by size
-                min_fluor_area_px = bacteria_config.fluor_min_area_um2 / um2_per_px2 if um2_per_px2 > 0 else 0.0
+                min_fluor_area_px = (
+                    bacteria_config.fluor_min_area_um2 / um2_per_px2
+                    if um2_per_px2 > 0 else 0.0
+                )
                 fluor_contours = [
-                    c for c in fluor_contours_all 
+                    c for c in fluor_contours_all
                     if float(cv2.contourArea(c)) >= float(min_fluor_area_px)
                 ]
 
-                # Visualize fluorescence contours
                 vis_fluor = cv2.cvtColor(fluor_img8, cv2.COLOR_GRAY2BGR)
                 cv2.drawContours(vis_fluor, fluor_contours, -1, (0, 255, 0), 1)
-                save_debug(img_out, "23_fluorescence_contours_global.png", vis_fluor, um_per_px_avg)
+                save_debug(
+                    img_out, "23_fluorescence_contours_global.png",
+                    vis_fluor, um_per_px_avg)
 
-                # ========== MATCH FLUORESCENCE TO BF PARTICLES ==========
                 matches = match_fluor_to_bf_by_overlap(
-                    accepted, 
-                    fluor_contours, 
+                    accepted,
+                    fluor_contours,
                     fluor_img8.shape[:2],
-                    min_intersection_px=bacteria_config.fluor_match_min_intersection_px
+                    min_intersection_px=bacteria_config.fluor_match_min_intersection_px,
                 )
 
-                # Measure fluorescence intensity
                 fluor_measurements = measure_fluorescence_intensity_with_global_area(
-                    fluor_img_aligned, 
-                    accepted, 
-                    fluor_contours, 
-                    matches, 
-                    float(um_per_px_x), 
-                    float(um_per_px_y)
+                    fluor_img_aligned,
+                    accepted,
+                    fluor_contours,
+                    matches,
+                    float(um_per_px_x),
+                    float(um_per_px_y),
                 )
 
-                # Visualize matching
                 vis_match = cv2.cvtColor(fluor_img8, cv2.COLOR_GRAY2BGR)
-                for idx, bf_c in enumerate(accepted):
-                    j = matches[idx]
-                    cv2.drawContours(vis_match, [bf_c], -1, (0, 0, 255), 1)  # BF in red
-                    if j is not None:
-                        cv2.drawContours(vis_match, [fluor_contours[j]], -1, (0, 255, 0), 2)  # Fluor in green
-                save_debug(img_out, "24_bf_fluor_matching_overlay.png", vis_match, um_per_px_avg)
+                for _idx_m, _bf_c in enumerate(accepted):
+                    _j_m = matches[_idx_m]
+                    cv2.drawContours(vis_match, [_bf_c], -1, (0, 0, 255), 1)
+                    if _j_m is not None:
+                        cv2.drawContours(
+                            vis_match, [fluor_contours[_j_m]], -1, (0, 255, 0), 2)
+                save_debug(
+                    img_out, "24_bf_fluor_matching_overlay.png",
+                    vis_match, um_per_px_avg)
 
-                # Overlay with measurements
-                fluor_overlay = visualize_fluorescence_measurements(fluor_img8, accepted, fluor_measurements)
-                save_debug(img_out, "21_fluorescence_overlay.png", fluor_overlay, um_per_px_avg)
+                fluor_overlay = visualize_fluorescence_measurements(
+                    fluor_img8, accepted, fluor_measurements)
+                save_debug(img_out, "21_fluorescence_overlay.png",
+                           fluor_overlay, um_per_px_avg)
 
-        # ========== SAVE LABELED VERSIONS ==========
-        # BF mask with IDs
+        # ========== LABELED OVERLAY IMAGES ==========
         mask_acc_bgr = cv2.cvtColor(mask_acc, cv2.COLOR_GRAY2BGR)
-        save_debug_ids(
-            img_out, 
-            "13_mask_accepted.png", 
-            mask_acc_bgr, 
-            accepted, 
-            accepted_ids, 
-            um_per_px_avg
-        )
+        save_debug_ids(img_out, "13_mask_accepted.png",
+                       mask_acc_bgr, accepted, accepted_ids, um_per_px_avg)
 
-        # Fluorescence visualizations with IDs
         if fluor_bw is not None:
-            fluor_bw_bgr = cv2.cvtColor(fluor_bw, cv2.COLOR_GRAY2BGR)
-            save_debug_ids(
-                img_out, 
-                "22_fluorescence_mask_global.png", 
-                fluor_bw_bgr, 
-                accepted, 
-                accepted_ids, 
-                um_per_px_avg
-            )
+            _fluor_bw_bgr = cv2.cvtColor(fluor_bw, cv2.COLOR_GRAY2BGR)
+            save_debug_ids(img_out, "22_fluorescence_mask_global.png",
+                           _fluor_bw_bgr, accepted, accepted_ids, um_per_px_avg)
 
         if vis_fluor is not None:
-            save_debug_ids(
-                img_out, 
-                "23_fluorescence_contours_global.png", 
-                vis_fluor, 
-                accepted, 
-                accepted_ids, 
-                um_per_px_avg
-            )
+            save_debug_ids(img_out, "23_fluorescence_contours_global.png",
+                           vis_fluor, accepted, accepted_ids, um_per_px_avg)
 
         if vis_match is not None:
-            save_debug_ids(
-                img_out, 
-                "24_bf_fluor_matching_overlay.png", 
-                vis_match, 
-                accepted, 
-                accepted_ids, 
-                um_per_px_avg
-            )
+            save_debug_ids(img_out, "24_bf_fluor_matching_overlay.png",
+                           vis_match, accepted, accepted_ids, um_per_px_avg)
 
-        # ========== EXPORT REJECTED OBJECTS TO CSV (NEW) ==========
+        # ========== EXPORT REJECTED OBJECTS CSV ==========
+        # FIX 9: BF intensity columns added (Mean, Median, Std, Min, Max,
+        #        IntegratedDensity) — consistent with accepted CSV schema.
         csv_rejected_path = img_out / "rejected_objects.csv"
-        
-        # ✅ FIX: Ensure rejection_reasons exists and matches rejected length
-        if len(rejected) > 0 and len(rejection_reasons) == len(rejected):
-            with open(csv_rejected_path, "w", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                
-                # Write header
-                w.writerow([
-                    "Object_ID",
-                    "Rejection_Reasons",
-                    "BF_Area_px",
-                    "BF_Area_um2",
-                    "Perimeter_px",
-                    "Circularity",
-                    "AspectRatio",
-                    "Solidity",
-                    "BBoxX_px",
-                    "BBoxY_px",
-                    "BBoxW_px",
-                    "BBoxH_px",
-                    "CentroidX_px",
-                    "CentroidY_px",
-                ])
-                
-                # Write rejected objects
-                for i, (c, rej_info) in enumerate(zip(rejected, rejection_reasons)):
-                    rej_id = rejected_ids[i] if i < len(rejected_ids) else f"{group_id}_{sequence_num}_REJ{i+1}"
-                    reasons_str = "; ".join(rej_info['reasons'])
-                    
-                    area_px = rej_info['area_px']
-                    area_um2 = area_px * um2_per_px2
-                    perim_px = rej_info.get('perim_px', 0.0)
-                    circ = rej_info.get('circularity', 0.0)
-                    aspect = rej_info.get('aspect_ratio', 0.0)
-                    solidity = rej_info.get('solidity', 0.0)
-                    x, y, bw, bh = rej_info.get('bbox', (0, 0, 0, 0))
-                    
-                    # Calculate centroid
-                    M = cv2.moments(c)
-                    if M["m00"] != 0:
-                        cx = float(M["m10"] / M["m00"])
-                        cy = float(M["m01"] / M["m00"])
-                    else:
-                        cx, cy = 0.0, 0.0
-                    
-                    w.writerow([
-                        rej_id,
-                        reasons_str,
-                        f"{area_px:.2f}",
-                        f"{area_um2:.4f}",
-                        f"{perim_px:.2f}",
-                        f"{circ:.4f}",
-                        f"{aspect:.4f}",
-                        f"{solidity:.4f}",
-                        x,
-                        y,
-                        bw,
-                        bh,
-                        f"{cx:.2f}",
-                        f"{cy:.2f}",
-                    ])
-        else:
-            # No rejected objects or mismatch in data - write empty CSV with header only
-            with open(csv_rejected_path, "w", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                w.writerow([
-                    "Object_ID",
-                    "Rejection_Reasons",
-                    "BF_Area_px",
-                    "BF_Area_um2",
-                    "Perimeter_px",
-                    "Circularity",
-                    "AspectRatio",
-                    "Solidity",
-                    "BBoxX_px",
-                    "BBoxY_px",
-                    "BBoxW_px",
-                    "BBoxH_px",
-                    "CentroidX_px",
-                    "CentroidY_px",
-                ])
+        _rejected_header = [
+            "Object_ID", "Rejection_Reasons",
+            "BF_Area_px", "BF_Area_um2",
+            "Perimeter_px", "Circularity",
+            "AspectRatio", "Solidity",
+            # BF intensity stats (Fix 9)
+            "BF_Mean_Intensity", "BF_Median_Intensity",
+            "BF_Std_Intensity",  "BF_Min_Intensity",
+            "BF_Max_Intensity",  "BF_IntegratedDensity",
+            # Gradient (Fix 2)
+            "Mean_Edge_Gradient",
+            "BBoxX_px", "BBoxY_px", "BBoxW_px", "BBoxH_px",
+            "CentroidX_px", "CentroidY_px",
+        ]
 
-        # ========== EXPORT ACCEPTED OBJECTS TO CSV ==========
+        with open(csv_rejected_path, "w", newline="", encoding="utf-8") as _f_rej:
+            _w_rej = csv.writer(_f_rej)
+            _w_rej.writerow(_rejected_header)
+
+            if rejected and len(rejection_reasons) == len(rejected):
+                for _i_rej, (_c_rej, _rej_info) in enumerate(
+                        zip(rejected, rejection_reasons)):
+                    _rej_id = (
+                        rejected_ids[_i_rej]
+                        if _i_rej < len(rejected_ids)
+                        else f"{group_id}_{sequence_num}_REJ{_i_rej + 1}"
+                    )
+                    _reasons_str = "; ".join(_rej_info['reasons'])
+
+                    _r_area_px  = _rej_info['area_px']
+                    _r_area_um2 = _r_area_px * um2_per_px2
+                    _r_perim    = _rej_info.get('perim_px',      0.0)
+                    _r_circ     = _rej_info.get('circularity',   0.0)
+                    _r_aspect   = _rej_info.get('aspect_ratio',  0.0)
+                    _r_solid    = _rej_info.get('solidity',       0.0)
+                    # BF intensity (Fix 9)
+                    _r_bf_mean  = _rej_info.get('bf_mean',        0.0)
+                    _r_bf_med   = _rej_info.get('bf_median',      0.0)
+                    _r_bf_std   = _rej_info.get('bf_std',         0.0)
+                    _r_bf_min   = _rej_info.get('bf_min_val',     0.0)
+                    _r_bf_max   = _rej_info.get('bf_max_val',     0.0)
+                    _r_bf_integ = _rej_info.get('bf_integrated',  0.0)
+                    _r_grad     = _rej_info.get('mean_gradient',  0.0)
+                    _xb, _yb, _wb, _hb = _rej_info.get('bbox', (0, 0, 0, 0))
+
+                    _M_r = cv2.moments(_c_rej)
+                    if _M_r["m00"] != 0:
+                        _cx_r = float(_M_r["m10"] / _M_r["m00"])
+                        _cy_r = float(_M_r["m01"] / _M_r["m00"])
+                    else:
+                        _cx_r, _cy_r = 0.0, 0.0
+
+                    _w_rej.writerow([
+                        _rej_id,              _reasons_str,
+                        f"{_r_area_px:.2f}",  f"{_r_area_um2:.4f}",
+                        f"{_r_perim:.2f}",    f"{_r_circ:.4f}",
+                        f"{_r_aspect:.4f}",   f"{_r_solid:.4f}",
+                        f"{_r_bf_mean:.2f}",  f"{_r_bf_med:.2f}",
+                        f"{_r_bf_std:.2f}",   f"{_r_bf_min:.2f}",
+                        f"{_r_bf_max:.2f}",   f"{_r_bf_integ:.1f}",
+                        f"{_r_grad:.2f}",
+                        _xb, _yb, _wb, _hb,
+                        f"{_cx_r:.2f}",       f"{_cy_r:.2f}",
+                    ])
+
+        # ========== EXPORT ACCEPTED OBJECTS CSV ==========
+        # FIX 9: BF intensity block added after morphological columns,
+        #        before the fluorescence block, mirroring the fluor schema.
         csv_path = img_out / "object_stats.csv"
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
-            
-            # Write header
             w.writerow([
-                "Object_ID",
-                "Status",  # ✅ NEW: "Accepted" for all rows
-                "BF_Area_px",
-                "BF_Area_um2",
-                "Perimeter_px",
-                "Perimeter_um",
-                "EquivDiameter_px",
-                "EquivDiameter_um",
-                "Circularity",
-                "AspectRatio",
-                "Solidity",
-                "CentroidX_px",
-                "CentroidY_px",
-                "CentroidX_um",
-                "CentroidY_um",
-                "BBoxX_px",
-                "BBoxY_px",
-                "BBoxW_px",
-                "BBoxH_px",
-                "BBoxW_um",
-                "BBoxH_um",
-                "Fluor_Area_px",
-                "Fluor_Area_um2",
-                "Fluor_Mean",
-                "Fluor_Median",
-                "Fluor_Std",
-                "Fluor_Min",
-                "Fluor_Max",
-                "Fluor_IntegratedDensity",
+                "Object_ID", "Status",
+                "BF_Area_px", "BF_Area_um2",
+                "Perimeter_px", "Perimeter_um",
+                "EquivDiameter_px", "EquivDiameter_um",
+                "Circularity", "AspectRatio", "Solidity",
+                "CentroidX_px", "CentroidY_px",
+                "CentroidX_um", "CentroidY_um",
+                "BBoxX_px", "BBoxY_px", "BBoxW_px", "BBoxH_px",
+                "BBoxW_um", "BBoxH_um",
+                # BF intensity block (Fix 9)
+                "BF_Mean_Intensity", "BF_Median_Intensity",
+                "BF_Std_Intensity",  "BF_Min_Intensity",
+                "BF_Max_Intensity",  "BF_IntegratedDensity",
+                # Fluorescence block
+                "Fluor_Area_px", "Fluor_Area_um2",
+                "Fluor_Mean", "Fluor_Median", "Fluor_Std",
+                "Fluor_Min", "Fluor_Max", "Fluor_IntegratedDensity",
             ])
 
-            # Write data for each accepted particle
-            for i, c in enumerate(accepted, 1):
-                compound_id = accepted_ids[i-1]
+            for i_acc, c_acc in enumerate(accepted, 1):
+                compound_id = accepted_ids[i_acc - 1]
 
-                # Area measurements
-                area_px = float(cv2.contourArea(c))
-                area_um2 = area_px * um2_per_px2
+                a_area_px  = float(cv2.contourArea(c_acc))
+                a_area_um2 = a_area_px * um2_per_px2
+                a_perim_px = float(cv2.arcLength(c_acc, True))
+                a_perim_um = contour_perimeter_um(
+                    c_acc, float(um_per_px_x), float(um_per_px_y))
+                a_eqd_px   = equivalent_diameter_from_area(a_area_px)
+                a_eqd_um   = equivalent_diameter_from_area(a_area_um2)
+                a_circ     = (
+                    4.0 * np.pi * a_area_px / (a_perim_px ** 2)
+                    if a_perim_px > 0 else 0.0
+                )
 
-                # Perimeter measurements
-                perim_px = float(cv2.arcLength(c, True))
-                perim_um = contour_perimeter_um(c, float(um_per_px_x), float(um_per_px_y))
+                _ax, _ay, _aw, _ah = cv2.boundingRect(c_acc)
 
-                # Equivalent diameter
-                eqd_px = equivalent_diameter_from_area(area_px)
-                eqd_um = equivalent_diameter_from_area(area_um2)
+                # FIX 3: rotation-invariant aspect ratio
+                _a_long  = max(float(_aw), float(_ah))
+                _a_short = min(float(_aw), float(_ah))
+                a_aspect = _a_long / _a_short if _a_short > 0 else 1.0
 
-                # Shape metrics
-                circ = (4 * np.pi * area_px / (perim_px**2)) if perim_px > 0 else 0.0
+                _a_hull      = cv2.convexHull(c_acc)
+                _a_hull_area = float(cv2.contourArea(_a_hull))
+                a_solidity   = a_area_px / _a_hull_area if _a_hull_area > 0 else 0.0
 
-                x, y, bw, bh = cv2.boundingRect(c)
-                aspect = (float(bw) / float(bh)) if bh > 0 else 0.0
-
-                # Solidity
-                hull = cv2.convexHull(c)
-                hull_area = float(cv2.contourArea(hull))
-                solidity = area_px / hull_area if hull_area > 0 else 0.0
-
-                # Centroid
-                M = cv2.moments(c)
-                if M["m00"] != 0:
-                    cx = float(M["m10"] / M["m00"])
-                    cy = float(M["m01"] / M["m00"])
+                M_a = cv2.moments(c_acc)
+                if M_a["m00"] != 0:
+                    a_cx = float(M_a["m10"] / M_a["m00"])
+                    a_cy = float(M_a["m01"] / M_a["m00"])
                 else:
-                    cx, cy = 0.0, 0.0
+                    a_cx, a_cy = 0.0, 0.0
 
-                cx_um = cx * float(um_per_px_x)
-                cy_um = cy * float(um_per_px_y)
-                bw_um = float(bw) * float(um_per_px_x)
-                bh_um = float(bh) * float(um_per_px_y)
+                a_cx_um = a_cx * float(um_per_px_x)
+                a_cy_um = a_cy * float(um_per_px_y)
+                a_bw_um = float(_aw) * float(um_per_px_x)
+                a_bh_um = float(_ah) * float(um_per_px_y)
 
-                # Fluorescence measurements
-                if fluor_measurements is not None:
-                    fm = fluor_measurements[i - 1]
+                # FIX 9: Measure BF intensity for this accepted object.
+                # Re-draw the contour mask (reusing _contour_mask buffer).
+                _contour_mask[:] = 0
+                cv2.drawContours(_contour_mask, [c_acc], -1, 255, thickness=-1)
+                _acc_bf_pixels = img8[_contour_mask > 0]
+
+                if _acc_bf_pixels.size > 0:
+                    a_bf_mean   = float(np.mean(_acc_bf_pixels))
+                    a_bf_median = float(np.median(_acc_bf_pixels))
+                    a_bf_std    = float(np.std(_acc_bf_pixels))
+                    a_bf_min    = float(np.min(_acc_bf_pixels))
+                    a_bf_max    = float(np.max(_acc_bf_pixels))
+                    a_bf_integ  = float(np.sum(_acc_bf_pixels.astype(np.float64)))
                 else:
-                    fm = {
-                        "fluor_area_px": 0.0,
-                        "fluor_area_um2": 0.0,
-                        "fluor_mean": 0.0,
-                        "fluor_median": 0.0,
-                        "fluor_std": 0.0,
-                        "fluor_min": 0.0,
-                        "fluor_max": 0.0,
-                        "fluor_integrated_density": 0.0,
-                    }
+                    a_bf_mean = a_bf_median = a_bf_std = 0.0
+                    a_bf_min  = a_bf_max    = a_bf_integ = 0.0
 
-                # Write row
+                fm = fluor_measurements[i_acc - 1] if fluor_measurements is not None else {
+                    "fluor_area_px": 0.0, "fluor_area_um2": 0.0,
+                    "fluor_mean":    0.0, "fluor_median":   0.0,
+                    "fluor_std":     0.0, "fluor_min":      0.0,
+                    "fluor_max":     0.0, "fluor_integrated_density": 0.0,
+                }
+
                 w.writerow([
-                    compound_id,
-                    "Accepted",  # ✅ NEW: Status column
-                    f"{area_px:.2f}",
-                    f"{area_um2:.4f}",
-                    f"{perim_px:.2f}",
-                    f"{perim_um:.4f}",
-                    f"{eqd_px:.2f}",
-                    f"{eqd_um:.4f}",
-                    f"{circ:.4f}",
-                    f"{aspect:.4f}",
-                    f"{solidity:.4f}",
-                    f"{cx:.2f}",
-                    f"{cy:.2f}",
-                    f"{cx_um:.4f}",
-                    f"{cy_um:.4f}",
-                    x,
-                    y,
-                    bw,
-                    bh,
-                    f"{bw_um:.4f}",
-                    f"{bh_um:.4f}",
+                    compound_id, "Accepted",
+                    f"{a_area_px:.2f}",    f"{a_area_um2:.4f}",
+                    f"{a_perim_px:.2f}",   f"{a_perim_um:.4f}",
+                    f"{a_eqd_px:.2f}",     f"{a_eqd_um:.4f}",
+                    f"{a_circ:.4f}",       f"{a_aspect:.4f}",  f"{a_solidity:.4f}",
+                    f"{a_cx:.2f}",         f"{a_cy:.2f}",
+                    f"{a_cx_um:.4f}",      f"{a_cy_um:.4f}",
+                    _ax, _ay, _aw, _ah,
+                    f"{a_bw_um:.4f}",      f"{a_bh_um:.4f}",
+                    # BF intensity block (Fix 9)
+                    f"{a_bf_mean:.2f}",    f"{a_bf_median:.2f}",
+                    f"{a_bf_std:.2f}",     f"{a_bf_min:.2f}",
+                    f"{a_bf_max:.2f}",     f"{a_bf_integ:.1f}",
+                    # Fluorescence block
                     f"{float(fm['fluor_area_px']):.2f}",
                     f"{float(fm['fluor_area_um2']):.4f}",
                     f"{float(fm['fluor_mean']):.2f}",
@@ -6802,32 +6931,36 @@ def process_image(
                     f"{float(fm['fluor_integrated_density']):.2f}",
                 ])
 
-        print(f"  ✓ Processed: {img_path.name} ({len(accepted)} accepted, {len(rejected)} rejected)")
+        print(
+            f"  ✓ Processed: {img_path.name} "
+            f"({len(accepted)} accepted, {len(rejected)} rejected)"
+        )
 
     except Exception as e:
         print(f"[ERROR] Failed to process {img_path.name}: {e}")
         import traceback
         traceback.print_exc()
         raise
-    
+
     finally:
-        # ========== EXPLICIT MEMORY CLEANUP ==========
-        # This ensures cleanup happens even if an exception occurs
         import gc
-        
-        # Delete all large image arrays
-        for var_name in ['img', 'img8', 'fluor_img', 'fluor_img_aligned', 
-                         'mask', 'vis_all', 'vis_acc', 'vis_rej', 'mask_all', 'mask_acc', 'mask_rej',
-                         'fluor_img8', 'fluor_bw', 'vis_fluor', 'vis_match']:
-            var = locals().get(var_name)
-            if var is not None:
+        for _vname in [
+            'img', 'img8', 'gradient_mag',
+            'fluor_img', 'fluor_img_aligned',
+            'mask', 'vis_all', 'vis_acc', 'vis_rej',
+            'mask_all', 'mask_acc', 'mask_rej',
+            'fluor_img8', 'fluor_bw', 'vis_fluor', 'vis_match',
+        ]:
+            _v = locals().get(_vname)
+            if _v is not None:
                 try:
-                    del var
-                except:
+                    del _v
+                except Exception:
                     pass
-        
-        # Force garbage collection for large images (>10MB)
         gc.collect()
+
+
+
 
 def open_folder(folder_path: Path) -> None:
     """Open folder in file explorer (cross-platform, Unicode-safe)

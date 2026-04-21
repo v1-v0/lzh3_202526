@@ -109,6 +109,7 @@ class ParameterPanel(ttk.Frame):
             'min_aspect_ratio': self.tuner.min_aspect_ratio,
             'max_aspect_ratio': self.tuner.max_aspect_ratio,
             'min_solidity': self.tuner.min_solidity,
+            'max_mean_intensity': self.tuner.max_mean_intensity,
             'threshold_mode': self.tuner.threshold_mode,
             'invert_image': self.tuner.invert_image,
             'use_intensity_threshold': self.tuner.use_intensity_threshold,
@@ -271,6 +272,10 @@ class ParameterPanel(ttk.Frame):
 
         self._add_slider_with_input(shape_content, "Min Solidity", "min_solidity",
                                     self.tuner.min_solidity, 0.0, 1.0, 0.01)
+        
+        self._add_slider_with_input(shape_content, "Max BF Intensity", "max_mean_intensity",
+                                    self.tuner.max_mean_intensity, 0.0, 255.0, 1.0)
+
 
         # CONTROL BUTTONS Section
         self._create_control_buttons()
@@ -692,6 +697,10 @@ class ParameterPanel(ttk.Frame):
                     'min_aspect_ratio': config_data.get('min_aspect_ratio', 0.2),
                     'max_aspect_ratio': config_data.get('max_aspect_ratio', 10.0),
                     'min_solidity': config_data.get('min_solidity', 0.3),
+                    'max_mean_intensity': config_data.get(
+                        'max_mean_intensity_bf',
+                        config_data.get('max_mean_intensity', 255.0)
+                        ),
                 }
 
                 for param_name, value in slider_mappings.items():
@@ -1183,7 +1192,8 @@ class SegmentationTuner:
         "max_aspect_ratio": 1.60,
         "min_solidity": 0.88,
         "dilate_iterations": 0,
-        "erode_iterations": 0
+        "erode_iterations": 0,
+        "max_mean_intensity": 255.0
     }
 
     FALLBACK_UM_PER_PX = 0.109492
@@ -1300,8 +1310,8 @@ class SegmentationTuner:
                 max_circularity=float(self.max_circularity),
                 min_aspect_ratio=float(self.min_aspect_ratio),
                 max_aspect_ratio=float(self.max_aspect_ratio),
-                min_mean_intensity=0,
-                max_mean_intensity=255,
+                min_mean_intensity_bf=0,
+                max_mean_intensity_bf=float(self.max_mean_intensity),
                 max_edge_gradient=200,
                 min_solidity=float(self.min_solidity),
                 max_fraction_of_image=0.25,
@@ -1325,6 +1335,7 @@ class SegmentationTuner:
             success = _manager.update_config(bacteria_key, config)
 
             if success:
+
                 # Auto-mark as validated in the registry once a config is saved
                 if _bacteria_registry.key_exists(bacteria_key):
                     _bacteria_registry.set_validated(bacteria_key, True)
@@ -1399,6 +1410,7 @@ class SegmentationTuner:
                     'min_aspect_ratio': self.min_aspect_ratio,
                     'max_aspect_ratio': self.max_aspect_ratio,
                     'min_solidity': self.min_solidity,
+                    'max_mean_intensity': self.max_mean_intensity,
                     'threshold_mode': self.threshold_mode,
                     'manual_threshold': self.manual_threshold,
                     'morph_kernel_size': self.morph_kernel_size,
@@ -1485,7 +1497,7 @@ class SegmentationTuner:
                 if 'morph_kernel_size' in config_data:
                     kernel_size = config_data['morph_kernel_size']
                     if kernel_size % 2 == 0:
-                        print(f"⚠️ WARNING: morph_kernel_size={kernel_size} is even, correcting to {kernel_size + 1}")
+                        print(f"WARNING: morph_kernel_size={kernel_size} is even, correcting to {kernel_size + 1}")
                         config_data['morph_kernel_size'] = kernel_size + 1
 
                 if 'pixel_size_um' in config_data and config_data['pixel_size_um'] is not None:
@@ -1521,6 +1533,12 @@ class SegmentationTuner:
                 self.min_aspect_ratio = float(config_data.get('min_aspect_ratio', 0.2))
                 self.max_aspect_ratio = float(config_data.get('max_aspect_ratio', 10.0))
                 self.min_solidity = float(config_data.get('min_solidity', 0.3))
+                self.max_mean_intensity = float(
+                    config_data.get(
+                        'max_mean_intensity_bf', 
+                        config_data.get('max_mean_intensity', 255.0)
+                    )
+                )
 
                 self.invert_image = config_data.get('invert_image', False)
 
@@ -1578,6 +1596,8 @@ class SegmentationTuner:
                 self.intensity_threshold_value = params_dict.get('intensity_threshold', 80.0)
                 if self.use_intensity_threshold:
                     self.threshold_mode = "intensity"
+                
+                self.max_mean_intensity = params_dict.get('max_mean_intensity', 255.0)
 
                 print(f"✅ Restored TEMP session from: {json_filename}")
                 return
@@ -1605,6 +1625,10 @@ class SegmentationTuner:
                 self.max_aspect_ratio = float(saved_config.max_aspect_ratio)
                 self.min_solidity = float(saved_config.min_solidity)
 
+                self.max_mean_intensity = float(
+                    getattr(saved_config, 'max_mean_intensity_bf', 255.0)
+                )
+
                 self.invert_image = False
 
                 print(f"✅ Loaded config for {self.bacterium} from bacteria_configs.py")
@@ -1614,7 +1638,7 @@ class SegmentationTuner:
                 print(f"⚠️ Error loading bacteria_configs.py: {e}")
 
         # Priority 4: Use defaults
-        print(f"ℹ️ No saved config found for '{self.bacterium}' - using defaults")
+        print(f"No saved config found for '{self.bacterium}' - using defaults")
         self.params = self.DEFAULT_PARAMS.copy()
         self.threshold_mode = self.DEFAULT_THRESHOLD_PARAMS['threshold_mode']
         self.manual_threshold = self.DEFAULT_THRESHOLD_PARAMS['manual_threshold']
@@ -1623,6 +1647,7 @@ class SegmentationTuner:
         self.invert_image = False
         self.use_intensity_threshold = False
         self.intensity_threshold_value = 80.0
+        self.max_mean_intensity = 255.0
 
     def update_threshold(self, param_name: str, value: float):
         setattr(self, param_name, value)
@@ -2265,6 +2290,13 @@ class SegmentationTuner:
             solidity = area_px / hull_area if hull_area > 0 else 0.0
 
             if solidity < self.min_solidity:
+                continue
+
+            _mask_int = np.zeros(img.shape[:2], dtype=np.uint8)
+            cv2.drawContours(_mask_int, [cnt], -1, 255, cv2.FILLED)
+            _pixels = img[_mask_int > 0]
+            mean_int = float(np.mean(_pixels)) if _pixels.size > 0 else 0.0
+            if mean_int > self.max_mean_intensity:
                 continue
 
             self.contours.append(cnt)
@@ -2982,13 +3014,28 @@ class SegmentationTuner:
 
         self.target_analysis_text.delete('1.0', tk.END)
 
-        self.target_analysis_text.insert('end', "🎯 Target Particle Analysis\n\n", "header")
-        self.target_analysis_text.insert('end', "📏 Measurements:\n", "section")
+        self.target_analysis_text.insert('end', "Target Particle Analysis\n\n", "header")
+        self.target_analysis_text.insert('end', "Measurements:\n", "section")
         self.target_analysis_text.insert('end', f"• Area: {area_px:.1f} px² ({area_um2:.2f} µm²)\n")
         self.target_analysis_text.insert('end', f"• Perimeter: {perimeter:.1f} px\n")
         self.target_analysis_text.insert('end', f"• Aspect Ratio: {aspect_ratio:.2f}\n")
         self.target_analysis_text.insert('end', f"• Circularity: {circularity:.3f}\n")
         self.target_analysis_text.insert('end', f"• Solidity: {solidity:.3f}\n\n")
+
+        _mask_mi = np.zeros(self.original_image.shape[:2], dtype=np.uint8)
+        cv2.drawContours(_mask_mi, [contour], -1, 255, cv2.FILLED)
+        _px = self.original_image[_mask_mi > 0]
+        mean_int_clicked = float(np.mean(_px)) if _px.size > 0 else 0.0
+        intensity_flag = (
+            " ⚠ above threshold!"
+            if mean_int_clicked > self.max_mean_intensity
+            else " ✓ within threshold"
+        )
+        self.target_analysis_text.insert(
+            'end',
+            f"• BF Mean Intensity: {mean_int_clicked:.1f}"
+            f"  (limit ≤ {self.max_mean_intensity:.0f}){intensity_flag}\n"
+        )
 
         if suggestions:
             self.target_analysis_text.insert('end', "📊 Suggestions:\n", "section")
