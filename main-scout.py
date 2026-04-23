@@ -1832,18 +1832,23 @@ def _rl_section_divider():
 
 def _find_all_image_pairs(
     group_dir: Path,
-    max_pairs: Optional[int] = 2,
+    max_pairs: Optional[int] = None,
 ) -> list[tuple[Optional[Path], Optional[Path]]]:
     pairs: list[tuple[Optional[Path], Optional[Path]]] = []
+
     for img_subdir in sorted(group_dir.iterdir()):
         if not img_subdir.is_dir():
             continue
+
         c = img_subdir / "11_contours_rejected_orange_accepted_yellow_ids_green.png"
         f = img_subdir / "24_bf_fluor_matching_overlay_ids.png"
+
         if c.exists() or f.exists():
             pairs.append((c if c.exists() else None, f if f.exists() else None))
+
             if max_pairs is not None and len(pairs) >= max_pairs:
                 break
+
     return pairs
 
 
@@ -1856,11 +1861,11 @@ def _find_representative_images(
 
 
 def build_sample_images_section(
-    path_contour_overlay:  str,          # kept for backward compat (ignored when all_pairs given)
+    path_contour_overlay: str,
     path_bf_fluor_overlay: str,
-    styles:                dict | None   = None,
-    image_height:          float | None  = None,
-    all_image_pairs:       list | None   = None,   # NEW: list of (contour_path, fluor_path)
+    styles: dict | None = None,
+    image_height: float | None = None,
+    all_image_pairs: list | None = None,
 ) -> list:
     """
     Render all (contour-map, BF/fluor-overlay) image pairs side-by-side.
@@ -1876,14 +1881,17 @@ def build_sample_images_section(
     if styles is None:
         styles = _rl_base_styles()
 
-    # Normalise to a list of (str-or-None, str-or-None)
+    # Normalize to a list of (str-or-None, str-or-None)
     if all_image_pairs:
-        pairs: list[tuple] = [
+        pairs: list[tuple[str | None, str | None]] = [
             (str(c) if c else None, str(f) if f else None)
             for c, f in all_image_pairs
         ]
     else:
-        pairs = [(path_contour_overlay or None, path_bf_fluor_overlay or None)]
+        pairs = [(
+            str(path_contour_overlay) if path_contour_overlay else None,
+            str(path_bf_fluor_overlay) if path_bf_fluor_overlay else None,
+        )]
 
     half_w = (_RL_CONTENT_W - 0.5 * rl_cm) / 2
     story: list = []
@@ -1891,10 +1899,10 @@ def build_sample_images_section(
     story.append(Spacer(1, 0.3 * rl_cm))
     story.append(_rl_section_divider())
     story.append(Paragraph(
-    f"Representative Sample Overlay Images  ({len(pairs)} shown)",
+        f"All Sample Overlay Images ({len(pairs)} image sets shown)",
         styles["section_head"],
     ))
-    story.append(Spacer(1, 0.2 * rl_cm))
+    story.append(Spacer(1, 6))
 
     def _safe_image(path, w, h):
         if path and os.path.isfile(str(path)):
@@ -1911,7 +1919,8 @@ def build_sample_images_section(
                 int(w), int(h),
                 label=os.path.basename(str(path)) if path else "Image not found"
             ),
-            width=w, height=h,
+            width=w,
+            height=h,
         )
 
     for idx, (c_path, f_path) in enumerate(pairs, 1):
@@ -1922,26 +1931,28 @@ def build_sample_images_section(
                 subdir = Path(str(p)).parent.name
                 break
 
-        img_contour  = _safe_image(c_path, half_w, image_height)
+        img_contour = _safe_image(c_path, half_w, image_height)
         img_bf_fluor = _safe_image(f_path, half_w, image_height)
 
         cap_contour = Paragraph(
-            f"<b>Image {idx}{(' \u00b7 ' + subdir) if subdir else ''} \u00b7 Contour Map</b><br/>"
-            "Rejected: <font color='#FF6600'><b>orange</b></font> \u00b7 "
-            "Accepted: <font color='#CCCC00'><b>yellow</b></font> \u00b7 "
+            f"<b>Image {idx}{(' · ' + subdir) if subdir else ''} · Contour Map</b><br/>"
+            "Rejected: <font color='#FF6600'><b>orange</b></font> · "
+            "Accepted: <font color='#CCCC00'><b>yellow</b></font> · "
             "IDs: <font color='#00AA00'><b>green</b></font>",
             styles["caption"],
         )
         cap_bf_fluor = Paragraph(
-            f"<b>Image {idx}{(' \u00b7 ' + subdir) if subdir else ''} \u00b7 BF / Fluorescence</b><br/>"
+            f"<b>Image {idx}{(' · ' + subdir) if subdir else ''} · BF / Fluorescence</b><br/>"
             "Brightfield (grey) co-registered with fluorescence (green); "
             "particle IDs labelled",
             styles["caption"],
         )
 
         image_table = Table(
-            [[img_contour,  img_bf_fluor],
-             [cap_contour,  cap_bf_fluor]],
+            [
+                [img_contour, img_bf_fluor],
+                [cap_contour, cap_bf_fluor],
+            ],
             colWidths=[half_w, half_w],
             hAlign="LEFT",
         )
@@ -1953,17 +1964,15 @@ def build_sample_images_section(
             ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
             ("LEFTPADDING",   (0, 0), (-1, -1), 4),
             ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
-            ("LINEBELOW",     (0, 0), (-1,  0), 0.5,
-             rl_colors.HexColor("#DDDDDD")),
+            ("LINEBELOW",     (0, 0), (-1,  0), 0.5, rl_colors.HexColor("#DDDDDD")),
         ]))
         story.append(KeepTogether([image_table]))
+
         if idx < len(pairs):
             story.append(Spacer(1, 0.15 * rl_cm))
 
     story.append(Spacer(1, 0.3 * rl_cm))
     return story
-
-
 
 
 
@@ -2539,7 +2548,7 @@ def _generate_individual_sample_additions_pdf(
         return None
 
     # ── all image pairs (one per source image) ───────────────────────────
-    all_pairs = _find_all_image_pairs(group_dir, max_pairs=2)
+    all_pairs = _find_all_image_pairs(group_dir)
 
     # ── comparison plot data ─────────────────────────────────────────────
     ordered_keys = sorted(
@@ -2611,6 +2620,7 @@ def _generate_individual_sample_additions_pdf(
         path_contour_overlay="",   # ignored; all_image_pairs takes over
         path_bf_fluor_overlay="",
         styles=styles,
+        image_height=6.5 * rl_cm,
         all_image_pairs=all_pairs,
     )
 

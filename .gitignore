@@ -51,7 +51,7 @@ data/raw/
 data/preprocessed/
 results/
 reference_outputs/
-
+runs_history.csv
 
 # IDE
 .vscode/
