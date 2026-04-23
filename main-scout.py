@@ -3787,25 +3787,22 @@ def generate_laboratory_report_pdf(
     page5_data:           Optional[dict] = None,
 ) -> Optional[Path]:
     """
-    Generate the main A4 laboratory report PDF (pages 1–5).
-
-    Parameters
-    ----------
-    include_page5 : bool
-        When False, page 5 (Methodology & QC) is always omitted.
-        When True (default), page 5 is included unless page5_data is
-        supplied and is_page5_empty() returns True for it.
-    page5_data : dict | None
-        Optional dict with keys such as 'methodology', 'quality_control',
-        'limitations', 'performed_by', 'reviewed_by'.
-        Pass an empty/blank dict to suppress page 5 dynamically.
-        Pass None (default) to always include page 5.
+    Generate the main A4 laboratory report PDF.
+    Automatically handles pagination if the sample list is too long to fit on Page 1.
     """
-    # ── Decide page count ────────────────────────────────────────────────
+    # ── Decide page count & layout ───────────────────────────────────────
+    A4_W, A4_H = 8.27, 11.69
+    
     _emit_page5 = include_page5
     if _emit_page5 and page5_data is not None:
         _emit_page5 = not is_page5_empty(page5_data)
-    total_pages = 5 if _emit_page5 else 4
+        
+    # If we have more than 12 samples, the Final Results & Decision Reference 
+    # will not fit on Page 1 without overlapping. We move them to a new page.
+    needs_extra_page = len(final_df) > 12
+    
+    base_pages = 5 if _emit_page5 else 4
+    total_pages = base_pages + (1 if needs_extra_page else 0)
 
     pdf_path   = output_root / "laboratory_report.pdf"
     timestamp  = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -3813,7 +3810,6 @@ def generate_laboratory_report_pdf(
     HEADER_BG  = "#1B3A5C"
     ACCENT     = "#2E75B6"
     LIGHT_GRAY = "#F2F2F2"
-    A4_W, A4_H = 8.27, 11.69
     RESULT_COLOURS = {
         'POSITIVE':            ("#FFC7CE", "#9C0006"),
         'NEGATIVE':            ("#C6EFCE", "#006100"),
@@ -3842,16 +3838,6 @@ def generate_laboratory_report_pdf(
                               .get('bacteria_type', ''))
     )
 
-    def _read_comparison_csv(d):
-        return (pd.read_csv(d / "configuration_comparison.csv")
-                if isinstance(d, Path) and (d / "configuration_comparison.csv").exists()
-                else pd.DataFrame())
-
-    pos_comp_df = _read_comparison_csv(config.get('positive_output'))
-    neg_comp_df = _read_comparison_csv(config.get('negative_output'))
-    if pos_comp_df.empty and neg_comp_df.empty:
-        pos_comp_df = _read_comparison_csv(output_root)
-
     def _make_ax(fig):
         ax = fig.add_axes((0, 0, 1, 1))
         ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis('off')
@@ -3879,104 +3865,19 @@ def generate_laboratory_report_pdf(
                 fontsize=7, color='#CC0000', va='center',
                 ha='right', fontweight='bold')
 
-    _TBL_COL_X = [0.05, 0.09, 0.32, 0.50, 0.67, 0.77, 0.87]
-    _TBL_COL_W = [0.04, 0.23, 0.18, 0.17, 0.10, 0.10, 0.08]
-    _TBL_HEADERS = ['#', 'Bacteria Type', 'Part./img \u00b1SD',
-                    'Mean Fluor \u00b1SD', 'd', 'p-val', 'Score']
-    _COMP_ROW_H = 0.022
-
-    def _draw_comparison_table(ax, comp_df, title, t_color, rpt, y_start):
-        st    = rpt.get('status', '')
-        s_lbl = ("AMBIGUOUS"    if 'AMBIGUOUS'   in st.upper() else
-                 "NO BACTERIA"  if 'NO BACTERIA' in st.upper() else
-                 "DETECTED"     if st            else '')
-        s_clr = ('#974706' if s_lbl == 'AMBIGUOUS'
-                 else '#555555' if s_lbl == 'NO BACTERIA'
-                 else '#006100')
-        ax.text(0.07, y_start, title, fontsize=8.5,
-                fontweight='bold', color=t_color, va='center')
-        if s_lbl:
-            ax.text(0.93, y_start, s_lbl, fontsize=7.5,
-                    fontweight='bold', color=s_clr, va='center', ha='right')
-        y = y_start - 0.020
-        ax.fill_between([0.05, 0.95], y - _COMP_ROW_H / 2, y + _COMP_ROW_H / 2,
-                        color=HEADER_BG)
-        for j, h in enumerate(_TBL_HEADERS):
-            ax.text(_TBL_COL_X[j] + _TBL_COL_W[j] / 2, y, h,
-                    fontsize=6, fontweight='bold', color='white',
-                    va='center', ha='center')
-        y -= _COMP_ROW_H
-        if comp_df.empty:
-            ax.text(0.50, y, "No comparison data available",
-                    fontsize=7, color='#999999', va='center',
-                    ha='center', style='italic')
-            return y - _COMP_ROW_H * 0.6
-
-        df_sorted = (comp_df.sort_values('Rank').reset_index(drop=True)
-                     if 'Rank' in comp_df.columns
-                     else comp_df.reset_index(drop=True))
-
-        for i, (_, row) in enumerate(df_sorted.iterrows()):
-            ax.fill_between([0.05, 0.95], y - _COMP_ROW_H / 2, y + _COMP_ROW_H / 2,
-                            color='#EEF4FF' if i == 0 else '#F8F8F8')
-
-            def _fv(k, default=0):
-                v = row.get(k, default)
-                try: return float(str(v).replace('\u00b1','').strip())
-                except Exception: return 0.0
-
-            ppi_str  = f"{_fv('Particles_Per_Image'):.1f} \u00b1 {_fv('Particles_Std'):.1f}"
-            mfl_str  = f"{_fv('Mean_Fluorescence'):.1f} \u00b1 {_fv('Fluor_Std'):.1f}"
-            p_raw    = row.get('P_Value_TvC')
-            try:    p_flt = float(str(p_raw))
-            except Exception: p_flt = np.nan
-            p_str    = ('N/A' if pd.isna(p_flt)
-                        else '<0.001' if p_flt < 0.001
-                        else f"{p_flt:.4f}")
-            cs_raw   = row.get('Confidence_Score', 0)
-            try:    cs_flt = float(str(cs_raw).strip())
-            except Exception: cs_flt = 0.0
-            pen_flag = bool(row.get('Penalty_Applied', False))
-            score_str = f"{cs_flt:.1f}%" + (" \u2020" if pen_flag else "")
-            d_flt    = _fv('Cohens_d')
-
-            cells  = [str(int(row.get('Rank', i + 1))),
-                      str(row.get('Bacteria_Type', '\u2014')),
-                      ppi_str, mfl_str,
-                      f"{d_flt:+.3f}", p_str, score_str]
-            colors = [
-                '#333333',
-                '#1B3A5C' if i == 0 else '#333333',
-                '#333333', '#333333',
-                '#006100' if d_flt > 0.5 else '#9C0006' if d_flt < -0.5 else '#333333',
-                '#333333',
-                '#006100' if cs_flt >= 70 else '#9C6500' if cs_flt >= 50 else '#9C0006',
-            ]
-            for j, (cell, cc) in enumerate(zip(cells, colors)):
-                ax.text(_TBL_COL_X[j] + _TBL_COL_W[j] / 2, y, cell,
-                        fontsize=6, va='center', ha='center', color=cc,
-                        fontweight='bold' if (i == 0 and j <= 1) else 'normal')
-            y -= _COMP_ROW_H
-
-        if 'Penalty_Applied' in df_sorted.columns and df_sorted['Penalty_Applied'].any():
-            ax.text(0.07, y + _COMP_ROW_H * 0.35,
-                    "\u2020 pairwise convergence penalty applied",
-                    fontsize=5.5, color='#777777', va='center', style='italic')
-            y -= 0.010
-        return y
-
     try:
         with PdfPages(str(pdf_path)) as pdf:
 
             # ── PAGE 1: Gram-type clinical summary ─────────────────────
             fig1 = plt.figure(figsize=(A4_W, A4_H))
-            ax   = _make_ax(fig1)
-            _draw_header(ax, "Gram-Type Clinical Report")
-            _draw_footer(ax, 1, total_pages)
+            ax1  = _make_ax(fig1)
+            _draw_header(ax1, "Gram-Type Clinical Report")
+            _draw_footer(ax1, 1, total_pages)
 
-            ax.fill_between([0.05, 0.95], 0.82, 0.90, color=LIGHT_GRAY)
-            ax.plot([0.05, 0.95, 0.95, 0.05, 0.05],
-                    [0.90, 0.90, 0.82, 0.82, 0.90], color='#999999', lw=0.5)
+            ax1.fill_between([0.05, 0.95], 0.82, 0.90, color=LIGHT_GRAY)
+            ax1.plot([0.05, 0.95, 0.95, 0.05, 0.05],
+                     [0.90, 0.90, 0.82, 0.82, 0.90], color='#999999', lw=0.5)
+            
             for i, (lbl, val) in enumerate([
                 ("Sample ID:",           dataset_id),
                 ("Date:",                timestamp),
@@ -3986,91 +3887,161 @@ def generate_laboratory_report_pdf(
             ]):
                 x_base = 0.07 if i < 3 else 0.52
                 y_pos  = 0.885 - (i % 3) * 0.022
-                ax.text(x_base,        y_pos, lbl,       fontsize=8, fontweight='bold', va='center', color='#333333')
-                ax.text(x_base + 0.15, y_pos, str(val),  fontsize=8, va='center', color='#333333')
+                ax1.text(x_base,        y_pos, lbl,       fontsize=8, fontweight='bold', va='center', color='#333333')
+                ax1.text(x_base + 0.15, y_pos, str(val),  fontsize=8, va='center', color='#333333')
 
-            ax.text(0.05, 0.800, "GRAM-TYPE CHANNEL ANALYSIS",
-                    fontsize=11, fontweight='bold', color=HEADER_BG)
-            ax.plot([0.05, 0.95], [0.788, 0.788], color=ACCENT, lw=1)
+            ax1.text(0.05, 0.800, "GRAM-TYPE CHANNEL ANALYSIS",
+                     fontsize=11, fontweight='bold', color=HEADER_BG)
+            ax1.plot([0.05, 0.95], [0.788, 0.788], color=ACCENT, lw=1)
 
-            _draw_channel_gram_summary(
-                ax, gplus_classification,
+            y_bottom_gplus = _draw_channel_gram_summary(
+                ax1, gplus_classification,
                 "G+  Microgel  (Gram-Positive)", ACCENT, 0.05, 0.475, 0.772,
             )
-            _draw_channel_gram_summary(
-                ax, gminus_classification,
+            y_bottom_gminus = _draw_channel_gram_summary(
+                ax1, gminus_classification,
                 "G\u2212  Microgel  (Gram-Negative)", "#C0504D", 0.525, 0.95, 0.772,
             )
 
-            RESULTS_Y = 0.480
-            ax.text(0.05, RESULTS_Y, "FINAL RESULTS",
-                    fontsize=13, fontweight='bold', color=HEADER_BG, va='center')
-            ax.plot([0.05, 0.95], [RESULTS_Y - 0.012, RESULTS_Y - 0.012],
-                    color=ACCENT, lw=1.5)
+            RESULTS_Y = min(y_bottom_gplus, y_bottom_gminus) - 0.03
 
-            col_headers = ['Group', 'G+ Mean\u00b1SD', 'G+ Detection',
-                           'G\u2212 Mean\u00b1SD', 'G\u2212 Detection', 'Final']
-            col_widths  = [0.10, 0.18, 0.14, 0.18, 0.14, 0.18]
-            col_x = [0.05]
-            for w in col_widths[:-1]:
-                col_x.append(col_x[-1] + w)
+            if needs_extra_page:
+                # Close Page 1 and start a new page for Final Results
+                pdf.savefig(fig1)
+                plt.close(fig1)
+                
+                fig_res = plt.figure(figsize=(A4_W, A4_H))
+                ax_res = _make_ax(fig_res)
+                _draw_header(ax_res, "Final Results & Decision Reference")
+                _draw_footer(ax_res, 2, total_pages)
+                
+                RESULTS_Y = 0.85
+                current_page = 2
+            else:
+                ax_res = ax1
+                current_page = 1
 
-            for j, h in enumerate(col_headers):
-                ax.fill_between([col_x[j], col_x[j] + col_widths[j]],
-                                RESULTS_Y - 0.058, RESULTS_Y - 0.030, color=HEADER_BG)
-                ax.text(col_x[j] + col_widths[j] / 2, RESULTS_Y - 0.044, h,
-                        fontsize=7, fontweight='bold', color='white',
-                        va='center', ha='center')
+            # ── FINAL RESULTS TABLE ─────────────────────────────────────
+            ax_res.text(0.05, RESULTS_Y, "FINAL RESULTS",
+                        fontsize=13, fontweight='bold', color=HEADER_BG, va='center')
+            ax_res.plot([0.05, 0.95], [RESULTS_Y - 0.012, RESULTS_Y - 0.012],
+                        color=ACCENT, lw=1.5)
 
+            num_rows = len(final_df)
+            use_two_cols = num_rows > 10
+            rows_in_table = math.ceil(num_rows / 2) if use_two_cols else num_rows
+            
+            # Safe row height calculation to avoid negative overlap
+            available_space = RESULTS_Y - 0.20 # Reserve space for Decision Ref
+            row_h = min(0.028, max(0.014, available_space / (rows_in_table + 1)))
+            
+            if use_two_cols:
+                col_headers = ['Group', 'G+ Det.', 'G\u2212 Det.', 'Final']
+                col_widths  = [0.08, 0.12, 0.12, 0.11]
+            else:
+                col_headers = ['Group', 'G+ Mean\u00b1SD', 'G+ Detection',
+                               'G\u2212 Mean\u00b1SD', 'G\u2212 Detection', 'Final']
+                col_widths  = [0.10, 0.18, 0.14, 0.18, 0.14, 0.16]
+
+            def draw_table_headers(start_x):
+                cx = [start_x]
+                for w in col_widths[:-1]: cx.append(cx[-1] + w)
+                for j, h in enumerate(col_headers):
+                    ax_res.fill_between([cx[j], cx[j] + col_widths[j]],
+                                        RESULTS_Y - 0.020 - row_h, RESULTS_Y - 0.020, color=HEADER_BG)
+                    ax_res.text(cx[j] + col_widths[j] / 2, RESULTS_Y - 0.020 - row_h/2, h,
+                                fontsize=6.5 if use_two_cols else 7, fontweight='bold', color='white',
+                                va='center', ha='center')
+                return cx
+
+            cx1 = draw_table_headers(0.05)
+            if use_two_cols:
+                cx2 = draw_table_headers(0.52)
+
+            table_bottom_y = RESULTS_Y - 0.020 - row_h
             for i, (_, row) in enumerate(final_df.iterrows()):
-                y  = RESULTS_Y - 0.030 - (i + 1) * 0.028
+                col_idx = 1 if (use_two_cols and i >= math.ceil(num_rows/2)) else 0
+                row_idx = i - math.ceil(num_rows/2) if col_idx == 1 else i
+                y = RESULTS_Y - 0.020 - row_h - (row_idx + 1) * row_h
+                table_bottom_y = min(table_bottom_y, y - row_h)
+                
                 fc = row.get('Final_Classification', '')
                 bg, tc = RESULT_COLOURS.get(fc, ('#FFFFFF', '#333333'))
-                cells = [
-                    str(row.get('Group', '')),
-                    f"{row.get('G+_Mean','\u2014')}\u00b1{row.get('G+_Std','\u2014')}" if row.get('G+_Mean', '\u2014') != '\u2014' else '\u2014',
-                    str(row.get('G+_Detection', '')),
-                    f"{row.get('G-_Mean','\u2014')}\u00b1{row.get('G-_Std','\u2014')}" if row.get('G-_Mean', '\u2014') != '\u2014' else '\u2014',
-                    str(row.get('G-_Detection', '')),
-                    fc,
-                ]
+                
+                if use_two_cols:
+                    cells = [
+                        str(row.get('Group', '')),
+                        str(row.get('G+_Detection', '')).replace('Not Detected', 'Not Det.'),
+                        str(row.get('G-_Detection', '')).replace('Not Detected', 'Not Det.'),
+                        fc,
+                    ]
+                else:
+                    cells = [
+                        str(row.get('Group', '')),
+                        f"{row.get('G+_Mean','\u2014')}\u00b1{row.get('G+_Std','\u2014')}" if row.get('G+_Mean', '\u2014') != '\u2014' else '\u2014',
+                        str(row.get('G+_Detection', '')),
+                        f"{row.get('G-_Mean','\u2014')}\u00b1{row.get('G-_Std','\u2014')}" if row.get('G-_Mean', '\u2014') != '\u2014' else '\u2014',
+                        str(row.get('G-_Detection', '')),
+                        fc,
+                    ]
+                
+                cx = cx2 if col_idx == 1 else cx1
                 for j, ct in enumerate(cells):
-                    ax.fill_between(
-                        [col_x[j], col_x[j] + col_widths[j]], y - 0.028, y,
+                    ax_res.fill_between(
+                        [cx[j], cx[j] + col_widths[j]], y, y + row_h,
                         color=bg if j == len(cells) - 1 else LIGHT_GRAY,
                     )
-                    ax.text(col_x[j] + col_widths[j] / 2, y - 0.014, ct,
-                            fontsize=7, va='center', ha='center',
-                            color=tc if j == len(cells) - 1 else '#333333')
+                    ax_res.text(cx[j] + col_widths[j] / 2, y + row_h/2, ct,
+                                fontsize=6 if use_two_cols else 7, va='center', ha='center',
+                                color=tc if j == len(cells) - 1 else '#333333')
 
-            box_y = RESULTS_Y - 0.030 - (len(final_df) + 2) * 0.028
-            ax.text(0.05, box_y, "INTERPRETATION",
-                    fontsize=11, fontweight='bold', color=HEADER_BG)
-            ax.plot([0.05, 0.95], [box_y - 0.010, box_y - 0.010], color=ACCENT, lw=1)
-            interp_y = box_y - 0.035
-            for _, row in final_df.iterrows():
-                if row.get('Group', '') == 'Control':
-                    continue
-                if interp_y - 0.030 < 0.10:
-                    break
-                sym, clr = {
-                    'NEGATIVE':            ("\u25cf", "#006100"),
-                    'POSITIVE':            ("\u25cf", "#9C0006"),
-                    'NO OBVIOUS BACTERIA': ("\u25cb", "#9C6500"),
-                    'MIXED/CONTRADICTORY': ("\u25c6", "#974706"),
-                }.get(row.get('Final_Classification', ''), ("?", "#666666"))
-                ax.text(0.07, interp_y, sym, fontsize=10, color=clr,
-                        va='center', ha='center')
-                ax.text(0.09, interp_y,
-                        f"Group {row.get('Group', '')}: "
-                        f"{str(row.get('Interpretation', row.get('Final_Classification', ''))).split('[')[0].strip()}",
-                        fontsize=8.5, color='#333333', va='center', fontweight='bold')
-                interp_y -= 0.030
+            # ── DECISION REFERENCE MATRIX ───────────────────────────────
+            ref_y = table_bottom_y - 0.03
+            ax_res.text(0.05, ref_y, "DECISION REFERENCE",
+                        fontsize=10, fontweight='bold', color=HEADER_BG)
+            ax_res.plot([0.05, 0.95], [ref_y - 0.010, ref_y - 0.010], color=ACCENT, lw=1)
+            
+            ref_y -= 0.03
+            ax_res.fill_between([0.05, 0.35], ref_y - 0.025, ref_y, color="#3498DB")
+            ax_res.fill_between([0.35, 0.65], ref_y - 0.025, ref_y, color="#2980B9")
+            ax_res.fill_between([0.65, 0.95], ref_y - 0.025, ref_y, color=HEADER_BG)
+            
+            ax_res.text(0.20, ref_y - 0.0125, "Positive microgel result", color='white', fontweight='bold', fontsize=8, ha='center', va='center')
+            ax_res.text(0.50, ref_y - 0.0125, "Negative microgel result", color='white', fontweight='bold', fontsize=8, ha='center', va='center')
+            ax_res.text(0.80, ref_y - 0.0125, "Final result", color='white', fontweight='bold', fontsize=8, ha='center', va='center')
+            
+            ref_y -= 0.025
+            matrix_data = [
+                ("Positive", "Positive / No obvious bacteria", "POSITIVE"),
+                ("Negative / No obvious bacteria", "Negative", "NEGATIVE"),
+                ("Negative / No obvious bacteria", "Positive / No obvious bacteria", "NO OBVIOUS BACTERIA"),
+                ("Positive", "Negative", "MIXED/CONTRADICTORY")
+            ]
+            
+            for i, (gplus, gminus, final_res) in enumerate(matrix_data):
+                bg_color = "#E8F4F8" if i % 2 == 0 else "#FFFFFF"
+                ax_res.fill_between([0.05, 0.65], ref_y - 0.022, ref_y, color=bg_color)
+                
+                res_bg, res_tc = RESULT_COLOURS.get(final_res, ('#FFFFFF', '#333333'))
+                ax_res.fill_between([0.65, 0.95], ref_y - 0.022, ref_y, color=res_bg)
+                
+                ax_res.text(0.20, ref_y - 0.011, gplus, fontsize=7.5, ha='center', va='center', color='#333333')
+                ax_res.text(0.50, ref_y - 0.011, gminus, fontsize=7.5, ha='center', va='center', color='#333333')
+                ax_res.text(0.80, ref_y - 0.011, final_res, fontsize=7.5, fontweight='bold', ha='center', va='center', color=res_tc)
+                
+                if i < 3:
+                    ax_res.plot([0.05, 0.95], [ref_y - 0.022, ref_y - 0.022], color='#CCCCCC', lw=0.5, linestyle='--')
+                ref_y -= 0.022
 
-            pdf.savefig(fig1)
-            plt.close(fig1)
+            if needs_extra_page:
+                pdf.savefig(fig_res)
+                plt.close(fig_res)
+            else:
+                pdf.savefig(fig1)
+                plt.close(fig1)
 
-            # ── PAGE 2: Comparison charts ───────────────────────────────
+            # ── PAGE: Comparison charts ─────────────────────────────────
+            current_page += 1
             fig2 = plt.figure(figsize=(A4_W, A4_H))
             _draw_chart_on_axis(
                 fig2.add_axes((0.10, 0.55, 0.82, 0.33)),
@@ -4084,11 +4055,12 @@ def generate_laboratory_report_pdf(
             )
             ax2 = _make_ax(fig2)
             _draw_header(ax2, "Comparison Charts")
-            _draw_footer(ax2, 2, total_pages)
+            _draw_footer(ax2, current_page, total_pages)
             pdf.savefig(fig2)
             plt.close(fig2)
 
-            # ── PAGE 3: Forest plot ─────────────────────────────────────
+            # ── PAGE: Forest plot ───────────────────────────────────────
+            current_page += 1
             fig3 = plt.figure(figsize=(A4_W, A4_H))
             _draw_forest_plot_on_axis(
                 fig3.add_axes((0.12, 0.10, 0.78, 0.74)),
@@ -4096,15 +4068,16 @@ def generate_laboratory_report_pdf(
             )
             ax3 = _make_ax(fig3)
             _draw_header(ax3, "Effect Size Analysis")
-            _draw_footer(ax3, 3, total_pages)
+            _draw_footer(ax3, current_page, total_pages)
             pdf.savefig(fig3)
             plt.close(fig3)
 
-            # ── PAGE 4: Statistical analysis table ─────────────────────
+            # ── PAGE: Statistical analysis table ───────────────────────
+            current_page += 1
             fig4 = plt.figure(figsize=(A4_W, A4_H))
             ax4  = _make_ax(fig4)
             _draw_header(ax4, "Statistical Analysis")
-            _draw_footer(ax4, 4, total_pages)
+            _draw_footer(ax4, current_page, total_pages)
             _draw_stats_table(ax4, gplus_classification,  "G+ Microgel",      0.87, 0.55)
             _draw_stats_table(ax4, gminus_classification, "G\u2212 Microgel", 0.53, 0.26)
             ax4.plot([0.05, 0.95], [0.228, 0.228], color='#CCCCCC', lw=0.5)
@@ -4123,12 +4096,13 @@ def generate_laboratory_report_pdf(
             pdf.savefig(fig4)
             plt.close(fig4)
 
-            # ── PAGE 5: Methodology & QC  (conditional) ────────────────
+            # ── PAGE: Methodology & QC  (conditional) ──────────────────
             if _emit_page5:
+                current_page += 1
                 fig5 = plt.figure(figsize=(A4_W, A4_H))
                 ax5  = _make_ax(fig5)
                 _draw_header(ax5, "Methodology & Quality Control")
-                _draw_footer(ax5, 5, total_pages)
+                _draw_footer(ax5, current_page, total_pages)
 
                 for t, ys, lines in [
                     ("METHODOLOGY", 0.88, [
@@ -4181,7 +4155,6 @@ def generate_laboratory_report_pdf(
         return pdf_path
     except Exception:
         return None
-
 
 # ==================================================
 # Excel Export & Cleanup
